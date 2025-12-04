@@ -1,10 +1,10 @@
-# Wings Daemon Architecture
+# Nexus Node Daemon Architecture
 
-**Nexus Panel Wings** - High-performance game server runtime
+**Nexus Node** - High-performance game server runtime
 
 ## Overview
 
-Wings is the daemon component of Nexus Panel that manages game server containers. It reads the converted YAML configs and runs them in isolated containers with resource limits, networking, and monitoring.
+Nexus Node is the daemon component of Nexus Panel that manages game server containers. It reads the converted YAML configs and runs them in isolated containers with resource limits, networking, and monitoring.
 
 ## Architecture Diagram
 
@@ -16,7 +16,7 @@ Wings is the daemon component of Nexus Panel that manages game server containers
                          │ gRPC
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Wings Daemon                            │
+│                      Nexus Node Daemon                            │
 │                                                              │
 │  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐      │
 │  │   gRPC API   │  │  Container  │  │   Resource   │      │
@@ -79,7 +79,7 @@ Wings is the daemon component of Nexus Panel that manages game server containers
 
 **Endpoints:**
 ```protobuf
-service Wings {
+service NexusNode {
   // Container Management
   rpc CreateServer(CreateServerRequest) returns (CreateServerResponse);
   rpc StartServer(ServerRequest) returns (ServerResponse);
@@ -138,17 +138,17 @@ service Wings {
 **Exposed Metrics:**
 ```
 # Container metrics
-wings_container_state{id, name} - Container state (0=stopped, 1=running, 2=paused)
-wings_container_restarts_total{id, name} - Total restart count
-wings_container_cpu_usage_seconds{id, name} - CPU time consumed
-wings_container_memory_bytes{id, name, type} - Memory usage by type
-wings_container_network_bytes{id, name, direction} - Network traffic
-wings_container_disk_bytes{id, name, operation} - Disk I/O
+nexus_node_container_state{id, name} - Container state (0=stopped, 1=running, 2=paused)
+nexus_node_container_restarts_total{id, name} - Total restart count
+nexus_node_container_cpu_usage_seconds{id, name} - CPU time consumed
+nexus_node_container_memory_bytes{id, name, type} - Memory usage by type
+nexus_node_container_network_bytes{id, name, direction} - Network traffic
+nexus_node_container_disk_bytes{id, name, operation} - Disk I/O
 
 # Wings metrics
-wings_containers_total - Total containers managed
-wings_grpc_requests_total{method, status} - gRPC request count
-wings_grpc_request_duration_seconds{method} - Request latency
+nexus_node_containers_total - Total containers managed
+nexus_node_grpc_requests_total{method, status} - gRPC request count
+nexus_node_grpc_request_duration_seconds{method} - Request latency
 ```
 
 ## Technology Stack
@@ -260,7 +260,7 @@ thiserror = "1.0"
 ## File System Layout
 
 ```
-/var/lib/nexus-wings/
+/var/lib/nexus-node/
 ├── servers/
 │   ├── {server-id}/
 │   │   ├── config.yaml          # Nexus config
@@ -276,10 +276,10 @@ thiserror = "1.0"
 
 ## Configuration
 
-Wings daemon config (`/etc/nexus-wings/config.yaml`):
+Nexus Node daemon config (`/etc/nexus-node/config.yaml`):
 
 ```yaml
-# Wings daemon configuration
+# Nexus Node daemon configuration
 daemon:
   # gRPC listen address
   grpc_bind: "127.0.0.1:8080"

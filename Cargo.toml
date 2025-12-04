@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 members = [
     "crates/egg-importer",
-    "crates/nexus-config",
+    "crates/nexus-config", "crates/nexus-node",
 ]
 
 [workspace.dependencies]

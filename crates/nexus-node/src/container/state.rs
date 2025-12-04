@@ -1,0 +1,96 @@
+use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
+
+/// Container status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContainerStatus {
+    /// Container is created but not started
+    Created,
+    /// Container is running
+    Running,
+    /// Container is paused
+    Paused,
+    /// Container has stopped
+    Stopped,
+    /// Container has exited with an error
+    Failed,
+}
+
+impl ContainerStatus {
+    pub fn is_running(&self) -> bool {
+        matches!(self, ContainerStatus::Running)
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        matches!(self, ContainerStatus::Stopped | ContainerStatus::Failed)
+    }
+}
+
+/// Container state information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerState {
+    /// Container ID
+    pub id: String,
+
+    /// Server name
+    pub name: String,
+
+    /// Current status
+    pub status: ContainerStatus,
+
+    /// Container PID (if running)
+    pub pid: Option<u32>,
+
+    /// Exit code (if stopped)
+    pub exit_code: Option<i32>,
+
+    /// Restart count
+    pub restart_count: u32,
+
+    /// Created at timestamp
+    pub created_at: SystemTime,
+
+    /// Started at timestamp (if ever started)
+    pub started_at: Option<SystemTime>,
+
+    /// Stopped at timestamp (if stopped)
+    pub stopped_at: Option<SystemTime>,
+}
+
+impl ContainerState {
+    pub fn new(id: String, name: String) -> Self {
+        Self {
+            id,
+            name,
+            status: ContainerStatus::Created,
+            pid: None,
+            exit_code: None,
+            restart_count: 0,
+            created_at: SystemTime::now(),
+            started_at: None,
+            stopped_at: None,
+        }
+    }
+
+    pub fn mark_started(&mut self, pid: u32) {
+        self.status = ContainerStatus::Running;
+        self.pid = Some(pid);
+        self.started_at = Some(SystemTime::now());
+        self.stopped_at = None;
+    }
+
+    pub fn mark_stopped(&mut self, exit_code: i32) {
+        self.status = if exit_code == 0 {
+            ContainerStatus::Stopped
+        } else {
+            ContainerStatus::Failed
+        };
+        self.exit_code = Some(exit_code);
+        self.stopped_at = Some(SystemTime::now());
+        self.pid = None;
+    }
+
+    pub fn mark_restarted(&mut self) {
+        self.restart_count += 1;
+    }
+}
