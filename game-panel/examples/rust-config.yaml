@@ -1,0 +1,297 @@
+metadata:
+  id: rust
+  name: Rust
+  version: PTDL_v2
+  game: rust
+  author: support@pterodactyl.io
+  description: The only aim in Rust is to survive. To do this you will need to overcome struggles such as hunger, thirst and cold. Build a fire. Build a shelter. Kill animals for meat. Protect yourself from other players, and kill them for meat. Create alliances with other players and form a town. Do whatever it takes to survive.
+  tags:
+  - steam_disk_space
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  environment: {}
+resources:
+  cpu:
+    min: 2000
+    max: 4000
+    shares: 1024
+  memory:
+    min: 4Gi
+    max: 8Gi
+    swap: 512Mi
+  disk:
+    min: 20Gi
+    io_priority: normal
+startup:
+  command: ./RustDedicated
+  args:
+  - -batchmode
+  - +server.port
+  - '{{SERVER_PORT}}'
+  - +server.identity
+  - '"{{SERVER_IDENTITY}}"'
+  - +rcon.port
+  - '{{RCON_PORT}}'
+  - +rcon.password
+  - '"{{RCON_PASSWORD}}"'
+  - +server.hostname
+  - '"{{HOSTNAME}}"'
+  - +server.level
+  - '"{{LEVEL}}"'
+  - +server.seed
+  - '{{SEED}}'
+  - +server.worldsize
+  - '{{WORLD_SIZE}}'
+  - +server.maxplayers
+  - '{{MAX_PLAYERS}}'
+  - +server.description
+  - '"{{DESCRIPTION}}"'
+  - +server.url
+  - '"{{SERVER_URL}}"'
+  - +server.headerimage
+  - '"{{SERVER_IMG}}"'
+  - +server.logoimage
+  - '"{{SERVER_LOGO}}"'
+  - +rcon.web
+  - '{{RCON_WEB}}'
+  - '{{ADDITIONAL_ARGS}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: |-
+        #!/bin/bash
+        # Rust Installation Script
+
+        apt -y update
+        apt -y --no-install-recommends install curl unzip lib32gcc-s1 ca-certificates
+
+        ## just in case someone removed the defaults.
+        if [[ "${STEAM_USER}" == "" ]] || [[ "${STEAM_PASS}" == "" ]]; then
+            echo -e "steam user is not set.\n"
+            echo -e "Using anonymous user.\n"
+            STEAM_USER=anonymous
+            STEAM_PASS=""
+            STEAM_AUTH=""
+        else
+            echo -e "user set to ${STEAM_USER}"
+        fi
+
+        ## download and install steamcmd
+        cd /tmp || exit
+        mkdir -p /mnt/server/steamcmd
+        curl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+        tar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd
+        mkdir -p /mnt/server/rust
+        cd /mnt/server/steamcmd || exit
+
+        # SteamCMD fails otherwise for some reason, even running as root.
+        # This is changed at the end of the install process anyways.
+        chown -R root:root /mnt
+        export HOME=/mnt/server
+
+        ## install game using steamcmd
+        ./steamcmd.sh +force_install_dir /mnt/server/rust +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} +app_update 258550 +quit
+
+        ## set up 32 bit libraries
+        mkdir -p /mnt/server/.steam/sdk32
+        cp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so
+
+        ## set up 64 bit libraries
+        mkdir -p /mnt/server/.steam/sdk64
+        cp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so
+
+        ## create a symbolic link for rust to find the steamclient library
+        ln -s /mnt/server/steamcmd/linux64/steamclient.so /mnt/server/rust/RustDedicated_Data/Plugins/x86_64/steamclient.so
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: HOSTNAME
+  description: The name of your server. Use $'\u001b[1;32mText\u001b[0m' for colored name.
+  default: A Rust Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DESCRIPTION
+  description: The description under your server title on the server list.
+  default: Powered by Pterodactyl
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_URL
+  description: Server URL for your community or clan.
+  default: https://pterodactyl.io
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: WORLD_SIZE
+  description: The world size of your map (default 3500, max 6000)
+  default: '3500'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1000
+    - 6000
+- name: SEED
+  description: The world seed for map generation.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: The maximum amount of players allowed in the server at once.
+  default: '50'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 200
+- name: SERVER_IMG
+  description: The header image for the top of your server listing.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_LOGO
+  description: The circular logo for the server list.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_PORT
+  description: The server port for the main game connection.
+  default: '28015'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1024
+    - 65535
+- name: RCON_PORT
+  description: Port for RCON connections.
+  default: '28016'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1024
+    - 65535
+- name: RCON_PASSWORD
+  description: The password for RCON connections. Use a strong password!
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_IDENTITY
+  description: The name of the folder to save data to. DO NOT CHANGE THIS unless you are sure you know what you're doing.
+  default: rust-server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: LEVEL
+  description: The level to load (default Procedural Map)
+  default: Procedural Map
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RCON_WEB
+  description: Enable RCON via web interface (0 = disabled, 1 = enabled)
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '0'
+    - '1'
+- name: ADDITIONAL_ARGS
+  description: Additional server startup arguments.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: STEAM_USER
+  description: Steam username for SteamCMD (use 'anonymous' for anonymous login)
+  default: anonymous
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: STEAM_PASS
+  description: Steam password for SteamCMD
+  default: ''
+  required: false
+  secret: true
+  user_editable: false
+  user_viewable: false
+networking:
+  ports:
+  - name: Server Port
+    internal: '{{SERVER_PORT}}'
+    protocol: udp
+    required: true
+  - name: RCON Port
+    internal: '{{RCON_PORT}}'
+    protocol: tcp
+    required: true
+    firewall_default: deny
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []
