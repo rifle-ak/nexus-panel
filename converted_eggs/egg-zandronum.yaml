@@ -1,0 +1,180 @@
+metadata:
+  id: zandronum
+  name: Zandronum
+  version: PTDL_v2
+  game: generic
+  author: sup@libtar.de
+  description: "Zandronum is a multiplayer oriented port, based off Skulltag, for Doom and Doom II by id Software.\r\n\r\nThis egg uses the Freedoom WAD by default."
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./zandronum-server
+  args:
+  - -port
+  - '{{SERVER_PORT}}'
+  - -config
+  - /home/container/zandronum.ini
+  - +set
+  - dmflags
+  - '{{DMFLAGS}}'
+  - +set
+  - dmflags2
+  - '{{DMFLAGS2}}'
+  - +set
+  - zadmflags
+  - '{{ZADMFLAGS}}'
+  - +set
+  - compatflags
+  - '{{COMPATFLAGS}}'
+  - +set
+  - compatflags2
+  - '{{COMPATFLAGS2}}'
+  - +set
+  - zacompatflags
+  - '{{ZACOMPATFLAGS}}'
+  - -iwad
+  - IWAD/{{IWAD}}
+  - -file
+  - PWAD/{{PWADS}}
+  - -host
+  - '{{MAX_PLAYERS}}'
+  - +map
+  - '{{MAP}}'
+  - -skill
+  - '{{SKILL}}'
+  - -netmode
+  - '1'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: MAX_PLAYERS
+  description: The maximum amount of players allowed on your game server.
+  default: '16'
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: IWAD
+  description: An IWAD is the main resource file for a Doom-engine game, containing all the game's original sounds, levels, and graphics.
+  default: freedoom1.wad
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PWADS
+  description: "If you wish to use multiple PWAD you can do so by separating them with spaces.\r\n\r\nA PWAD is a WAD containing lumps of data, often used as addons. They replace in-game assets."
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SKILL
+  description: Set the difficulty of the game.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 0
+    - 15
+- name: MAP
+  description: The map the server should start with.
+  default: e1m1
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DMFLAGS
+  description: Gameplay flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DMFLAGS2
+  description: Gameplay flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZADMFLAGS
+  description: Zandronum specific gameplay flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMPATFLAGS
+  description: Compatibility flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMPATFLAGS2
+  description: Compatibility flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZACOMPATFLAGS
+  description: Zandronum specific compatibility flags. https://wiki.zandronum.com/DMFlags
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: GEOIP
+  description: GeoIP is used to identify the country of the client's ip address
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

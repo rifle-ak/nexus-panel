@@ -1,0 +1,247 @@
+metadata:
+  id: space-engineers
+  name: Space Engineers
+  version: PTDL_v2
+  game: generic
+  author: eggs@goover.dev
+  description: Space Engineers is a voxel-based sandbox game set in space and on planets.
+  tags:
+  - steam_disk_space
+container:
+  image: ghcr.io/parkervcp/yolks:wine_latest
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - export WINEDLLOVERRIDES="mscoree=n,b;mshtml=n,b"; wine /home/container/DedicatedServer64/SpaceEngineersDedicated.exe -path Z:\\home\\container\\config -console -ignorelastsession
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# Installation Script\r\n#\r\n## Define variables\r\ndlurl=\"https://raw.githubusercontent.com/parkervcp/eggs/master/game_eggs/steamcmd_servers/space_engineers/default\"\r\n\r\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\r\n#apt -y update\r\n#apt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## Create world and config\r\nmkdir -p $HOME/config/Saves\r\nif [ ! -d $HOME/config/Saves/World ]\r\nthen\r\n    curl $dlurl/World.zip -o World.zip\r\n    unzip -o World.zip -d $HOME/config/Saves/\r\nfi\r\nif [ ! -f $HOME/config/SpaceEngineers-Dedicated.cfg ]; then curl $dlurl/SpaceEngineers-Dedicated.cfg -o $HOME/config/SpaceEngineers-Dedicated.cfg; fi\r\n\r\nrm -fR $HOME/World.zip\r\n\r\n# copy libs for mod support\r\ncp -v $HOME/steamclient.dll ../DedicatedServer64/\r\ncp -v $HOME/steamclient64.dll ../DedicatedServer64/\r\ncp -v $HOME/tier0_s.dll ../DedicatedServer64/\r\ncp -v $HOME/tier0_s64.dll ../DedicatedServer64/\r\ncp -v $HOME/vstdlib_s.dll ../DedicatedServer64/\r\ncp -v $HOME/vstdlib_s64.dll ../DedicatedServer64/\r\n\r\n## install end\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: SRCDS_APPID
+  description: The ID corresponding to the game to download.
+  default: '298740'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '298740'
+- name: SERVER_NAME
+  description: Name of the server, appears in Steam browser.
+  default: A Pterodactyl hosted Space Engineer Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: WORLD_NAME
+  description: Name of your world (and of your save folder)  !!!!! DO NOT EDIT OR SERVER WILL NOT START !!!!!
+  default: World
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: SERVER_DESC
+  description: Description of the game
+  default: A Pterodactyl hosted Space Engineer Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MODE
+  description: 'Game Mode setting: Survival, Creative'
+  default: Survival
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - Survival
+    - Creative
+- name: MAX_PLAYERS
+  description: ''
+  default: '4'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SAVE_ENABLED
+  description: ''
+  default: 'true'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: SAVE_INTERVAL
+  description: Time between auto saves specified in minutes
+  default: '5'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: STEAM_PORT
+  description: Steam Port
+  default: '8766'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: REMOTEAPI_ENABLE
+  description: Enable Remote API
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: REMOTEAPI_PORT
+  description: Remote API Port
+  default: '8081'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: AUTO_UPDATE
+  description: ''
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: EXPERIMENTAL_ENABLED
+  description: Enable Experimental Mode. Must be 'true' when using mods
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: INGAMESCRIPTS_ENABLED
+  description: Allow players to run In-Game Scripts
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: WINEDEBUG
+  description: 'WINEDEBUG: Debug Level of wine'
+  default: -all
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINDOWS_INSTALL
+  description: Required for auto-update
+  default: '1'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1'
+- name: WINETRICKS_RUN
+  description: ''
+  default: win11 vcrun2022 mono corefonts
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINEARCH
+  description: ''
+  default: win64
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINEPATH
+  description: ''
+  default: /home/container
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+networking:
+  ports:
+  - name: Steam Port
+    internal: '{{STEAM_PORT}}'
+    protocol: udp
+    required: true
+  - name: Remote API Port
+    internal: '{{REMOTEAPI_PORT}}'
+    protocol: udp
+    required: true
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: tcp
+    port: '{{STEAM_PORT}}'
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

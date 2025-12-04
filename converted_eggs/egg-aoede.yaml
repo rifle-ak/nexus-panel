@@ -1,0 +1,104 @@
+metadata:
+  id: aoede
+  name: Aoede
+  version: PTDL_v2
+  game: generic
+  author: contact@bldy.ovh
+  description: Aoede is a Discord music bot that directly streams from Spotify to Discord. The only interface is Spotify itself.
+container:
+  image: ghcr.io/parkervcp/yolks:ubuntu
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./aoede
+  args: []
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: DISCORD_TOKEN
+  description: Discord Bot Token
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SPOTIFY_USERNAME
+  description: Spotify Username
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SPOTIFY_PASSWORD
+  description: Spotify Password
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: DISCORD_USER_ID
+  description: Discord user ID of the user you want Aoede to follow
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SPOTIFY_BOT_AUTOPLAY
+  description: "Autoplay similar songs when your music ends \r\nValue : true/false"
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: VERSION
+  description: "Specify a version, for example: \"v0.7.0\"\r\nFor the latest version, type \"latest\""
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,125 @@
+metadata:
+  id: redm
+  name: RedM
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: A new RedM egg for the latest builds due to recent changes in RedM
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: $(pwd)/alpine/opt/cfx-server/ld-musl-x86_64.so.1
+  args:
+  - --library-path
+  - '"$(pwd)/alpine/usr/lib/v8/:$(pwd)/alpine/lib/:$(pwd)/alpine/usr/lib/"'
+  - --
+  - $(pwd)/alpine/opt/cfx-server/FXServer
+  - +set
+  - citizen_dir
+  - $(pwd)/alpine/opt/cfx-server/citizen/
+  - +set
+  - sv_licenseKey
+  - '{{CFX_LICENSE}}'
+  - +set
+  - steam_webApiKey
+  - '{{STEAM_WEBAPIKEY}}'
+  - +set
+  - sv_maxplayers
+  - '{{MAX_PLAYERS}}'
+  - +exec
+  - server.cfg
+  - +set
+  - gamename
+  - rdr3
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: CFX_LICENSE
+  description: Required to start the service. Get your keys at https://keymaster.fivem.net/
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: Set the fivem max play count
+  default: '32'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 32
+- name: SERVER_HOSTNAME
+  description: The name that shows up in the server browser
+  default: My new FXServer!
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CFX_VERSION
+  description: "The CFX Server version that is to be installed. Invalid versions will default to latest.\r\n\r\nan example is `1383-e5ea040353ce1b8bc86e37982bf5d888938e3096`\r\n\r\nYou can the latest version from here - https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/"
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DOWNLOAD_URL
+  description: "This is the link to download redm from. This is only used in the install script.\r\n\r\nThe file you link to needs to be an fx.tar.zx file.\r\n\r\nExample:\r\nhttps://runtime.fivem.net/artifacts/fivem/build_proot_linux/master/1626-8c06e8bc3ed7e6690c6c2d9e0b90e29df65b3ea6/fx.tar.xz"
+  default: ''
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: STEAM_WEBAPIKEY
+  description: Use your Steam WebApiKey or set to 'none'. Get your key at https://steamcommunity.com/dev/apikey/
+  default: none
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

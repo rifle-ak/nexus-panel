@@ -1,0 +1,16 @@
+=================================================
+Nexus Panel Egg Converter - Scale Test
+Testing against parkervcp/eggs repository
+=================================================
+
+
+=================================================
+CONVERSION RESULTS
+=================================================
+Total eggs tested: 282
+Successful: 0 (0.0%)
+Failed: 282 (100.0%)
+
+See ./successful_conversions.txt for successful conversions
+See ./failed_conversions.txt for failed conversions with error details
+Converted configs available in ./converted_eggs

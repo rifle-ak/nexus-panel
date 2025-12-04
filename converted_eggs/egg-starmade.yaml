@@ -1,0 +1,70 @@
+metadata:
+  id: starmade
+  name: starmade
+  version: PTDL_v2
+  game: generic
+  author: contact@hunters-tavern.de
+  description: starmade
+container:
+  image: ghcr.io/parkervcp/yolks:java_16
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Xms128m
+  - -Xmx{{SERVER_MEMORY}}m
+  - -jar
+  - '{{SERVER_JARFILE}}'
+  - -server
+  - -port:{{SERVER_PORT}}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: /shutdown 0
+      timeout: 30s
+variables:
+- name: SERVER_JARFILE
+  description: ''
+  default: StarMade.jar
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,118 @@
+metadata:
+  id: teamspeak3-server-arm64
+  name: Teamspeak3 Server ARM64
+  version: PTDL_v2
+  game: generic
+  author: josdekurk@gmail.com
+  description: VoIP software designed with security in mind, featuring crystal clear voice quality, endless customization options, and scalabilty up to thousands of simultaneous users.
+container:
+  image: ghcr.io/parkervcp/yolks:box64
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: box64
+  args:
+  - ./ts3server
+  - default_voice_port={{SERVER_PORT}}
+  - query_port={{QUERY_PORT}}
+  - filetransfer_ip=0.0.0.0
+  - filetransfer_port={{FILE_TRANSFER}}
+  - serveradmin_password={{SERVERADMIN_PASSWORD}}
+  - license_accepted=1
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: SERVERADMIN_PASSWORD
+  description: The password for the server query admin user.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: TS_VERSION
+  description: The version of Teamspeak 3 to use when running the server.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FILE_TRANSFER
+  description: The Teamspeak file transfer port
+  default: '30033'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 65535
+- name: QUERY_PORT
+  description: The Teamspeak Query Port
+  default: '10011'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 65535
+networking:
+  ports:
+  - name: File Transfer Port
+    internal: '{{FILE_TRANSFER}}'
+    protocol: udp
+    required: true
+  - name: Query Port
+    internal: '{{QUERY_PORT}}'
+    protocol: tcp
+    required: true
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: tcp
+    port: '{{FILE_TRANSFER}}'
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

@@ -1,0 +1,138 @@
+metadata:
+  id: rimworld-open-world
+  name: 'Rimworld: Open World'
+  version: PTDL_v2
+  game: generic
+  author: kyle@williquette.us
+  description: "The Open World mod allows you to create and join servers to play with people all around the world, it introduces plenty of new features including trading, gifting, bartering, PvP and so much more!\r\n\r\nhttps://github.com/D12-Dev/OpenWorld"
+container:
+  image: ghcr.io/parkervcp/yolks:dotnet_6
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./OpenWorldServer
+  args: []
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: shutdown
+      timeout: 30s
+variables:
+- name: VERSION
+  description: ''
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: sets the maximum number of players allowed to connect at once.
+  default: '10'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ENFORCE_MODS
+  description: This forces players to use the mods listed in the the "Mods Enforced" folder, with this disabled it will allow players to join with any mods they would like
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: USE_MOD_BLACKLIST
+  description: enabled you to blacklist mods from being used, usually used when enforced mods are disabled.
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: USE_CUSTOM_DIFF
+  description: forces all players to use the difficulty setting set in the "Difficulty" file. MAKE SURE YOU GIVE A VALUE TO EVERYTHING OR IT WILL BE AT 0%
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: WHITELIST
+  description: allows only the usernames listed in the "Whitelist" file to join the server.
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: CUSTOM_SCEN
+  description: allows people to create custom scenarios when creating their save on the server.
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: PLAYER_VERSION
+  description: "version the server will accept clients joining in with.\r\n\r\nTO see the latest:\r\nhttps://discord.com/channels/992806266109964319/992881103071354890\r\n\r\nfor example for v1.12 you would write 1.12"
+  default: '1.2'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

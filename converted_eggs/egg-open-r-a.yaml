@@ -1,0 +1,121 @@
+metadata:
+  id: openra
+  name: OpenRA
+  version: PTDL_v2
+  game: generic
+  author: patz.michael@gmail.com
+  description: OpenRA is a project that recreates and modernizes the classic Command & Conquer real time strategy games. We have developed a flexible open source game engine (the OpenRA engine) that provides a common platform for rebuilding and reimagining classic 2D and 2.5D RTS games (the OpenRA mods).
+container:
+  image: ghcr.io/parkervcp/yolks:mono_latest
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./squashfs-root/AppRun
+  args:
+  - --server
+  - Server.Name="{{SERVER_NAME}}"
+  - Server.ListenPort={{SERVER_PORT}}
+  - Server.AdvertiseOnline={{PUBLIC}}
+  - Server.EnableSingleplayer={{SINGLEPLAYER}}
+  - Server.Password="{{PASSWORD}}"
+  - Server.EnableGeoIP={{GEOIP}}
+  - Server.ShareAnonymizedIPs={{ANONYMOUS}}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: SERVER_NAME
+  description: The Name of the Server
+  default: OpenRAServer
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PUBLIC
+  description: Shall this server be public
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SINGLEPLAYER
+  description: Enable Singleplayer ?
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AUTH
+  description: Enable Authentification
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PASSWORD
+  description: Server Password
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: GEOIP
+  description: Enable GEOIP
+  default: 'false'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ANONYMOUS
+  description: Hide IPs
+  default: 'true'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: VERSION
+  description: VERSION
+  default: latest
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

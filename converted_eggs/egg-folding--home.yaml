@@ -1,0 +1,119 @@
+metadata:
+  id: foldinghome
+  name: Folding@Home
+  version: PTDL_v2
+  game: generic
+  author: fuggschen@krk-gaming.de
+  description: Folding@home is a distributed computing project aimed to help scientists develop new therapeutics for a variety of diseases by the means of simulating protein dynamics. This includes the process of protein folding and the movements of proteins, and is reliant on simulations run on volunteers' personal computers
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - ./FAHClient --user={{FAH_USERNAME}} --team={{FAH_TEAM}} --passkey={{FAH_PASSKEY}} $(if {{FAH_ANON}}; then echo "--fold-anon=true"; fi) --command-port={{SERVER_PORT}} --password={{FAH_PASSWORD}} --power={{FAH_POWER}}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: FAH_USERNAME
+  description: Your Folding@Home Username
+  default: Anonymous
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FAH_TEAM
+  description: 'Your Folding@Home Team that you are folding for. For reference look here: https://stats.foldingathome.org/team'
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FAH_PASSKEY
+  description: 'Your Folding@Home Passkey for your Username, if not Anonymous. Get your Passkey here: https://apps.foldingathome.org/getpasskey'
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: FAH_ANON
+  description: Set to true if you are folding Anonymously
+  default: 'true'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: FAH_VERSION
+  description: 'Set to wanted major Folding@Home Version. Check here: https://download.foldingathome.org/releases/public/release/fahclient/debian-stable-64bit/'
+  default: v7.6
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FAH_PASSWORD
+  description: Set a WebUI Password
+  default: SetPasswordHere
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: FAH_POWER
+  description: "The Powerlevel it should use:\r\n- light (only half the cpu power is used)\r\n- medium (full cpu power)\r\n- full (full cpu and gpu power but gpu is not supported)"
+  default: medium
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - light
+    - medium
+    - full
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

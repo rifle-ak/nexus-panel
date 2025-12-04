@@ -1,0 +1,450 @@
+metadata:
+  id: humanitz
+  name: HumanitZ
+  version: PTDL_v2
+  game: generic
+  author: engels74@marx.ps
+  description: HumanitZ is a co-op, isometric, open world survival game in a world ended by the zombie outbreak. As one of the few human survivors, try to last as long as “humanly” possible. The past can’t be changed, but you can make a difference today for the future of humanity.
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./TSSGame/Binaries/Linux/TSSGameServer-Linux-Shipping
+  args:
+  - TSSGame
+  - -log
+  - -port={{SERVER_PORT}}
+  - -queryport={{QUERY_PORT}}
+  - -steamservername="{{SERVER_NAME}}"
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\r\n\r\n##\r\n#\r\n# Variables\r\n# STEAM_USER, STEAM_PASS, STEAM_AUTH - Steam user setup. If a user has 2fa enabled it will most likely fail due to timeout. Leave blank for anon install.\r\n# WINDOWS_INSTALL - if it's a windows server you want to install set to 1\r\n# SRCDS_APPID - steam app id found here - https://developer.valvesoftware.com/wiki/Dedicated_Servers_List\r\n# SRCDS_BETAID - beta branch of a steam app. Leave blank to install normal branch\r\n# SRCDS_BETAPASS - password for a beta branch should one be required during private or closed testing phases.. Leave blank for no password.\r\n# INSTALL_FLAGS - Any additional SteamCMD  flags to pass during install.. Keep in mind that steamcmd auto update process in the docker image might overwrite or ignore these when it performs update on server boot.\r\n# AUTO_UPDATE - Adding this variable to the egg allows disabling or enabling automated updates on boot. Boolean value. 0 to disable and 1 to enable.\r\n#\r\n ##\r\n\r\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\r\n#apt -y update\r\n#apt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit \r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## making server files executable\r\nchmod +x /mnt/server/TSSGame/Binaries/Linux/TSSGameServer-Linux-Shipping\r\n\r\n## install end\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: SRCDS_APPID
+  description: Steam App ID of HumanitZ Server
+  default: '2728330'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '2728330'
+- name: AUTO_UPDATE
+  description: Enable automatic updates on boot
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SRCDS_BETAID
+  description: This ensures the script will grab the Linux version of the server
+  default: linuxbranch
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - linuxbranch
+- name: QUERY_PORT
+  description: Steam Query Port
+  default: '27015'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: Name of the server
+  default: HumanitZ [Dedicated]
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PASSWORD
+  description: Server password (if any)
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SAVE_NAME
+  description: Name of the save-file for the server
+  default: DedicatedSaveMP
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ADMIN_PASS
+  description: Password for the admin
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: Maximum number of players allowed
+  default: '16'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ONLY_ALLOWED_PLAYERS
+  description: Restrict server to allowed players only
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SAVE_INTERVAL_SEC
+  description: Save game every x seconds.
+  default: '300'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PERMA_DEATH
+  description: 0=Off, 1=Individual perma-death, 2=All players experience perma-death
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ON_DEATH
+  description: 0=Only lose backpack, and weapon in hand, 1=Previous + pockets, and backpack, 2=All previous + Equipment
+  default: '2'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PVP
+  description: 0/1 Off/On. Enable or disable Player vs Player.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CLEAR_INFECTION
+  description: 0=Respawning does not rid you of the infection, 1=You lose it upon respawning
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: EAGLE_EYE
+  description: 1=Able to purchase the eagle eye skill, 0=You can't
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AIR_DROP
+  description: 1=Enabled, 0=Disabled. Controls whether air drops are enabled.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: WEAPON_BREAK
+  description: 1=Weapons break when reaching 0% durability except crowbar, 0=Only improvised weapons break at 0% durability
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MULTIPLAYER_SLEEP
+  description: 1=Time passes if everyone performs the sleep emote at the same time, 0=Passing time is disabled
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BUILDING_HEALTH
+  description: Health multiplier of player placed buildings. By default set to "1".
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: LOOT_RESPAWN
+  description: 1=Loot does respawn, 0=Never respawn
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: LOOT_RESPAWN_TIMER
+  description: If loot respawns how long does it take in minutes
+  default: '60'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PICKUP_RESPAWN_TIMER
+  description: Time in minutes it takes to respawn pickups, 0 to disable.
+  default: '90'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: LOOT_RARITY
+  description: 0=Scarce, 1=Low, 2=Default, 3=Plentiful, 4=Abundant
+  default: '2'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AIR_DROP_INTERVAL
+  description: Air drop every X day
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_DIFF_HEALTH
+  description: 0=Very Easy, 1=Easy, 2=Default, 3=Hard, 4=Very Hard, 5=Nightmare
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_DIFF_SPEED
+  description: 0=Very Easy, 1=Easy, 2=Default, 3=Hard, 4=Very Hard, 5=Nightmare
+  default: '2'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_DIFF_DAMAGE
+  description: 0=Very Easy, 1=Easy, 2=Default, 3=Hard, 4=Very Hard, 5=Nightmare
+  default: '3'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: HUMAN_DIFFICULTY
+  description: 0=Very Easy, 1=Easy, 2=Default, 3=Hard, 4=Very Hard, 5=Nightmare
+  default: '3'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_AMOUNT_MULTI
+  description: Zombie spawn count multiplier
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: HUMAN_AMOUNT_MULTI
+  description: Hostile humans spawn count multiplier
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_DOG_MULTI
+  description: Zombie dog spawn count multiplier
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ZOMBIE_RESPAWN_TIMER
+  description: Time in minutes for zombies to respawn
+  default: '90'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: HUMAN_RESPAWN_TIMER
+  description: Time in minutes for hostile humans to respawn
+  default: '90'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ANIMAL_RESPAWN_TIMER
+  description: Time in minutes for animals to respawn
+  default: '90'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: STARTING_SEASON
+  description: 0=Summer, 1=Autum, 2=Winter, 3=Spring
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DAYS_PER_SEASON
+  description: How many days each season lasts
+  default: '5'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DAY_DUR
+  description: Day duration in minutes
+  default: '40'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: NIGHT_DUR
+  description: Night duration in minutes
+  default: '20'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: VITAL_DRAIN
+  description: How fast your vitals drain 0=Slow, 1=Normal, 2=Fast
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DOG_ENABLED
+  description: Enable finding dog companions you can recruit
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DOG_NUM
+  description: Number of companion dogs that could spawn randomly
+  default: '8'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RECRUIT_DOG
+  description: Allow players to recruit companion dog
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMPANION_HEALTH
+  description: Dog companion health - 0=Low 1=Default 2=High
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMPANION_DMG
+  description: Dog companion damage - 0=Low 1=Default 2=High
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: NO_DEATH_FEEDBACK
+  description: 0 to enable player died notification in chat - 1 to disable player died notification in chat.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ALLOW_DISMANTLE
+  description: 1 = Enable players to dismantle their own buildings, 0 = Disable
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ALLOW_HOUSE_DISMANTLE
+  description: 1 = Players are able to dismantle house props, 0 = Disable
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: TERRITORY
+  description: 1 = Enabled. In PVE you are not allowed to build in someone's spawn point area. Only non recruit clan members can. 0 = Disable
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DECAY
+  description: By default 3600, the crafted "Spawn Point" loses 1 durability every 1 hour. This is used to deal with territory build restrictions, so players have to repair their spawn point.
+  default: '3600'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PICKUP_CLEANUP
+  description: How long in minutes it takes for dropped pickups to be destroyed (Pickups part of the world will not be considered), a value of 0 means no cleanup is done.
+  default: '3000'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FAKE_BUILDING_CLEANUP
+  description: How long in minutes it takes for the white blueprint building to be destroyed, a value of 0 means no cleanup is done.
+  default: '3000'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports:
+  - name: '[REQUIRED] Steam Query Port'
+    internal: '{{QUERY_PORT}}'
+    protocol: tcp
+    required: true
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: tcp
+    port: '{{QUERY_PORT}}'
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

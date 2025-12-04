@@ -1,0 +1,200 @@
+metadata:
+  id: urban-terror
+  name: Urban Terror
+  version: PTDL_v2
+  game: generic
+  author: Juli199696@web.de
+  description: Urban Terror started as a realism based "total conversion" mod for Quake III Arena. Nowadays, Urban Terror is played using the free, stand-alone, ioquake3 engine modified, which doesn't require Quake III Arena, in addition to being an add-on to id Software's Quake III Arena.
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./Quake3-UrT-Ded.{{EXE}}
+  args:
+  - +exec
+  - '"server.cfg"'
+  - +set
+  - fs_game
+  - '"q3ut4"'
+  - +set
+  - fs_basepath
+  - '"/home/container"'
+  - +set
+  - fs_homepath
+  - '"/home/container"'
+  - +set
+  - dedicated
+  - '"2"'
+  - +set
+  - com_hunkmegs
+  - '"{{HUNKMEGS}}"'
+  - +set
+  - net_port
+  - '"{{SERVER_PORT}}"'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: EXE
+  description: 32bit / 64bit server version. it is recommended to use the 64bit server, unless you are experiencing issues.
+  default: x86_64
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - x86_64
+    - i386
+- name: HUNKMEGS
+  description: "How much memory is allocated during server start up.\r\n\r\nAvailable options:  128, 160, 192, 256 MB"
+  default: '128'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '128'
+    - '160'
+    - '192'
+    - '256'
+- name: SERVER_NAME
+  description: Put your Servername into here.
+  default: My Awesome Pterodactyl Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: JOIN_MESSAGE
+  description: The message the player will receive when joining the server.
+  default: Welcome to this Server, have fun!
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MAXCLIENTS
+  description: Maximum players that can connect to the server.
+  default: '16'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 32
+- name: RCON_PASSWORD
+  description: "Set the Rcon Password for Admin commands.\r\nCan be empty to disable RCON."
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: If you want to set a password to connect on the server set this here.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MAP
+  description: "Choose the initial Map the server should start with. \r\n(ONLY CHANGE IF YOU KNOW THE MAP IS EXISTING) Server wont start without it!"
+  default: ut4_casa
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_GAMETYPE
+  description: "Sets the Gamemode you want to play. \r\n1 = Last Man Standing, \r\n2 = Free For All, \r\n3 = Team DeathMatch, \r\n4 = Team Survivor, \r\n5 = Follow The Leader, \r\n6 = Capture And Hold, \r\n7 = Capture The Flag, \r\n8 = Bomb Mode, \r\n9 = Jump, \r\n10 = Freeze Tag, \r\n11 = Gun Game"
+  default: '3'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '1'
+    - '2'
+    - '3'
+    - '4'
+    - '5'
+    - '6'
+    - '7'
+    - '8'
+    - '9'
+    - '10'
+    - '11'
+- name: BOT_MINPLAYERS
+  description: "Want to have bots in your game select how many you want. \r\n(More than 16 bots tend to crash the server or add lag, use with caution!)\r\nDisclaimer: \"Bots are not officialy supported by FS!!!\""
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_TIMELIMIT
+  description: Time in minutes before map is over. (0 = never)
+  default: '10'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_FRIENDLYFIRE
+  description: Sets if friendlyfire is on or off. (Teamkill your teammates is bad hmmkay?)
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

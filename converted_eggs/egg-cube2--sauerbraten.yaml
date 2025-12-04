@@ -1,0 +1,90 @@
+metadata:
+  id: cube-2-sauerbraten
+  name: 'Cube 2: Sauerbraten'
+  version: PTDL_v2
+  game: generic
+  author: holeintheseat@gmail.com
+  description: "Cube 2: Sauerbraten is a free multiplayer & singleplayer first person shooter, the successor of the Cube FPS.\r\nMuch like the original Cube, the aim of this game is fun, old school deathmatch gameplay and also to allow map/geometry editing to be done cooperatively in-game."
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./bin_unix/linux_64_server
+  args:
+  - -j{{SERVER_PORT}}
+  - -n{{CUBE_SERVERDESCRIPTION}}
+  - -c{{CUBE_MAXPLAYERS}}
+  - -m{{CUBE_MASTERSERVER}}
+  - -p{{CUBE_ADMINPASSWORD}}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: CUBE_SERVERDESCRIPTION
+  description: ''
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CUBE_MAXPLAYERS
+  description: Sets the max number of clients to N. The default is 4. If you want to set it higher, be aware that bandwidth usage almost doubles with each extra client, so only do this if the server runs on a serious pipe (not your home DSL or Cable connection).
+  default: '4'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CUBE_MASTERSERVER
+  description: 'Sets the master server to use for either server (registering) and client (updating) to S. (default: sauerbraten.org).'
+  default: sauerbraten.org
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CUBE_ADMINPASSWORD
+  description: ''
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

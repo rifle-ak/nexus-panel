@@ -1,0 +1,205 @@
+metadata:
+  id: factorio-arm64
+  name: Factorio ARM64
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: "The vanilla Factorio server.\r\n\r\nhttps://www.factorio.com/"
+container:
+  image: ghcr.io/parkervcp/yolks:box64
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - "if [ ! -f \"./saves/{{SAVE_NAME}}.zip\" ]; then box64 ./bin/x64/factorio --create ./saves/{{SAVE_NAME}}.zip --map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json; fi;\r\nbox64 ./bin/x64/factorio --port {{SERVER_PORT}} --server-settings data/server-settings.json --start-server saves/{{SAVE_NAME}}.zip"
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: /quit
+      timeout: 30s
+variables:
+- name: FACTORIO_VERSION
+  description: Which version of Factorio to install and use.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 3
+    - 12
+- name: MAX_SLOTS
+  description: Total number of slots to allow on the server.
+  default: '20'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: SAVE_NAME
+  description: The save name for the server.
+  default: gamesave
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 100
+- name: SERVER_TOKEN
+  description: Your factorio.com token, it is required for your server to be visible in the public server list.
+  default: undefined
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: Name of the game as it will appear in the game listing
+  default: Factorio Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_DESC
+  description: Description of the game that will appear in the listing.
+  default: Description
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_USERNAME
+  description: Username used for the server
+  default: unnamed
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SAVE_INTERVAL
+  description: Time between auto saves specified in minutes
+  default: '10'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SAVE_SLOTS
+  description: The number of auto saves to keep.
+  default: '5'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AFK_KICK
+  description: "Time specified in minutes to kick AFK players.\r\n0 is off"
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOX64_DYNAREC_SAFEFLAGS
+  description: ''
+  default: '0'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '0'
+- name: BOX64_DYNAREC_BIGBLOCK
+  description: ''
+  default: '2'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '2'
+- name: BOX64_DYNAREC_FORWARD
+  description: ''
+  default: '1024'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1024'
+- name: BOX64_DYNAREC_CALLRET
+  description: ''
+  default: '1'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1'
+- name: BOX64_DYNAREC_FASTROUND
+  description: ''
+  default: '0'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '0'
+- name: BOX64_DYNAREC_ALIGNED_ATOMICS
+  description: ''
+  default: '1'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1'
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

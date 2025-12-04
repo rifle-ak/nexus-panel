@@ -1,0 +1,194 @@
+metadata:
+  id: palworld-proton
+  name: Palworld Proton
+  version: PTDL_v2
+  game: palworld
+  author: josdekurk@gmail.com
+  description: Fight, farm, build and work alongside mysterious creatures called "Pals" in this completely new multiplayer, open world survival and crafting game!
+  tags:
+  - steam_disk_space
+container:
+  image: ghcr.io/parkervcp/steamcmd:proton
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - ./PalworldServerConfigParser; (while read cmd; do rcon -s -a "localhost:$RCON_PORT" -p "$ADMIN_PASSWORD" "$cmd";done) < /dev/stdin & proton run /home/container/Pal/Binaries/Win64/PalServer-Win64-Shipping.exe -publiclobby -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS -port={{SERVER_PORT}} -publicport={{SERVER_PORT}} -servername="{{SERVER_NAME}}" -players={{MAX_PLAYERS}} $(if [ -n "$SERVER_PASSWORD" ]; then echo "-serverpassword=\"${SERVER_PASSWORD}\""; fi) -adminpassword="{{ADMIN_PASSWORD}}" -rcon
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\r\n\r\n\r\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\r\n#apt -y update\r\n#apt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## add below your custom commands if needed\r\n## copy template config file\r\necho \"Copy template config file into config folder!\"\r\n\r\nif [ -f \"/mnt/server/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini\" ]; then\r\n    echo \"Config file already exitis, backing up and overwriting with a new one\"\r\n    mv /mnt/server/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini /mnt/server/Pal/Saved/Config/WindowsServer/PalWorldSettings_$(date +\"%Y%m%d%H%M%S\").ini\r\n    cp /mnt/server/DefaultPalWorldSettings.ini /mnt/server/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini\r\nelse \r\n    echo \"Creating new config file\"\r\n    mkdir -p /mnt/server/Pal/Saved/Config/WindowsServer\r\n    cp /mnt/server/DefaultPalWorldSettings.ini /mnt/server/Pal/Saved/Config/WindowsServer/PalWorldSettings.ini\r\nfi\r\n\r\ncd /mnt/server\r\n# Download self made replace tool\r\necho \"Downloading config parser aplication\"\r\ncurl -sSL -o PalworldServerConfigParser https://raw.githubusercontent.com/parkervcp/eggs/master/game_eggs/steamcmd_servers/palworld/PalworldServerConfigParser-linux-amd64\r\nchmod +x PalworldServerConfigParser\r\n\r\ncd /tmp\r\ncurl -sSL -o /mnt/server/Pal/Binaries/Win64/winmm.dll https://raw.githubusercontent.com/parkervcp/eggs/master/game_eggs/steamcmd_servers/palworld/winmm.dll\r\n\r\nLATEST_JSON=$(curl --silent \"https://api.github.com/repos/UE4SS-RE/RE-UE4SS/releases/latest\")\r\nMATCH=\"UE4SS_\"\r\nDOWNLOAD_URL=$(echo ${LATEST_JSON} | jq .assets | jq -r .[].browser_download_url | grep -i ${MATCH})\r\necho ${DOWNLOAD_URL}\r\ncurl -sSL -o ue4ss.zip ${DOWNLOAD_URL}\r\nunzip -o ue4ss.zip -d /mnt/server/Pal/Binaries/Win64\r\n\r\n## install end\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: shutdown 5
+      timeout: 30s
+variables:
+- name: SRCDS_APPID
+  description: Do not edit!
+  default: '2394010'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '2394010'
+- name: AUTO_UPDATE
+  description: Auto update the server on start.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: ''
+  default: '32'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 32
+- name: SERVER_NAME
+  description: ''
+  default: A Pterodactyl hosted Palworld Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: If specified, players must provide this password to join the server.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 30
+- name: ADMIN_PASSWORD
+  description: If specified, players must provide this password (via the in-game chat or RCON) to gain access to administrator commands on the server.
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 30
+- name: PUBLIC_IP
+  description: "Set this to the server public ip address.\r\nOnly needed if the allocation is a local ip, else the allocate ip will be used automatically"
+  default: ''
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: RCON_PORT
+  description: Does not need to be allocated!
+  default: '25575'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: RCON_ENABLE
+  description: Must Be ON
+  default: 'True'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - 'True'
+- name: ENABLE_ENEMY
+  description: "Turns off or on bEnableInvaderEnemy,\r\nCan be used to slow download memory leaks.\r\nOff should slow down the memory leaks."
+  default: 'True'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'True'
+    - 'False'
+- name: SERVER_DESCRIPTION
+  description: The description of the server.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: WINDOWS_INSTALL
+  description: ''
+  default: '1'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1'
+networking:
+  ports:
+  - name: RCON Port
+    internal: '{{RCON_PORT}}'
+    protocol: tcp
+    required: true
+    firewall_default: deny
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

@@ -1,0 +1,99 @@
+metadata:
+  id: grand-theft-auto-connected
+  name: Grand Theft Auto Connected
+  version: PTDL_v2
+  game: generic
+  author: admin@softwarenoob.com
+  description: Grand Theft Auto Connected is a custom scriptable multiplayer modification for multiple Grand Theft Auto games.
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./Server
+  args: []
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: GAMETYPE
+  description: 'Sets the game this server will support. Available options: gta:iii, gta:vc, gta:sa, gta:ug, gta:iv, gta:eflc'
+  default: gta:iv
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - gta:iii
+    - gta:vc
+    - gta:sa
+    - gta:ug
+    - gta:iv
+    - gta:eflc
+- name: SERVERNAME
+  description: The name of the server, which appears in the server browser.
+  default: Pterodactyl Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVERBROWSER
+  description: Whether to show the server in the server browser, set to true or false
+  default: 'true'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: DL_VERSION
+  description: The version of GATC to install such as 1.2.10, enter latest for the latest version.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

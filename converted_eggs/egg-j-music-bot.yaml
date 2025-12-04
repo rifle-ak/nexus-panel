@@ -1,0 +1,159 @@
+metadata:
+  id: jmusicbot
+  name: JMusicBot
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: A Discord music bot that's easy to set up and run yourself!
+container:
+  image: ghcr.io/pterodactyl/yolks:java_17
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Dnogui=true
+  - -jar
+  - JMusicBot.jar
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: BOT_TOKEN
+  description: 'The token for your Discord bot. Learn how to obtain a token and configure your bot application properly here: https://jmusicbot.com/getting-a-bot-token/'
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: BOT_OWNER
+  description: 'This is the Discord User ID of the bot owner. Learn how to obtain this ID here: https://jmusicbot.com/finding-your-user-id/'
+  default: Change This To Your Discord User ID
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOT_PREFIX
+  description: This sets the prefix for the bot. The prefix is used to control the commands. If you use !, the play command will be !play. If you do not set this, the prefix will be a mention of the bot (@Botname play).
+  default: '@mention'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOT_ALT_PREFIX
+  description: If you set this, the bot will also use this prefix in addition to "Bot Prefix". Set to NONE to not have an alternate prefix.
+  default: NONE
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOT_GAME
+  description: If you change this, it modifies the default game of the bot. Set this to NONE to have no game. Set this to DEFAULT to use the default game. You can make the game "Playing X", "Listening to X", or "Watching X" where X is the title. If you don't include an action, it will use the default of "Playing".
+  default: DEFAULT
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOT_STATUS
+  description: '[ Accepted Values: ONLINE IDLE DND INVISIBLE ] Will modify the default status of bot.'
+  default: ONLINE
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - ONLINE
+    - IDLE
+    - DND
+    - INVISIBLE
+- name: BOT_SONG_STATUS
+  description: 'If you set this to true, the bot will list the title of the song it is currently playing in its "Playing" status. NOTE: This will ONLY work if the bot is playing music on ONE Discord server; if the bot is playing in multiple servers, this will not work!'
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: BOT_NPIMAGES
+  description: 'If set to true, the "nowplaying" command will show YouTube thumbnails. NOTE: If you set this to true, the nowplaying boxes will NOT refresh. This is because refreshing the boxes causes the image to be reloaded every time it refreshes.'
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: BOT_STAY_IN_CHANNEL
+  description: If set to true, the bot will not leave a voice channel after it finishes a queue. Keep in mind that being connected to a voice channel uses additional bandwidth, so this option is not recommended if bandwidth is a concern.
+  default: 'false'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: BOT_ALONE_TIME
+  description: This sets the amount of seconds the bot will stay alone on a voice channel until it automatically leaves the voice channel and clears the queue. If not set or set to any number less than or equal to zero, the bot won't leave when alone.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BOT_MAXTIME
+  description: This sets the maximum amount of seconds any track loaded can be. If not set or set to any number less than or equal to zero, there is no maximum time length. This time restriction applies to songs loaded from any source.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

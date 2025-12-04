@@ -1,0 +1,153 @@
+metadata:
+  id: mohaa
+  name: mohaa
+  version: PTDL_v2
+  game: generic
+  author: th3dilli@gmx.at
+  description: 'Medal of Honor: Allied Assault'
+container:
+  image: ghcr.io/parkervcp/games:mohaa
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./mohaa_lnxded
+  args:
+  - +set
+  - sv_punkbuster
+  - '0'
+  - +set
+  - fs_basepath
+  - '{{BASE_PATH}}'
+  - +set
+  - fs_outputpath
+  - '{{LOG_DIR}}'
+  - +set
+  - dedicated
+  - '2'
+  - +set
+  - sv_maxclients
+  - '{{SERVER_MAXCLIENTS}}'
+  - +set
+  - net_ip
+  - 0.0.0.0
+  - +set
+  - net_port
+  - '{{SERVER_PORT}}'
+  - +exec
+  - server.cfg
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: SERVER_MAXCLIENTS
+  description: ''
+  default: '14'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CONFIG_URL
+  description: URL from where to get the initial server.cfg
+  default: https://raw.githubusercontent.com/parkervcp/eggs/mohaa/game_eggs/mohaa/server.cfg
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: SERVER_NAME
+  description: The name of the server
+  default: MOHAA Server running on Pterodactyl
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RCON_PASSWORD
+  description: Admin password for rcon
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MAP
+  description: Select the map
+  default: dm/mohdm7
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - obj/obj_team2
+    - dm/mohdm7
+    - dm/mohdm1
+    - dm/mohdm3
+    - dm/mohdm2
+    - dm/mohdm6
+- name: LOG_DIR
+  description: ''
+  default: /home/container/Logs
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: BASE_PATH
+  description: ''
+  default: /home/container
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: ''
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []
