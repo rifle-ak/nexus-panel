@@ -8,18 +8,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
 git clone <repo-url>
-cd game-panel
+cd nexus-panel
 cargo build --release
 
 # Run the CLI
-./target/release/game-panel --help
+./target/release/nexus-panel --help
 ```
 
 ## Project Architecture
 
 ### Crates
 
-**game-config** - Core config format
+**nexus-config** - Core config format
 - `GameConfig` struct with all the bells and whistles
 - Validation logic
 - YAML serialization/deserialization
@@ -31,7 +31,7 @@ cargo build --release
 - Security scanning
 - Smart defaults based on game type
 
-**game-panel** (bin) - CLI tool
+**nexus-panel** (bin) - CLI tool
 - Convert, import, clone, validate commands
 - Pretty output with colors and progress
 - Error handling and logging
@@ -39,7 +39,7 @@ cargo build --release
 ### Key Files
 
 ```
-crates/game-config/src/lib.rs       # Native config format
+crates/nexus-config/src/lib.rs       # Native config format
 crates/egg-importer/src/pterodactyl.rs   # Egg JSON parser
 crates/egg-importer/src/converter.rs     # Conversion logic
 src/main.rs                          # CLI tool
@@ -70,7 +70,7 @@ let (cpu_min, cpu_max, mem_min, mem_max, disk_min) = match game.as_str() {
 
 ## Adding New Validation Rules
 
-1. **Add rule variant** to `ValidationRule` enum in `game-config/src/lib.rs`:
+1. **Add rule variant** to `ValidationRule` enum in `nexus-config/src/lib.rs`:
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -114,7 +114,7 @@ cargo test
 RUST_LOG=debug cargo run -- convert --input test.json
 
 # Test specific crate
-cargo test -p game-config
+cargo test -p nexus-config
 cargo test -p egg-importer
 
 # Format code
@@ -166,7 +166,7 @@ RUST_LOG=debug cargo run -- convert \
 
 ### Add a New Lifecycle Hook Type
 ```rust
-// In game-config/src/lib.rs
+// In nexus-config/src/lib.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LifecycleAction {

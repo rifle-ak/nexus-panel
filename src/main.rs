@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use egg_importer::{EggConverter, PterodactylEgg};
-use game_config::{Diagnostics, GameConfig, GamePanelError};
+use nexus_config::{Diagnostics, GameConfig, NexusPanelError};
 use std::path::{Path, PathBuf};
 use tracing_subscriber;
 
@@ -162,7 +162,7 @@ fn run_diagnostics(format: &str) -> Result<()> {
     let has_failures = results
         .iter()
         .flat_map(|r| &r.checks)
-        .any(|c| matches!(c.status, game_config::diagnostics::Status::Fail));
+        .any(|c| matches!(c.status, nexus_config::diagnostics::Status::Fail));
 
     if has_failures {
         std::process::exit(1);
@@ -181,7 +181,7 @@ fn convert_single_egg(
 
     // Load egg
     let egg = PterodactylEgg::from_file(input).map_err(|e| {
-        GamePanelError::InvalidEggJson {
+        NexusPanelError::InvalidEggJson {
             path: input.display().to_string(),
             error: e.to_string(),
         }
@@ -193,7 +193,7 @@ fn convert_single_egg(
         .add_firewall_rules(add_firewall_rules);
 
     let config = converter.convert(&egg).map_err(|e| {
-        GamePanelError::ConversionError {
+        NexusPanelError::ConversionError {
             egg_name: egg.name.clone(),
             egg_path: input.display().to_string(),
             reason: e.to_string(),
@@ -217,7 +217,7 @@ fn convert_single_egg(
             .parent()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| ".".to_string());
-        GamePanelError::FileWriteError {
+        NexusPanelError::FileWriteError {
             path: output_path.display().to_string(),
             dir,
             error: e.to_string(),
@@ -362,19 +362,19 @@ fn validate_config(input: &Path) -> Result<()> {
     println!("🔍 Validating config: {}", input.display());
 
     let yaml = std::fs::read_to_string(input).map_err(|e| {
-        GamePanelError::FileReadError {
+        NexusPanelError::FileReadError {
             path: input.display().to_string(),
             error: e.to_string(),
         }
     })?;
 
     let config = GameConfig::from_yaml(&yaml).map_err(|e| {
-        if let Some(panel_err) = e.downcast_ref::<GamePanelError>() {
-            // Already a GamePanelError, just return it
+        if let Some(panel_err) = e.downcast_ref::<NexusPanelError>() {
+            // Already a NexusPanelError, just return it
             anyhow::Error::new(panel_err.clone())
         } else {
             // Wrap as InvalidYaml
-            anyhow::Error::new(GamePanelError::InvalidYaml {
+            anyhow::Error::new(NexusPanelError::InvalidYaml {
                 path: input.display().to_string(),
                 error: e.to_string(),
             })

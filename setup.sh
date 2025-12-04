@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Game Panel - Quick Start"
+echo "🚀 Nexus Panel - Quick Start"
 echo ""
 
 # Check if Rust is installed
@@ -22,13 +22,13 @@ echo ""
 echo "✅ Build complete!"
 echo ""
 echo "📋 Available commands:"
-echo "   ./target/release/game-panel convert --input <egg.json> --output <config.yaml>"
-echo "   ./target/release/game-panel import --input-dir <dir> --output-dir <dir>"
-echo "   ./target/release/game-panel clone --repo <url> --output-dir <dir>"
-echo "   ./target/release/game-panel validate --input <config.yaml>"
+echo "   ./target/release/nexus-panel convert --input <egg.json> --output <config.yaml>"
+echo "   ./target/release/nexus-panel import --input-dir <dir> --output-dir <dir>"
+echo "   ./target/release/nexus-panel clone --repo <url> --output-dir <dir>"
+echo "   ./target/release/nexus-panel validate --input <config.yaml>"
 echo ""
 echo "🧪 Test the importer:"
-echo "   ./target/release/game-panel convert --input examples/rust-egg.json --output test.yaml"
+echo "   ./target/release/nexus-panel convert --input examples/rust-egg.json --output test.yaml"
 echo ""
 echo "📚 Documentation:"
 echo "   README.md      - Full documentation"

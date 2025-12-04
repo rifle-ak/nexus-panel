@@ -1,11 +1,11 @@
-# Game Panel - Download & Setup
+# Nexus Panel - Download & Setup
 
 ## 📦 What's Included
 
 This package contains a production-ready Pterodactyl egg importer with comprehensive error handling and logging.
 
 ### Core Components
-- **game-config** - Native YAML config format with security enhancements
+- **nexus-config** - Native YAML config format with security enhancements
 - **egg-importer** - Pterodactyl egg converter with security scanning
 - **CLI tool** - Command-line interface for conversion and validation
 
@@ -26,12 +26,12 @@ This package contains a production-ready Pterodactyl egg importer with comprehen
 
 **Linux/Mac:**
 ```bash
-tar -xzf game-panel.tar.gz
-cd game-panel
+tar -xzf nexus-panel.tar.gz
+cd nexus-panel
 ```
 
 **Windows:**
-Extract `game-panel.zip` and open terminal in the folder.
+Extract `nexus-panel.zip` and open terminal in the folder.
 
 ### 2. Run setup script (Linux/Mac)
 
@@ -57,36 +57,36 @@ cargo build --release
 
 ```bash
 # Convert the example egg
-./target/release/game-panel convert \
+./target/release/nexus-panel convert \
     --input examples/rust-egg.json \
     --output test.yaml
 
 # Validate the output
-./target/release/game-panel validate --input test.yaml
+./target/release/nexus-panel validate --input test.yaml
 ```
 
 ## 📋 CLI Commands
 
 ### Convert single egg
 ```bash
-game-panel convert --input <egg.json> --output <config.yaml>
+nexus-panel convert --input <egg.json> --output <config.yaml>
 ```
 
 ### Bulk import directory
 ```bash
-game-panel import --input-dir ./eggs --output-dir ./configs
+nexus-panel import --input-dir ./eggs --output-dir ./configs
 ```
 
 ### Clone and import from GitHub
 ```bash
-game-panel clone \
+nexus-panel clone \
     --repo https://github.com/parkervcp/eggs \
     --output-dir ./configs
 ```
 
 ### Validate config
 ```bash
-game-panel validate --input <config.yaml>
+nexus-panel validate --input <config.yaml>
 ```
 
 ## 🔍 Error Handling
@@ -125,13 +125,13 @@ Set log level with `RUST_LOG` environment variable:
 
 ```bash
 # Debug level (verbose)
-RUST_LOG=debug game-panel convert --input egg.json
+RUST_LOG=debug nexus-panel convert --input egg.json
 
 # Info level (default)
-RUST_LOG=info game-panel convert --input egg.json
+RUST_LOG=info nexus-panel convert --input egg.json
 
 # Warning level (quiet)
-RUST_LOG=warn game-panel convert --input egg.json
+RUST_LOG=warn nexus-panel convert --input egg.json
 ```
 
 Logs include:
@@ -147,7 +147,7 @@ See **LOGGING.md** for complete guide.
 
 ### Import Parker's eggs (200+ games)
 ```bash
-./target/release/game-panel clone \
+./target/release/nexus-panel clone \
     --repo https://github.com/parkervcp/eggs \
     --output-dir ./configs \
     --continue-on-error
@@ -162,8 +162,8 @@ cp examples/rust-egg.json my-game.json
 vim my-game.json
 
 # Convert and validate
-./target/release/game-panel convert --input my-game.json
-./target/release/game-panel validate --input my-game.yaml
+./target/release/nexus-panel convert --input my-game.json
+./target/release/nexus-panel validate --input my-game.yaml
 ```
 
 ### Contribute
@@ -191,7 +191,7 @@ cargo build --release
 chmod +x setup.sh
 
 # Fix binary permissions
-chmod +x target/release/game-panel
+chmod +x target/release/nexus-panel
 ```
 
 ### Conversion errors

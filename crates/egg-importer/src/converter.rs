@@ -1,6 +1,6 @@
 use crate::pterodactyl::{EggVariable, PterodactylEgg};
 use anyhow::{Context, Result};
-use game_config::*;
+use nexus_config::*;
 use regex::Regex;
 use std::collections::HashMap;
 

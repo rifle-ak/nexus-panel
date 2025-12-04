@@ -2,7 +2,7 @@ use thiserror::Error;
 
 /// Errors with built-in solutions - no guessing games
 #[derive(Error, Debug, Clone)]
-pub enum GamePanelError {
+pub enum NexusPanelError {
     // ==================== File System Errors ====================
     #[error("Failed to read file: {path}\n\n💡 Solution:\n  • Check if the file exists: ls -la {path}\n  • Check file permissions: chmod 644 {path}\n  • Verify you have read access to the directory\n\nError: {error}")]
     FileReadError {
@@ -79,14 +79,14 @@ pub enum GamePanelError {
     GitError { error: String },
 
     // ==================== System Errors ====================
-    #[error("System requirements not met:\n\n❌ Missing:\n{missing}\n\n💡 Solution:\n  Run diagnostics: game-panel diagnose\n  Install missing dependencies based on your OS")]
+    #[error("System requirements not met:\n\n❌ Missing:\n{missing}\n\n💡 Solution:\n  Run diagnostics: nexus-panel diagnose\n  Install missing dependencies based on your OS")]
     SystemRequirementsNotMet { missing: String },
 
-    #[error("Insufficient permissions\n\n💡 Solution:\n  • Run with sudo if needed: sudo game-panel ...\n  • Check file/directory ownership: ls -la\n  • Ensure your user is in required groups (docker, etc.)")]
+    #[error("Insufficient permissions\n\n💡 Solution:\n  • Run with sudo if needed: sudo nexus-panel ...\n  • Check file/directory ownership: ls -la\n  • Ensure your user is in required groups (docker, etc.)")]
     InsufficientPermissions,
 
     // ==================== Conversion Errors ====================
-    #[error("Failed to convert egg: {egg_name}\n\n❌ Reason: {reason}\n\n💡 Solution:\n  {solution}\n\n📝 Debug Steps:\n  1. Check egg format: cat {egg_path} | jq .\n  2. Validate required fields exist\n  3. Run with verbose logging: RUST_LOG=debug game-panel convert ...\n  4. Report issue if egg is from official source")]
+    #[error("Failed to convert egg: {egg_name}\n\n❌ Reason: {reason}\n\n💡 Solution:\n  {solution}\n\n📝 Debug Steps:\n  1. Check egg format: cat {egg_path} | jq .\n  2. Validate required fields exist\n  3. Run with verbose logging: RUST_LOG=debug nexus-panel convert ...\n  4. Report issue if egg is from official source")]
     ConversionError {
         egg_name: String,
         egg_path: String,
@@ -95,11 +95,11 @@ pub enum GamePanelError {
     },
 
     // ==================== Generic Fallback ====================
-    #[error("Unexpected error occurred\n\n❌ Error: {error}\n\n💡 Solution:\n  • Run diagnostics: game-panel diagnose\n  • Check logs with: RUST_LOG=debug game-panel ...\n  • Report this error on GitHub if issue persists\n  • Include the full error message and command you ran")]
+    #[error("Unexpected error occurred\n\n❌ Error: {error}\n\n💡 Solution:\n  • Run diagnostics: nexus-panel diagnose\n  • Check logs with: RUST_LOG=debug nexus-panel ...\n  • Report this error on GitHub if issue persists\n  • Include the full error message and command you ran")]
     Unexpected { error: String },
 }
 
-impl GamePanelError {
+impl NexusPanelError {
     /// Get the error code for documentation lookup
     pub fn error_code(&self) -> &str {
         match self {
@@ -125,21 +125,21 @@ impl GamePanelError {
 
     /// Get documentation URL for this error
     pub fn docs_url(&self) -> String {
-        format!("https://docs.game-panel.io/errors/{}", self.error_code())
+        format!("https://docs.nexus-panel.io/errors/{}", self.error_code())
     }
 }
 
 // Helper to convert std errors to our rich errors
 pub trait ResultExt<T> {
-    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, GamePanelError>;
+    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, NexusPanelError>;
 }
 
 impl<T, E: std::error::Error + 'static> ResultExt<T> for Result<T, E> {
-    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, GamePanelError> {
+    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, NexusPanelError> {
         let path = path.into();
         self.map_err(|e| {
             if operation == "read" {
-                GamePanelError::FileReadError {
+                NexusPanelError::FileReadError {
                     path,
                     error: e.to_string(),
                 }
@@ -148,7 +148,7 @@ impl<T, E: std::error::Error + 'static> ResultExt<T> for Result<T, E> {
                     .parent()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| ".".to_string());
-                GamePanelError::FileWriteError {
+                NexusPanelError::FileWriteError {
                     path,
                     dir,
                     error: e.to_string(),
@@ -165,15 +165,15 @@ mod tests {
     #[test]
     fn test_error_codes_unique() {
         let errors = vec![
-            GamePanelError::FileReadError {
+            NexusPanelError::FileReadError {
                 path: "test".into(),
                 error: "not found".into(),
             },
-            GamePanelError::InvalidEggJson {
+            NexusPanelError::InvalidEggJson {
                 path: "test".into(),
                 error: "test".into(),
             },
-            GamePanelError::SecurityIssue {
+            NexusPanelError::SecurityIssue {
                 context: "test".into(),
                 issue: "test".into(),
                 solution: "test".into(),
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_error_messages_have_solutions() {
-        let error = GamePanelError::FileReadError {
+        let error = NexusPanelError::FileReadError {
             path: "/test/file.json".into(),
             error: "not found".into(),
         };
