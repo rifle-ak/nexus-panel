@@ -1,0 +1,176 @@
+metadata:
+  id: ark-survival-evolved
+  name: 'Ark: Survival Evolved'
+  version: PTDL_v2
+  game: ark
+  author: dev@shepper.fr
+  description: 'As a man or woman stranded, naked, freezing, and starving on the unforgiving shores of a mysterious island called ARK, use your skill and cunning to kill or tame and ride the plethora of leviathan dinosaurs and other primeval creatures roaming the land. Hunt, harvest resources, craft items, grow crops, research technologies, and build shelters to withstand the elements and store valuables, all while teaming up with (or preying upon) hundreds of other players to survive, dominate... and escape! — Gamepedia: ARK'
+  tags:
+  - steam_disk_space
+container:
+  image: ghcr.io/parkervcp/games:source
+  environment: {}
+resources:
+  cpu:
+    min: 4000
+    max: 6000
+    shares: 1024
+  memory:
+    min: 8Gi
+    max: 16Gi
+    swap: 512Mi
+  disk:
+    min: 50Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - rmv() { echo  "stopping server"; rcon -t rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} saveworld &&rcon -t rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} DoExit && wait ${ARK_PID}; echo "Server Closed"; exit; }; trap rmv 15 2; cd ShooterGame/Binaries/Linux && ./ShooterGameServer {{SERVER_MAP}}?listen?SessionName="{{SESSION_NAME}}"?ServerPassword={{ARK_PASSWORD}}?ServerAdminPassword={{ARK_ADMIN_PASSWORD}}?Port={{SERVER_PORT}}?RCONPort={{RCON_PORT}}?QueryPort={{QUERY_PORT}}?RCONEnabled=True?MaxPlayers={{MAX_PLAYERS}}?GameModIds={{MOD_ID}}$( [ "$BATTLE_EYE" == "1" ] || printf %s ' -NoBattlEye' ) -server -automanagedmods {{ARGS}} -log & ARK_PID=$! ; until echo "waiting for rcon connection..."; (rcon -t rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD})<&0 & wait $!; do sleep 5; done
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ubuntu:18.04'\r\napt -y update\r\napt -y --no-install-recommends --no-install-suggests install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [ \"${STEAM_USER}\" == \"\" ]; then\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\n\r\nmkdir -p /mnt/server/Engine/Binaries/ThirdParty/SteamCMD/Linux\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/Engine/Binaries/ThirdParty/SteamCMD/Linux\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} +force_install_dir /mnt/server +app_update ${SRCDS_APPID} ${EXTRA_FLAGS} +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## create a symbolic link for loading mods\r\ncd /mnt/server/Engine/Binaries/ThirdParty/SteamCMD/Linux\r\nln -sf ../../../../../Steam/steamapps steamapps\r\ncd /mnt/server"
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: ARK_PASSWORD
+  description: If specified, players must provide this password to join the server.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 100
+- name: ARK_ADMIN_PASSWORD
+  description: If specified, players must provide this password (via the in-game console) to gain access to administrator commands on the server.
+  default: PleaseChangeMe
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 100
+- name: SERVER_MAP
+  description: 'Available Maps: TheIsland, TheCenter, Ragnarok, ScorchedEarth_P, Aberration_P, Extinction, Valguero_P, Genesis, CrystalIsles, Gen2, Fjordur'
+  default: TheIsland
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SESSION_NAME
+  description: ARK server name
+  default: A Pterodactyl Hosted ARK Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RCON_PORT
+  description: ARK rcon port used by rcon tools.
+  default: '27020'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: QUERY_PORT
+  description: ARK query port used by steam server browser and ark client server browser.
+  default: '27015'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AUTO_UPDATE
+  description: "This is to enable auto-updating for servers.\r\n\r\nDefault is 0. Set to 1 to update"
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BATTLE_EYE
+  description: "Enable BattleEye\r\n\r\n0 to disable\r\n1 to enable\r\n\r\ndefault=\"1\""
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SRCDS_APPID
+  description: ARK steam app id for auto updates. Leave blank to avoid auto update.
+  default: '376030'
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: ARGS
+  description: 'Specify additional launch parameters such as -crossplay. You must include a dash - and separate each parameter with space: -crossplay -exclusivejoin'
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MOD_ID
+  description: 'Specifies the order and which mods are loaded. ModIDs need to be comma-separated such as: ModID1,ModID2'
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: Specifies the maximum amount of players able to join the server.
+  default: '12'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports:
+  - name: Rcon Port
+    internal: '{{RCON_PORT}}'
+    protocol: tcp
+    required: true
+    firewall_default: deny
+  - name: Query Port
+    internal: '{{QUERY_PORT}}'
+    protocol: tcp
+    required: true
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

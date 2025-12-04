@@ -1,0 +1,76 @@
+metadata:
+  id: ragemp
+  name: Rage.MP
+  version: PTDL_v2
+  game: generic
+  author: noreply.waypointhosting@gmail.com
+  description: "https://rage.mp/\r\n\r\nModified to work with the latest version of RAGE:MP\r\nWill automatically install linux bridge.\r\n**This server requires 2 ports to be added for the server. the main port and the next (port+1) as ports for the server."
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./ragemp-server
+  args: []
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^X
+      timeout: 30s
+variables:
+- name: SERVER_NAME
+  description: Server name that will be displayed to the master server.  (64 Char max)
+  default: RAGE:MP Unofficial server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: Maximum number of players your server will hold.  (Max 100)
+  default: '50'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 1
+    - 100
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

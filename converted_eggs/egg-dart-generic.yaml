@@ -1,0 +1,108 @@
+metadata:
+  id: dart-generic
+  name: dart generic
+  version: PTDL_v2
+  game: generic
+  author: alden@knoban.com
+  description: "A generic dart CLI egg.\r\n\r\nThis will clone a dart CLI application. it defaults to master if no branch is specified.\r\n\r\nInstalls the pubspec.yaml packages on run. If you set user_upload then I assume you know what you are doing."
+container:
+  image: ghcr.io/parkervcp/yolks:dart_2.19
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - if [[ -d .git ]] && [[ {{AUTO_RESET}} == "1" ]]; then git reset --hard; fi; if [[ -d .git ]] && [[ {{AUTO_UPDATE}} == "1" ]]; then git pull; fi; dart pub get; dart run
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: GIT_ADDRESS
+  description: "GitHub Repo to clone\r\n\r\nI.E. https://github.com/kNoAPP/repo_name"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BRANCH
+  description: The branch of the bot to install.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: USER_UPLOAD
+  description: "Skip all the install stuff if you are letting a user upload files.\r\n\r\n0 = false (default)\r\n1 = true"
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AUTO_UPDATE
+  description: Pull the latest files on startup when using a GitHub repo.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AUTO_RESET
+  description: Hard reset the latest files on startup when using a GitHub repo.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: USERNAME
+  description: Username to auth with git.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ACCESS_TOKEN
+  description: "Password to use with git.\r\n\r\nIt's best practice to use a Personal Access Token.\r\nhttps://github.com/settings/tokens\r\nhttps://gitlab.com/-/profile/personal_access_tokens"
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

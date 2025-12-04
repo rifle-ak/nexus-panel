@@ -1,0 +1,127 @@
+metadata:
+  id: meilisearch
+  name: Meilisearch
+  version: PTDL_v2
+  game: generic
+  author: josdekurk@gmail.com
+  description: A lightning-fast search engine that fits effortlessly into your apps, websites, and workflow.
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - ./meilisearch --http-addr "0.0.0.0:{{SERVER_PORT}}"  --max-indexing-memory="{{SERVER_MEMORY}}mb" $([ "$NO_ANALYTICS" -eq 1 ] && echo "--no-analytics")
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: MEILI_MASTER_KEY
+  description: "In production, a Master key of at least 16 bytes is mandatory\r\nSets the instance's master key, automatically protecting all routes except GET /health. This means you will need a valid API key to access all other endpoints."
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: MEILI_ENV
+  description: Configures the instance's environment. Value must be either production or development.
+  default: development
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - development
+    - production
+- name: NO_ANALYTICS
+  description: Deactivates Meilisearch's built-in telemetry when provided.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MEILI_DUMP_DIR
+  description: Sets the directory where Meilisearch will create dump files.
+  default: /home/container/dumps
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: MEILI_DB_PATH
+  description: Designates the location where database files will be created and retrieved.
+  default: /home/container/data.ms
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: MEILI_LOG_LEVEL
+  description: Defines how much detail should be present in Meilisearch's logs.
+  default: INFO
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - INFO
+    - WARN
+    - ERROR
+    - TRACE
+- name: MEILI_CONFIG_FILE_PATH
+  description: Designates the location of the configuration file to load at launch.
+  default: /home/container/config.toml
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: MEILI_MAX_INDEXING_THREADS
+  description: Sets the maximum number of threads Meilisearch can use during indexing
+  default: '2'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,73 @@
+metadata:
+  id: postgres-14
+  name: Postgres 14
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: A default Postgres install that is not really editable.
+container:
+  image: ghcr.io/parkervcp/yolks:postgres_14
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: postgres
+  args:
+  - -D
+  - /home/container/postgres_db/
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: PGUSER
+  description: The username for the postgres superuser
+  default: pterodactyl
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: PGPASSWORD
+  description: "The postgres super user password with a strong default.\r\nYou should be generating new ones for each server.\r\nIf you don't then users can hit other users DB's"
+  default: Pl3453Ch4n63M3!
+  required: true
+  secret: true
+  user_editable: false
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

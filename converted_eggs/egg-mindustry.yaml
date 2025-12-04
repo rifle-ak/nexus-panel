@@ -1,0 +1,88 @@
+metadata:
+  id: mindustry
+  name: Mindustry
+  version: PTDL_v2
+  game: generic
+  author: sir3lit@gmail.com
+  description: Mindustry is a hybrid tower-defense sandbox factory game. Create elaborate supply chains of conveyor belts to feed ammo into your turrets, produce materials to use for building, and defend your structures from waves of enemies.
+container:
+  image: ghcr.io/parkervcp/yolks:java_11
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Xms128M
+  - -Xmx{{SERVER_MEMORY}}M
+  - -jar
+  - server-release.jar
+  - config
+  - port
+  - '{{SERVER_PORT}},config'
+  - name
+  - '{{SERVER_NAME}},host'
+  - '{{MAPNAME}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: exit
+      timeout: 30s
+variables:
+- name: VERSION
+  description: "The version to download. Example \"v96\" NOT \"4.0v96\" (default is latest)\r\n\r\nThis would also be the github tag for the release"
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: "The server name that shows up in the server list\r\n\r\n(Default: Pterodactyl Testing Server)"
+  default: A Pterodactyl Hosted Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAPNAME
+  description: "Default Maps Available: Ancient Caldera, Fork, Fortress, Glacier, Islands, Labyrinth, Maze, Shattered, Tendrils, Triad, Veins, Wasteland.\r\n\r\n(Default: Tendrils)"
+  default: Tendrils
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

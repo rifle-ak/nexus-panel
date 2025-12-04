@@ -1,0 +1,79 @@
+metadata:
+  id: classicubemgc
+  name: ClassiCube(MGC)
+  version: PTDL_v2
+  game: generic
+  author: panel@qoutsy.33mail.com
+  description: Debian based MCGalaxy Egg.
+container:
+  image: ghcr.io/parkervcp/yolks:mono_latest
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: mono
+  args:
+  - MCGalaxyCLI.exe
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: /shutdown 3 SIGTERM Server shutting down...
+      timeout: 30s
+variables:
+- name: VERSION
+  description: Specify the version to install from https://github.com/UnknownShadow200/MCGalaxy/releases. Leave latest to install the latest version.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: HOSTNAME
+  description: Specify the server name
+  default: Pterodactyl Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MOTD
+  description: Specify the message of the day
+  default: Welcome to the server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

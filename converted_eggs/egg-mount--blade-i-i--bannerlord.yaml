@@ -1,0 +1,123 @@
+metadata:
+  id: mount--blade-ii-bannerlord
+  name: 'Mount & Blade II: Bannerlord'
+  version: PTDL_v2
+  game: generic
+  author: josdekurk@gmail.com
+  description: A strategy/action RPG. Create a character, engage in diplomacy, craft, trade and conquer new lands in a vast medieval sandbox. Raise armies to lead into battle and command and fight alongside your troops in massive real-time battles using a deep but intuitive skill-based combat system.
+container:
+  image: ghcr.io/parkervcp/yolks:wine_latest
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - cd /home/container/bin/Win64_Shipping_Server/ && wine DedicatedCustomServer.Starter.exe /port {{SERVER_PORT}}  /dedicatedcustomserverauthtoken "{{AUTH_TOKEN}}" /dedicatedcustomserverconfigfile tdm_config.txt _MODULES_*Native*Multiplayer*DedicatedCustomServerHelper*_MODULES_
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\r\n\r\n\r\n\r\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\r\n#apt -y update\r\n#apt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## add below your custom commands if needed\r\nmkdir -p /mnt/server/Modules/Native/\r\ncd /mnt/server/Modules/Native/\r\n[ -f \"tdm_config.txt\" ] || curl -sSL -o \"tdm_config.txt\" \"https://pteropaste.com/z67k16z608ty\"\r\n\r\n## install end\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: WINDOWS_INSTALL
+  description: ''
+  default: '1'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: SRCDS_APPID
+  description: ''
+  default: '1863440'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '1863440'
+- name: AUTO_UPDATE
+  description: Auto update the server on restart.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: WINEDEBUG
+  description: don't change this !!!
+  default: -all
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINEARCH
+  description: ''
+  default: win64
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINEPATH
+  description: ''
+  default: /home/container
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: WINETRICKS_RUN
+  description: ''
+  default: vcrun2019 dotnet472
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: AUTH_TOKEN
+  description: 'See: https://www.youtube.com/watch?v=9Hvuz12Bfzg'
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

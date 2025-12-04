@@ -1,0 +1,2256 @@
+bots/discord/aoede/egg-aoede.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/atlbot/egg-a-t-l-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/bastion/egg-bastion.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/corpbot/egg-corp-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/corpbot/settings_dict.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/dynamica/egg-dynamica.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/fragbot/egg-fragbot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/game-server-watcher/egg-game-server-watcher.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/jmusicbot/egg-j-music-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/muse/egg-muse.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/parkertron/egg-parkertron.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/pixelbot/egg-pixel-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/redbot/config.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/redbot/egg-red.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/ree6/egg-ree6.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/discord/sinusbot/egg-sinusbot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/other/bigbrotherbot/egg-big-brother-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/teamspeak3/jts3servermod/egg-j-t-s3-server-mod.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/twitch/phantombot/egg-phantom-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+bots/twitch/sogebot/egg-soge-bot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/nosql/mongodb/egg-mongo-d-b.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/nosql/mongodb/egg-mongo-d-b6.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/nosql/mongodb/egg-mongo-d-b7.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/nosql/rethinkdb/egg-rethinkdb.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/redis/redis-5/egg-redis-5.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/redis/redis-6/egg-redis-6.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/redis/redis-7/egg-redis-7.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/sql/mariadb/egg-maria-d-b10-3.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/sql/postgres/egg-postgres14.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+database/sql/postgres/egg-postgres16.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/FoundryVTT/egg-FoundryVTT.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/SuperTuxKart/egg-super-tux-kart.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/among_us/bettercrewlink_server/egg-better-crewlink-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/among_us/crewlink_server/egg-crewlink-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/among_us/impostor_server/egg-among-us--impostor-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/beamng/beammp/egg-beam-m-p-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/beamng/kissmp/egg-kissmp.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/classicube/mcgalaxy/egg-classi-cube--m-g-c.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/clone_hero/egg-clone-hero.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/cs2d/egg-c-s2-d.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/cubeengine/assaultcube/egg-assault-cube.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/cubeengine/cube2/egg-cube2--sauerbraten.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/ddracenetwork/egg-d-d-race-network.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/doom/zandronum/egg-zandronum.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/eft/egg-singleplayer-tarkov.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/enemy_territory/etlegacy/egg-e-t-legacy.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/factorio/clusterio/egg-clusterio.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/factorio/factorio-modupdate/egg-factorio-modupdate.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/factorio/factorio/egg-factorio-a-r-m64.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/factorio/factorio/egg-factorio.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/ftl/tachyon/egg-tachyon.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/altv/egg-alt--v.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/fivem/egg-five-m.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/gtac/egg-grand-theft-auto-connected.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/mtasa/egg-multi-theft-auto.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/openmp/config.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/openmp/egg-open-m-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/ragecoop/egg-rage-c-o-o-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/ragemp/conf.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/ragemp/egg-rage--m-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/gta/samp/egg-s-a--m-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/hogwarp/egg-hogwarp.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/ksp/egg-k-s-p-d-m-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/leaguesandbox/LeagueSandbox_Egg.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/losangelescrimes/egg-l-a-c--online-public-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/mindustry/egg-mindustry.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/LiteLoader-bedrock/egg-LiteLoader-bedrock.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/PowerNukkitX/egg-powernukkitx.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/bedrock/egg-vanilla-bedrock-ARM64.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/bedrock/egg-vanilla-bedrock.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/gomint/egg-go-mint.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/nukkit/egg-nukkit.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/bedrock/pocketmine_mp/egg-pocketmine-m-p.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/crossplay/purpur-geysermc-floodgate/egg-purpur-geysermc-floodgate.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/cuberite/egg-cuberite.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/curseforge/egg-curse-forge-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/fabric/egg-fabric.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/feather/egg-feather.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/folia/egg-folia.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/forge/forge/egg-forge-enhanced.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/ftb/egg-ftb-modpacksch-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/ftb/outdated/egg-f-t-b-revelation.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/ftb/outdated/egg-feed-the-beast.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/glowstone/egg-glowstone.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/krypton/egg-krypton.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/limbo/egg-limbo.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/magma/egg-magma.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/modrinth/egg-modrinth-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/mohist/egg-mohist.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/nanolimbo/egg-nano-limbo.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/neoforge/egg-neo-forge.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/paper/egg-paper.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/purpur/egg-purpur.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/quilt/egg-quilt.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/spigot/egg-spigot.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/spongeforge/egg-sponge-forge.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/spongevanilla/egg-sponge-vanilla.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/Tekkit-2/egg-tekkit-2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/Tekkit/egg-tekkit.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/attack-of-the-bteam/egg-attack-of-the-b--team.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/blightfall/egg-blightfall.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/hexxit/egg-hexxit.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/tekkit-classic/egg-tekkit-classic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/tekkit-legends/egg-tekkit-legends.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/the-1-12-2-pack/egg-the1-12-2-pack.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/technic/the-1-7-10-pack/egg-the1-7-10-pack.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/java/vanillacord/egg-vanilla-cord.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/bedrock/waterdog_pe/egg-waterdog-p-e.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/cross_platform/waterdog/egg-waterdog.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/java/travertine/egg-travertine.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/java/velocity/egg-velocity.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/java/viaaas/egg-v-i-aaa-s.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minecraft/proxy/java/waterfall/egg-waterfall.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/minetest/egg-minetest.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/mohaa/egg-mohaa.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/neverwinter_nights_ee/egg-neverwinter-nights--enhanced-edition.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/openarena/egg-open-arena.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/openra/openra_dune2000/egg-open-r-a--dune2000.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/openra/openra_red_alert/egg-open-r-a.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/openra/openra_tiberian_dawn/egg-open-r-a--tiberian-dawn.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/rdr/redm/egg-red-m.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/rimworld/open_world/egg-rimworld-open-world.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/rimworld/together/egg-rimworld-together.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/spacestation_14/egg-spacestation14.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/starmade/egg-starmade.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/7_days_to_die/egg-7-days-to-die.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/ark_survival_ascended/egg-ark--survival-ascended.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/ark_survival_evolved/egg-ark--survival-evolved.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/arma/arma3/egg-arma3.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/arma/arma_reforger/egg-arma-reforger.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/assetto_corsa/egg-assetto-corsa--freeroam--a-i.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/assetto_corsa/egg-assetto-corsa.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/astro_colony/egg-astro-colony-wine.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/astro_colony/egg-astro-colony.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/astroneer/egg-astroneer-dedicated-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/avorion/egg-avorion.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/barotrauma/egg-barotrauma.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/battalion_legacy/egg-b-a-t-t-a-l-i-o-n--legacy.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/black_mesa/egg-black-mesa.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/citadel/egg-citadel-forged-with-fire.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/colony_survival/egg-colony-survival.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/conan_exiles/egg-conan-exiles.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/core_keeper/egg-core-keeper.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/counter_strike/counter_strike_2/egg-counter--strike2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/counter_strike/counter_strike_source/egg-counter--strike--source.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/craftopia/egg-craftopia.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/cryofall/egg-cryo-fall.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/dayz-experimental/egg-dayz-experimental.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/ddnet/egg-d-d-net.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/dead_matter/egg-dead-matter.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/dont_starve/egg-don-t-starve-together.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/eco/egg-eco.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/empyrion/egg-empyrion--galactic-survival.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/enshrouded/egg-enshrouded.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/enshrouded/enshrouded_server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/fof/egg-fof.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/frozen_flame/egg-frozen-flame.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/ground_branch/egg-ground-branch.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/hlds_server/rehlds/egg-custom-re-h-l-d-s-engine-game.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/hlds_server/vanilla/egg-custom-h-l-d-s-engine-game.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/holdfast/egg-holdfast-na-w.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/humanitz/egg-humanit-z.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/hurtworld/egg-hurtworld.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/icarus/egg-icarus--dedicated.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/insurgency_sandstorm/egg-insurgency--sandstorm.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/iosoccer/eggs-iosoccer.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/killing_floor_2/egg-killing-floor2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/left4dead/egg-left4dead.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/left4dead_2/egg-left4dead_2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/longvinter/egg-longvinter.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/modiverse/ServerConfiguration.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/modiverse/egg-modiverse.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/mordhau/egg-mordhau-wine.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/mordhau/egg-mordhau.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/mount_blade_II_bannerlord/egg-mount--blade-i-i--bannerlord.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/myth_of_empires/egg-myth-of-empires.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/necesse/egg-necesse.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/neosvr/Config.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/neosvr/egg-neos-v-r.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/nmrih/egg-nmrih.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/no_love_lost/egg-no-love-lost.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/no_one_survived/egg-no-one-survived.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/novalife_amboise/egg-nova--life--amboise.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/onset/egg-onset.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/open_fortress/egg-open-fortress.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/operation_harsh_doorstop/egg-operation-harsh-doorstop.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/palworld/egg-palworld-proton.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/palworld/egg-palworld.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/pavlov_vr/egg-pavlov-v-r.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/pixark/egg-pix-a-r-k.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/portal_knights/egg-portal-knights.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/post_scriptum/egg-post-scriptum.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/project_zomboid/egg-project-zomboid.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/quake_live/egg-quake-live.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/resonite/Config.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/resonite/egg-resonite.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/rising_world/legacy/egg-rising-world-legacy.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/rising_world/unity/egg-rising-world-unity.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/risk_of_rain_2/egg-risk-of-rain2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/rust/rust_autowipe/egg-rust-autowipe.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/rust/rust_staging/egg-rust-staging.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/satisfactory/egg-satisfactory.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/scpsl/dedicated/egg-scpsl.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/scpsl/exiled/egg-s-c-p--s-l--exiled.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/smalland_survive_the_wilds/egg-smalland--survive-the-wilds.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/solace_crafting/egg-solace-crafting.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/soldat/egg-soldat.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/sonsoftheforest/egg-sons-of-the-forest.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/space_engineers/default/egg-space-engineers.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/space_engineers/torch/egg-space-engineers--torch-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/squad/egg-squad.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/starbound/egg-starbound.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/stationeers/stationeers_bepinex/egg-stationeers--bep-in-ex.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/stationeers/stationeers_vanilla/egg-stationeers.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/stormworks/egg-stormworks--build-and-rescue.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/subnautica_nitrox_mod/egg-subnautica.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/svencoop/egg-sven-co-op.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/swords_'n_Magic_and_Stuff/egg-swords-n-magic-and-stuff.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/team_fortress_2_classic/egg-team-fortress-2-classic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/terratech_worlds/egg-terra-tech-worlds.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/the_forest/egg-the-forest.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/the_isle/evrima/egg-the-isle.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/thefront/egg-the-front.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/tower_unite/egg-tower-unite.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/truck-simulator/american-truck-simulator/egg-american-truck-simulator-dedicated-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/truck-simulator/euro-truck-simulator2/egg-euro-truck-simulator2-dedicated-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/unturned/egg-unturned.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/v_rising/v_rising_bepinex/egg-v-rising-bep-in-ex.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/v_rising/v_rising_vanilla/egg-v-rising.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/valheim/valheim_bepinex/egg-valheim-bep-i-nex.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/valheim/valheim_plus/egg-valheim-plus-mod.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/valheim/valheim_vanilla/egg-valheim.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/vein/egg-v-e-i-n.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/steamcmd_servers/wurm_unlimited/egg-wurm-unlimited.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/teeworlds/egg-teeworlds.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/terraria/tmodloader/egg-t-modloader.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/terraria/tshock/egg-tshock-legacy.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/terraria/tshock/egg-tshock.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/terraria/vanilla/egg-terraria-vanilla.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/tycoon_games/openrct2/egg-openrct2.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/tycoon_games/openttd/egg-open-t-t-d-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/urbanterror/egg-urban-terror.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/veloren/egg-veloren.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/vintage_story/egg-vintage-story.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/wine/generic/egg-wine-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+game_eggs/xonotic/xonotic/egg-xonotic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/bun/egg-bun.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/c#/egg-generic-c.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/dart/egg-dart-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/deno/egg-deno-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/elixir/egg-elixir.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/golang/egg-golang-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/java/egg-java.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/lua/luvit/egg-luvit-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/nodejs/egg-node-js-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/nodemon/egg-nodemon.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/python/egg-python-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+generic/rust/egg-rust-generic.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+monitoring/loki/egg-loki.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+monitoring/prometheus/egg-prometheus.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/5e-tools/egg-5e-tools.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/code-server/egg-code--server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/elasticsearch/egg-elasticsearch.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/foldingathome/egg-folding--home.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/forgejo/egg-forgejo.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/gitea/egg-gitea.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/grafana/egg-grafana.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/haste-server/egg-haste-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/languagetool/egg-languagetool.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/meilisearch/egg-meilisearch.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/owncast/egg-owncast-online.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/rabbitmq/egg-rabbit-m-q.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/rathole/egg-rathole.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/reposilite/egg-reposilite.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/uptime-kuma/egg-uptime-kuma.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+software/yarr/egg-yarr.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+storage/minio/egg-minio-s3.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+storage/sftp_storage_share/egg-sftp-storage-share.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+voice_servers/lavalink/egg-lavalink.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+voice_servers/teamspeak_ARM64/egg-teamspeak3-arm64-server.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+voice_servers/teaspeak/egg-tea-speak.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+
+voice_servers/ts3_manager/egg-t-s3-manager.json
+---
+error: unexpected argument '--egg' found
+
+Usage: nexus-panel clone [OPTIONS] --repo <REPO> --output-dir <OUTPUT_DIR>
+
+For more information, try '--help'.
+

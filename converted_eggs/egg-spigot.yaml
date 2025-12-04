@@ -1,0 +1,94 @@
+metadata:
+  id: spigot
+  name: Spigot
+  version: PTDL_v2
+  game: minecraft
+  author: support@pterodactyl.io
+  description: Spigot is the most widely-used modded Minecraft server software in the world. It powers many of the top Minecraft server networks around to ensure they can cope with their huge player base and ensure the satisfaction of their players. Spigot works by reducing and eliminating many causes of lag, as well as adding in handy features and settings that help make your job of server administration easier.
+  tags:
+  - eula
+  - java_version
+  - pid_limit
+container:
+  image: ghcr.io/pterodactyl/yolks:java_8
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 2Gi
+    max: 4Gi
+    swap: 512Mi
+  disk:
+    min: 10Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Xms128M
+  - -Xmx{{SERVER_MEMORY}}M
+  - -jar
+  - '{{SERVER_JARFILE}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: stop
+      timeout: 30s
+variables:
+- name: SERVER_JARFILE
+  description: The name of the server jarfile to run the server with.
+  default: server.jar
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: regex
+    pattern: /^([\w\d._-]+)(\.jar)$/
+- name: DL_PATH
+  description: A URL to use to download Spigot rather than building it on the server. This is not user viewable. Use <code>{{DL_VERSION}}</code> in the URL to automatically insert the assigned version into the URL. If you do not enter a URL Spigot will build directly in the container (this will fail on low memory containers).
+  default: ''
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: DL_VERSION
+  description: The version of Spigot to download (using the --rev tag from https://hub.spigotmc.org/versions). Use "latest" for latest.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: port
+    range:
+    - 3
+    - 10
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

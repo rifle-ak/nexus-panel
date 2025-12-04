@@ -1,0 +1,73 @@
+metadata:
+  id: grafana
+  name: Grafana
+  version: PTDL_v2
+  game: generic
+  author: p.zarrad@outlook.de
+  description: "The open and composable observability and data visualization platform.\r\nVisualize metrics, logs, and traces from multiple sources like Prometheus, Loki, Elasticsearch, InfluxDB, Postgres and many more."
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./bin/grafana
+  args:
+  - server
+  - web
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: GRAFANA_VERSION
+  description: The version of Grafana to install. By default the latest version is being installed.
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: grafana_plugins
+  description: A list of Grafana plugins that should be installed. Enter the plugins comma separated (e. g. a,b,c).
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

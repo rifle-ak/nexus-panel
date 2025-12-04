@@ -1,0 +1,80 @@
+metadata:
+  id: foundry-vtt
+  name: Foundry VTT
+  version: PTDL_v2
+  game: generic
+  author: pterodactyl@demi.cloud
+  description: Foundry VTT is a standalone application built for experiencing multiplayer tabletop RPGs using a feature-rich and modern self-hosted application where your players connect directly through the browser.
+container:
+  image: ghcr.io/parkervcp/yolks:nodejs_18
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: node
+  args:
+  - ./app/resources/app/main.js
+  - --dataPath="/home/container/data"
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: TIMED_URL
+  description: This is required to download the foundry files. Available in your https://foundryvtt.com/ profile after you've purchased a license. This link generally lasts for about 5 minutes.
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: FOUNDRY_LANGUAGE
+  description: As may be expected, this setting configures the localization of the program and can be leveraged by localization modules to ensure that the interface is translated to the language of your choosing wherever possible.
+  default: en.core
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: UPDATE_CHANNEL
+  description: Select what channel you want to use for automatic updates
+  default: release
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

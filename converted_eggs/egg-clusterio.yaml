@@ -1,0 +1,130 @@
+metadata:
+  id: clusterio
+  name: Clusterio
+  version: PTDL_v2
+  game: generic
+  author: psychoalex@thevcbc.com
+  description: "Clusterio is a clustered Factorio server manager that provides the tooling for implementing cross server interactions in Factorio. It was previously best known for implementing cross server transfer and cloud storage of items via teleporter chests. But this functionality has been pulled out of Clusterio into its own plugin for Clusterio named Subspace Storage.\r\n\r\nBy itself Clusterio doesn't change the gameplay in any way, you could even use Clusterio to manage completely vanilla Factorio servers. Plugins do the work of modding in the visible changes into the game, see the Plugins section for ready-made plugins you can install into a Clusterio cluster."
+container:
+  image: ghcr.io/parkervcp/yolks:nodejs_19
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: exec
+  args:
+  - ./node_modules/.bin/clusterio{{SERVER_MODE}}
+  - run
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: SERVER_MODE
+  description: "Set's the cluster operation mode of the server, can be either \"controller\" or \"host\". This is better thought of as Management or Gameserver nodes.\r\n\r\nRequired on:\r\nAll"
+  default: controller
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - controller
+    - host
+- name: LOG_LEVEL
+  description: "Options: \"none\", \"fatal\", \"error\", \"warn\", \"audit\", \"info\", \"verbose\"\r\n\r\nRequired on:\r\nAll"
+  default: info
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - none
+    - fatal
+    - error
+    - warn
+    - audit
+    - info
+    - verbose
+- name: ADMIN_STRING
+  description: "Superadmin account name\r\n\r\nRequired on:\r\nController"
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: HOST_NAME
+  description: "Host name in the Controller Web UI\r\n\r\nRequired on:\r\nHost"
+  default: Your Sub-Server
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CONTROLLER_URL
+  description: "Connection URL to the Controller server, can be an internal address if you have allocated an additional internal port to the Controller Server.\r\nExample: http://yourip:yourport\r\nRequired on:\r\nHost"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CONTROLLER_TOKEN
+  description: "Authentication token used to connect to the Controller server, generated through the Controller Web UI.\r\n\r\nRequired on:\r\nHost"
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: PLUGINS
+  description: "Clusterio Plugins to install, space separate list.\r\n\r\nExample:\r\n@clusterio/plugin-subspace_storage @clusterio/plugin-global_chat @clusterio/plugin-research_sync @clusterio/plugin-inventory_sync\r\n\r\nRequired on:\r\nAll"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: CLUSTER_NAME
+  description: "The Name of your Controller server cluster.\r\n\r\nRequired:\r\nController"
+  default: Your Cluster
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

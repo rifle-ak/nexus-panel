@@ -1,0 +1,91 @@
+metadata:
+  id: altv
+  name: alt:V
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: 'alt:V Multiplayer a third-party multiplayer modification for Grand Theft Auto: V'
+container:
+  image: ghcr.io/parkervcp/games:altv
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./altv-server
+  args: []
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: LD_LIBRARY_PATH
+  description: Needed to load modules correctly. Best left at default.
+  default: .
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: BUILD
+  description: "The supported versions are release, rc, dev (default: release).\r\nIf you don't know what you are doing leave it on release"
+  default: release
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - release
+    - rc
+    - dev
+- name: PASSWORD
+  description: The password to join the server
+  default: ChangeMe
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_DESC
+  description: Description for the server.
+  default: A Pterodactyl Hosted Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

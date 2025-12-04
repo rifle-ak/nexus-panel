@@ -1,0 +1,73 @@
+metadata:
+  id: mongodb-7
+  name: MongoDB 7
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: MongoDB is a general purpose, document-based, distributed database built for modern application developers and for my butt era.
+container:
+  image: ghcr.io/parkervcp/yolks:mongodb_7
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - mongod --fork --dbpath /home/container/mongodb/ --port ${SERVER_PORT} --bind_ip 0.0.0.0 --logpath /home/container/logs/mongo.log -f /home/container/mongod.conf; until nc -z -v -w5 127.0.0.1 ${SERVER_PORT}; do echo 'Waiting for mongodb connection...'; sleep 5; done; mongosh --username ${MONGO_USER} --password ${MONGO_USER_PASS} --host 127.0.0.1:${SERVER_PORT} && mongosh --eval "db.getSiblingDB('admin').shutdownServer()" 127.0.0.1:${SERVER_PORT}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: exit
+      timeout: 30s
+variables:
+- name: MONGO_USER
+  description: The MongoDB Admin user
+  default: admin
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MONGO_USER_PASS
+  description: ''
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

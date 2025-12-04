@@ -1,0 +1,134 @@
+metadata:
+  id: vein
+  name: VEIN
+  version: PTDL_v2
+  game: generic
+  author: josdekurk@gmail.com
+  description: VEIN is a post-apocalyptic survival multiplayer sandbox game. Gather supplies to survive, explore abandoned buildings, combat bandits, defend your home, assist friendly NPCs, and rebuild society with friends.
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./Vein/Binaries/Linux/VeinServer-Linux-Test
+  args:
+  - -Port={{SERVER_PORT}}
+  - -QueryPort={{QUERY_PORT}}
+  - -log
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "#!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\r\n\r\n ##\r\n\r\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\r\n#apt -y update\r\n#apt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## add below your custom commands if needed\r\nFILE=/mnt/server/Vein/Saved/Config/LinuxServer/Game.ini\r\nif [ -f \"$FILE\" ]; then\r\n    echo \"Config file exitis, skipping\"\r\nelse \r\n    echo \"Config file does not exits, making one\"\r\n    mkdir -p /mnt/server/Vein/Saved/Config/LinuxServer/\r\n    ## Will only work if the egg is merged\r\n    curl -sSL -o /mnt/server/Vein/Saved/Config/LinuxServer/Game.ini https://raw.githubusercontent.com/parkervcp/eggs/master/game_eggs/steamcmd_servers/vein/Game.ini\r\n    curl -sSL -o /mnt/server/Vein/Saved/Config/LinuxServer/Engine.ini https://pteropaste.com/lt75qughcmfj\r\nfi\r\n\r\n## install end\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: SRCDS_APPID
+  description: ''
+  default: '2131400'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+  rules:
+  - type: enum
+    values:
+    - '2131400'
+- name: AUTO_UPDATE
+  description: Auto update the server on start
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: QUERY_PORT
+  description: ''
+  default: '27015'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: MAX_PLAYERS
+  description: ''
+  default: '16'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PUBLIC_SERVER
+  description: Change this to false if you don’t want your game to be listed in the server browser
+  default: 'True'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'True'
+    - 'False'
+- name: SERVER_NAME
+  description: ''
+  default: Vein Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: ''
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports:
+  - name: Query Port
+    internal: '{{QUERY_PORT}}'
+    protocol: tcp
+    required: true
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: tcp
+    port: '{{QUERY_PORT}}'
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

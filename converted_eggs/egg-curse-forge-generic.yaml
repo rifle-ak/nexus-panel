@@ -1,0 +1,84 @@
+metadata:
+  id: curseforge-generic
+  name: CurseForge Generic
+  version: PTDL_v2
+  game: generic
+  author: contact@chromozone.dev
+  description: A generic egg for a CurseForge modpack.
+  tags:
+  - eula
+  - java_version
+  - pid_limit
+container:
+  image: ghcr.io/pterodactyl/yolks:java_18
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - java $([[ -f user_jvm_args.txt ]] && printf %s "@user_jvm_args.txt") -Xms128M -Xmx{{SERVER_MEMORY}}M -Dterminal.jline=false -Dterminal.ansi=true $([[ ! -f unix_args.txt ]] && printf %s "-jar `cat .serverjar`" || printf %s "@unix_args.txt")
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: stop
+      timeout: 30s
+variables:
+- name: PROJECT_ID
+  description: "The modpack project ID from the CurseForge site on the pack page, or 'zip' if installing from an uploaded server.zip file.\r\n\r\nFor example, the project Id of https://www.curseforge.com/minecraft/modpacks/bofa-mods ID is 375152"
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: VERSION_ID
+  description: "The file ID belonging to a specific version of a modpack. Can either be the main file or the file ID associated with the server pack.\r\n\r\nIf not provided the script will attempt to retrieve the latest server pack or client pack available."
+  default: latest
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: API_KEY
+  description: 'A CurseForge API key is required to use this egg. You can learn how to get an API key here: https://support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key'
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,98 @@
+metadata:
+  id: folia
+  name: Folia
+  version: PTDL_v2
+  game: generic
+  author: Hosting@NeverStopGaming.net
+  description: Fork of Paper which adds regionised multithreading to the dedicated server.
+  tags:
+  - eula
+  - java_version
+  - pid_limit
+container:
+  image: ghcr.io/pterodactyl/yolks:java_18
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Xms128M
+  - -XX:MaxRAMPercentage=95.0
+  - -Dterminal.jline=false
+  - -Dterminal.ansi=true
+  - -jar
+  - '{{SERVER_JARFILE}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: stop
+      timeout: 30s
+variables:
+- name: MINECRAFT_VERSION
+  description: "The version of minecraft to download. \r\n\r\nLeave at latest to always get the latest version. Invalid versions will default to latest."
+  default: latest
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_JARFILE
+  description: The name of the server jarfile to run the server with.
+  default: server.jar
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: regex
+    pattern: /^([\w\d._-]+)(\.jar)$/
+- name: DL_PATH
+  description: A URL to use to download a server.jar rather than the ones in the install script. This is not user viewable.
+  default: ''
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: BUILD_NUMBER
+  description: "The build number for the folia release.\r\n\r\nLeave at latest to always get the latest version. Invalid versions will default to latest."
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,80 @@
+metadata:
+  id: waterdog-pe
+  name: Waterdog PE
+  version: PTDL_v2
+  game: minecraft
+  author: parker@pterodactyl.io
+  description: 'Brand new proxy server for Minecraft: Bedrock Edition'
+  tags:
+  - eula
+  - java_version
+  - pid_limit
+container:
+  image: ghcr.io/parkervcp/yolks:java_17
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 2Gi
+    max: 4Gi
+    swap: 512Mi
+  disk:
+    min: 10Gi
+    io_priority: normal
+startup:
+  command: java
+  args:
+  - -Dterminal.ansi=true
+  - -Xms128M
+  - -Xmx{{SERVER_MEMORY}}M
+  - -jar
+  - '{{SERVER_JARFILE}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: end
+      timeout: 30s
+variables:
+- name: WATERDOG_VERSION
+  description: "The build to pull and install. (Ex. 23), or set to latest\r\n\r\nThis is the build number on https://jenkins.waterdog.dev/"
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_JARFILE
+  description: The jar to run to
+  default: server.jar
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

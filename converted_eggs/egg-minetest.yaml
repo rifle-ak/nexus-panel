@@ -1,0 +1,186 @@
+metadata:
+  id: minetest
+  name: Minetest
+  version: PTDL_v2
+  game: generic
+  author: support@pterodactyl.io
+  description: An open source voxel game engine. Play one of our many games, mod a game to your liking, make your own game, or play on a multiplayer server.
+container:
+  image: ghcr.io/parkervcp/games:minetest
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: minetest
+  args:
+  - --server
+  - --port
+  - '{{SERVER_PORT}}'
+  - --gameid
+  - '{{DEFAULT_GAME}}'
+  - --world
+  - /home/container/.minetest/worlds/{{WORLD_NAME}}
+  - --terminal
+  - --config
+  - /home/container/.minetest/minetest.conf
+  - --logfile
+  - /home/container/server.log
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: /shutdown
+      timeout: 30s
+variables:
+- name: SERVER_ADMIN_NAME
+  description: When running a server, clients connecting with this name are admins.
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: Name of the server, to be displayed when players join and in the serverlist.
+  default: Minetest server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_DESC
+  description: Description of server, to be displayed when players join and in the serverlist.
+  default: mine here
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_DOMAIN
+  description: Domain name of server, to be displayed in the serverlist.
+  default: game.minetest.net
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_URL
+  description: Homepage of server, to be displayed in the serverlist.
+  default: https://minetest.net
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_ANNOUNCE
+  description: Automatically report to the serverlist.
+  default: 'true'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - 'true'
+    - 'false'
+- name: SERVER_LIST_URL
+  description: Announce to this serverlist.
+  default: servers.minetest.net
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MOTD
+  description: Message of the day displayed to players connecting.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_MAX_USERS
+  description: Maximum number of players that can be connected simultaneously.
+  default: '15'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: New users need to input this password.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: WORLD_NAME
+  description: The name of the world
+  default: world
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DEFAULT_GAME
+  description: Default game when creating a new world. Only change if you have already uploaded the game!
+  default: minetest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMMUNITY_DOWNLOAD
+  description: "Download a community game.\r\nNeeds COMMUNITY_GAME_NAME and COMMUNITY_GAME_AUTOR"
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMMUNITY_GAME_NAME
+  description: "Case sensitive!\r\nExample: https://content.minetest.net/packages/Wuzzy/mineclone2/\r\nthen this should be mineclone2"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: COMMUNITY_GAME_AUTOR
+  description: "Case-sensitive!\r\nExample: https://content.minetest.net/packages/Wuzzy/mineclone2/\r\nthen this should be Wuzzy"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MINETEST_SUBGAME_PATH
+  description: ''
+  default: /home/container/.minetest/games
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: false
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

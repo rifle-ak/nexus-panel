@@ -1,0 +1,79 @@
+metadata:
+  id: xonotic
+  name: Xonotic
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: This is for the default xonotic setup.
+container:
+  image: ghcr.io/pterodactyl/steamcmd:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./xonotic-linux64-dedicated
+  args:
+  - +log_file
+  - latest.log
+  - +net_address
+  - 0.0.0.0
+  - +port
+  - '{{SERVER_PORT}}'
+  - +maxplayers
+  - '{{MAX_PLAYERS}}'
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: quit
+      timeout: 30s
+variables:
+- name: MAX_PLAYERS
+  description: Max players allowed on the server
+  default: '16'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: VERSION
+  description: ''
+  default: 0.8.6
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

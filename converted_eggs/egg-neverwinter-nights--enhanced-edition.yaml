@@ -1,0 +1,217 @@
+metadata:
+  id: neverwinter-nights-enhanced-edition
+  name: 'Neverwinter Nights: Enhanced Edition'
+  version: PTDL_v2
+  game: generic
+  author: git@robsti.dev
+  description: Return to the Forgotten Realms in this bestselling Dungeons & Dragons roleplaying game. Combines all the content of Neverwinter Nights Diamond Edition with all-new enhanced features. Includes 100+ hours of award-winning adventures and the tools to create your own!
+container:
+  image: ghcr.io/parkervcp/yolks:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - cd bin/linux-x86 && ./nwserver-linux -port $SERVER_PORT -userdirectory '/home/container/user' -servername "${SERVER_NAME}" -module "${MODULE_NAME}" -publicserver "${IS_PUBLIC}" -maxclients "${MAX_CLIENTS}" -minlevel "${MIN_LEVEL}" -maxlevel "${MAX_LEVEL}" -pauseandplay "${PAUSE_AND_PLAY}" -pvp "${PVP}" -servervault "${SERVER_VAULT}" -elc "${ELC}" -ilr "${ILR}" -gametype "${GAME_TYPE}" -oneparty "${ONE_PARTY}" -difficulty "${DIFFICULTY}" -autosaveinterval "${AUTO_SAVE_INTERVAL}" -playerpassword "${PLAYER_PASSWORD}" -dmpassword "${DM_PASSWORD}" -reloadwhenempty "${RELOAD_WHEN_EMPTY}"
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: NWN_VERSION
+  description: Version of the game to install
+  default: latest
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MODULE_NAME
+  description: Name of the module we want to load. Official modules are stored in `~/data` and custom modules need to be stored in `~/user`. Must match the file name exactly without the extension.
+  default: ''
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SAVE_SLOT
+  description: Save game slot number to load on boot.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_CLIENTS
+  description: Maximum number of connections to the game server.
+  default: '96'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MIN_LEVEL
+  description: Minimum character level required to access the game server.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: MAX_LEVEL
+  description: Maximum character level required to access the game server.
+  default: '100'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PAUSE_AND_PLAY
+  description: "Toggle game pausing permissions.\r\n0 = game can only be paused by DM\r\n1 = game can by paused by players"
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PVP
+  description: "The mode of PvP enabled.\r\n0 = none\r\n1 = party\r\n2 = full"
+  default: '2'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '0'
+    - '1'
+    - '2'
+- name: SERVER_VAULT
+  description: "0 = local characters only\r\n1 = server characters only"
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '0'
+    - '1'
+- name: ELC
+  description: Toggle enforcement of legal characters.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ILR
+  description: Toggle enforcement of item level restrictions.
+  default: '1'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: GAME_TYPE
+  description: Set which game room to post the game to. This only applies if the game is public.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ONE_PARTY
+  description: Toggle if multiple parties are allowed.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: DIFFICULTY
+  description: "Game difficulty selection.\r\n1 = easy\r\n2 = normal\r\n3 = D&D hardcore\r\n4 = very difficult"
+  default: '3'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+  rules:
+  - type: enum
+    values:
+    - '1'
+    - '2'
+    - '3'
+    - '4'
+- name: AUTO_SAVE_INTERVAL
+  description: Interval between autosaves in minutes.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PLAYER_PASSWORD
+  description: Password needed to join the server as a player.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: DM_PASSWORD
+  description: Password needed to join the server as a DM.
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: Name of the server as shown on the server browser.
+  default: A Pterodactyl hosted server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: IS_PUBLIC
+  description: Toggle indicating if this is a public or private game.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RELOAD_WHEN_EMPTY
+  description: Determines if the module state is persistent when the server is empty.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop

@@ -1,0 +1,140 @@
+metadata:
+  id: frozen-flame
+  name: Frozen Flame
+  version: PTDL_v2
+  game: generic
+  author: theblitzbat@gmail.com
+  description: Frozen Flame Dedicated Server
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: ./FrozenFlame/Binaries/Linux/FrozenFlameServer-Linux-Shipping
+  args:
+  - -log
+  - -MetaGameServerName="{{SERVER_NAME}}"
+  - -port={{SERVER_PORT}}
+  - -queryPort={{QUERY_PORT}}
+  - -RconPort={{RCON_PORT}}
+  - -RconPassword="{{RCON_PASSWORD}}"
+  working_dir: /home/container
+  lifecycle:
+    pre_start:
+    - type: execute
+      command: "!/bin/bash\r\n# steamcmd Base Installation Script\r\n#\r\n# Server Files: /mnt/server\r\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\r\n\r\n\r\n## just in case someone removed the defaults.\r\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\r\n    echo -e \"steam user is not set.\\n\"\r\n    echo -e \"Using anonymous user.\\n\"\r\n    STEAM_USER=anonymous\r\n    STEAM_PASS=\"\"\r\n    STEAM_AUTH=\"\"\r\nelse\r\n    echo -e \"user set to ${STEAM_USER}\"\r\nfi\r\n\r\n## download and install steamcmd\r\ncd /tmp\r\nmkdir -p /mnt/server/steamcmd\r\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\r\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\r\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\r\ncd /mnt/server/steamcmd\r\n\r\n# SteamCMD fails otherwise for some reason, even running as root.\r\n# This is changed at the end of the install process anyways.\r\nchown -R root:root /mnt\r\nexport HOME=/mnt/server\r\n\r\n## install game using steamcmd\r\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\r\n\r\n## set up 32 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk32\r\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\r\n\r\n## set up 64 bit libraries\r\nmkdir -p /mnt/server/.steam/sdk64\r\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\r\n\r\n## add below your custom commands if needed\r\n\r\nmkdir -p /mnt/server/FrozenFlame/Saved/Config/LinuxServer\r\n\r\ncd /mnt/server/FrozenFlame/Saved/Config/LinuxServer\r\n\r\nFILE=/mnt/server/FrozenFlame/Saved/Config/LinuxServer/Game.ini\r\nif [ -f \"$FILE\" ]; then\r\n    echo \"Config file already exits. updating.\"\r\n    mv Game.ini Game.ini.back\r\n    curl -sSL o Game.ini https://raw.githubusercontent.com/DreamsideInteractive/FrozenFlameServer/main/Game.ini\r\nelse \r\n    echo \"Downloading a config file\"\r\n    curl -sSL -o Game.ini https://raw.githubusercontent.com/DreamsideInteractive/FrozenFlameServer/main/Game.ini\r\nfi\r\n\r\n\r\necho \"-----------------------------------------\"\r\necho \"Installation completed...\"\r\necho \"-----------------------------------------\""
+      condition: first_start
+      timeout: 300s
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^^C
+      timeout: 30s
+variables:
+- name: SRCDS_APPID
+  description: Frozen Flame steam app id for auto updates. Leave blank to avoid auto update.
+  default: '1348640'
+  required: false
+  secret: false
+  user_editable: false
+  user_viewable: false
+- name: MAX_PLAYERS
+  description: Maximum player count
+  default: '10'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: QUERY_PORT
+  description: The query port.
+  default: '25575'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_NAME
+  description: The server name
+  default: My Frozen Flame Server
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: SERVER_PASSWORD
+  description: The server password
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: AUTO_UPDATE
+  description: Auto update server software
+  default: '1'
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: RCON_PORT
+  description: ''
+  default: '27015'
+  required: true
+  secret: false
+  user_editable: false
+  user_viewable: true
+- name: RCON_PASSWORD
+  description: ''
+  default: ''
+  required: true
+  secret: true
+  user_editable: true
+  user_viewable: true
+networking:
+  ports:
+  - name: Query Port
+    internal: '{{QUERY_PORT}}'
+    protocol: tcp
+    required: true
+  - name: Rcon Port
+    internal: '{{RCON_PORT}}'
+    protocol: tcp
+    required: true
+    firewall_default: deny
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
+monitoring:
+  health_check:
+    type: rcon
+    command: status
+    interval: 30s
+    timeout: 5s
+    failure_threshold: 3
+  metrics: []

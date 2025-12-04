@@ -1,0 +1,122 @@
+metadata:
+  id: python-generic
+  name: python generic
+  version: PTDL_v2
+  game: generic
+  author: parker@parkervcp.com
+  description: "A Generic Python Egg for Pterodactyl\r\n\r\nTested with: https://github.com/Ispira/pixel-bot"
+container:
+  image: ghcr.io/parkervcp/yolks:python_3.11
+  environment: {}
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
+startup:
+  command: bash
+  args:
+  - -c
+  - if [[ -d .git ]] && [[ "{{AUTO_UPDATE}}" == "1" ]]; then git pull; fi; if [[ ! -z "{{PY_PACKAGES}}" ]]; then pip install -U --prefix .local {{PY_PACKAGES}}; fi; if [[ -f /home/container/${REQUIREMENTS_FILE} ]]; then pip install -U --prefix .local -r ${REQUIREMENTS_FILE}; fi; /usr/local/bin/python /home/container/{{PY_FILE}}
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop:
+    - type: execute
+      command: ^C
+      timeout: 30s
+variables:
+- name: GIT_ADDRESS
+  description: "Git repo to clone\r\n\r\nI.E. https://github.com/parkervcp/repo_name"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: BRANCH
+  description: "What branch to pull from github.\r\n\r\nDefault is blank to pull the repo default branch"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: USER_UPLOAD
+  description: "Skip all the install stuff if you are letting a user upload files.\r\n\r\n0 = false (default)\r\n1 = true"
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: AUTO_UPDATE
+  description: Pull the latest files on startup when using a GitHub repo.
+  default: '0'
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PY_FILE
+  description: The file that starts the App.
+  default: app.py
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: PY_PACKAGES
+  description: "Install additional python packages.\r\n\r\nUse spaces to separate"
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: USERNAME
+  description: Username to auth with git.
+  default: ''
+  required: false
+  secret: false
+  user_editable: true
+  user_viewable: true
+- name: ACCESS_TOKEN
+  description: "Password to use with git.\r\n\r\nIt's best practice to use a Personal Access Token.\r\nhttps://github.com/settings/tokens\r\nhttps://gitlab.com/-/profile/personal_access_tokens"
+  default: ''
+  required: false
+  secret: true
+  user_editable: true
+  user_viewable: true
+- name: REQUIREMENTS_FILE
+  description: if there are other requirements files to choose from.
+  default: requirements.txt
+  required: true
+  secret: false
+  user_editable: true
+  user_viewable: true
+networking:
+  ports: []
+  dns:
+  - 1.1.1.1
+  - 1.0.0.1
+security:
+  capabilities:
+    drop:
+    - ALL
+    add:
+    - NET_BIND_SERVICE
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+  - type: connection_rate
+    name: rate_limit_connections
+    limit: 100/s
+    action: drop
+  - type: packet_size
+    name: block_amplification
+    max_size: 1500
+    action: drop
