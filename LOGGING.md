@@ -30,7 +30,7 @@ Error: No such file or directory (os error 2)
 Check everything before you start:
 
 ```bash
-game-panel diagnose
+nexus-panel diagnose
 ```
 
 **Checks:**
@@ -78,7 +78,7 @@ game-panel diagnose
 
 **JSON Output for Automation:**
 ```bash
-game-panel diagnose --format json > diagnostics.json
+nexus-panel diagnose --format json > diagnostics.json
 ```
 
 ### 3. Error Codes with Documentation
@@ -137,7 +137,7 @@ WARN Security issue in installation script: Dangerous: piping curl to bash
 Not just errors - helpful warnings too:
 
 ```bash
-game-panel validate --input config.yaml
+nexus-panel validate --input config.yaml
 
 ✅ Config is valid!
 
@@ -154,7 +154,7 @@ game-panel validate --input config.yaml
 Before doing anything:
 ```bash
 # Check if system is ready
-game-panel diagnose
+nexus-panel diagnose
 
 # Fix any failed checks
 # Re-run until all green
@@ -164,7 +164,7 @@ game-panel diagnose
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug game-panel convert \
+RUST_LOG=debug nexus-panel convert \
   --input rust-egg.json \
   --output rust-config.yaml
 
@@ -180,7 +180,7 @@ RUST_LOG=debug game-panel convert \
 
 ```bash
 # Validate before deployment
-game-panel validate --input config.yaml
+nexus-panel validate --input config.yaml
 
 # Check exit code
 echo $?  # 0 = success, 1 = failure
@@ -190,7 +190,7 @@ echo $?  # 0 = success, 1 = failure
 
 ```bash
 # If conversion fails:
-RUST_LOG=debug game-panel convert --input problematic-egg.json 2>&1 | tee debug.log
+RUST_LOG=debug nexus-panel convert --input problematic-egg.json 2>&1 | tee debug.log
 
 # Check the debug log for details
 grep -i "error\|warn" debug.log
@@ -206,14 +206,14 @@ cat ERROR_CODES.md | grep "E901"
 # Pre-deployment checks
 
 echo "Running diagnostics..."
-if ! game-panel diagnose; then
+if ! nexus-panel diagnose; then
     echo "❌ System checks failed!"
     exit 1
 fi
 
 echo "Validating configs..."
 for config in configs/*.yaml; do
-    if ! game-panel validate --input "$config"; then
+    if ! nexus-panel validate --input "$config"; then
         echo "❌ Validation failed: $config"
         exit 1
     fi
@@ -284,41 +284,41 @@ Control output verbosity:
 
 ```bash
 # No logs (errors only)
-game-panel convert --input egg.json
+nexus-panel convert --input egg.json
 
 # Info level (default)
-RUST_LOG=info game-panel convert --input egg.json
+RUST_LOG=info nexus-panel convert --input egg.json
 
 # Debug level (detailed)
-RUST_LOG=debug game-panel convert --input egg.json
+RUST_LOG=debug nexus-panel convert --input egg.json
 
 # Trace level (everything)
-RUST_LOG=trace game-panel convert --input egg.json
+RUST_LOG=trace nexus-panel convert --input egg.json
 
 # Specific module
-RUST_LOG=egg_importer=debug game-panel convert --input egg.json
+RUST_LOG=egg_importer=debug nexus-panel convert --input egg.json
 ```
 
 ## Best Practices
 
 ### 1. Always Run Diagnostics First
 ```bash
-game-panel diagnose
+nexus-panel diagnose
 ```
 
 ### 2. Enable Debug Logging for Issues
 ```bash
-RUST_LOG=debug game-panel command 2>&1 | tee debug.log
+RUST_LOG=debug nexus-panel command 2>&1 | tee debug.log
 ```
 
 ### 3. Validate Before Deployment
 ```bash
-game-panel validate --input config.yaml
+nexus-panel validate --input config.yaml
 ```
 
 ### 4. Check Exit Codes in Scripts
 ```bash
-if ! game-panel validate --input config.yaml; then
+if ! nexus-panel validate --input config.yaml; then
     echo "Validation failed!"
     exit 1
 fi
@@ -326,7 +326,7 @@ fi
 
 ### 5. Save Diagnostics for Support
 ```bash
-game-panel diagnose --format json > diagnostics.json
+nexus-panel diagnose --format json > diagnostics.json
 # Include this when reporting issues
 ```
 
@@ -350,8 +350,8 @@ Panel UI will show:
 ## Files Added
 
 ```
-game-panel/
-├── crates/game-config/src/
+nexus-panel/
+├── crates/nexus-config/src/
 │   ├── errors.rs           # Rich error types with solutions
 │   └── diagnostics.rs      # System diagnostic checks
 ├── ERROR_CODES.md          # Complete error reference
@@ -363,30 +363,30 @@ game-panel/
 ### Test Error Messages
 ```bash
 # File not found
-./target/release/game-panel convert --input nonexistent.json
+./target/release/nexus-panel convert --input nonexistent.json
 
 # Invalid YAML
 echo "bad: yaml: syntax" > bad.yaml
-./target/release/game-panel validate --input bad.yaml
+./target/release/nexus-panel validate --input bad.yaml
 
 # Invalid egg JSON
 echo "{invalid json}" > bad.json
-./target/release/game-panel convert --input bad.json
+./target/release/nexus-panel convert --input bad.json
 ```
 
 ### Test Diagnostics
 ```bash
 # Text output
-./target/release/game-panel diagnose
+./target/release/nexus-panel diagnose
 
 # JSON output
-./target/release/game-panel diagnose --format json | jq .
+./target/release/nexus-panel diagnose --format json | jq .
 ```
 
 ### Test Validation
 ```bash
 # Valid config
-./target/release/game-panel validate --input examples/rust-config.yaml
+./target/release/nexus-panel validate --input examples/rust-config.yaml
 
 # See warnings
 # Create a config without health checks or firewall rules

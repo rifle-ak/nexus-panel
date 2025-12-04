@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub mod errors;
 pub mod diagnostics;
-pub use errors::GamePanelError;
+pub use errors::NexusPanelError;
 pub use diagnostics::Diagnostics;
 
 /// Native game server configuration format
@@ -319,7 +319,7 @@ pub struct Backups {
 
 impl GameConfig {
     /// Validate the configuration with detailed error messages
-    pub fn validate(&self) -> Result<(), GamePanelError> {
+    pub fn validate(&self) -> Result<(), NexusPanelError> {
         let mut errors = Vec::new();
 
         // Validate resource values
@@ -431,7 +431,7 @@ impl GameConfig {
 
         // Return all errors if any
         if !errors.is_empty() {
-            return Err(GamePanelError::ValidationError {
+            return Err(NexusPanelError::ValidationError {
                 config_name: self.metadata.name.clone(),
                 errors: errors.join("\n"),
             });

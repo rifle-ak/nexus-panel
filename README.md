@@ -1,4 +1,4 @@
-# Game Panel - Next-Gen Game Server Management
+# Nexus Panel - Next-Gen Game Server Management
 
 A high-performance game server control panel built with security and performance as first-class citizens.
 
@@ -35,7 +35,7 @@ Build a game server panel that takes the best of Pterodactyl/Pelican and kicks i
 
 ## 📦 Components
 
-### Game Config Format
+### Nexus Config Format
 
 Our native YAML format is superior to Pterodactyl eggs:
 
@@ -82,8 +82,8 @@ Convert Pterodactyl eggs to native format with security enhancements.
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/game-panel
-cd game-panel
+git clone https://github.com/yourusername/nexus-panel
+cd nexus-panel
 
 # Build
 cargo build --release
@@ -93,22 +93,22 @@ cargo build --release
 
 ```bash
 # Convert a single egg
-./target/release/game-panel convert \
+./target/release/nexus-panel convert \
   --input eggs/rust.json \
   --output configs/rust.yaml
 
 # Bulk import from directory
-./target/release/game-panel import \
+./target/release/nexus-panel import \
   --input-dir ./pterodactyl-eggs \
   --output-dir ./configs
 
 # Clone and import from GitHub (Parker's eggs)
-./target/release/game-panel clone \
+./target/release/nexus-panel clone \
   --repo https://github.com/parkervcp/eggs \
   --output-dir ./configs
 
 # Validate a config
-./target/release/game-panel validate \
+./target/release/nexus-panel validate \
   --input configs/rust.yaml
 ```
 

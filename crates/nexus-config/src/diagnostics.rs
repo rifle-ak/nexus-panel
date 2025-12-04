@@ -245,7 +245,7 @@ impl Diagnostics {
         });
 
         // Check write permissions
-        let test_file = current_dir.join(".game-panel-test");
+        let test_file = current_dir.join(".nexus-panel-test");
         let can_write = std::fs::write(&test_file, "test").is_ok();
         if can_write {
             let _ = std::fs::remove_file(&test_file);

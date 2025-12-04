@@ -59,16 +59,16 @@ When importing eggs, we automatically add:
 
 ```bash
 # Convert single egg
-game-panel convert --input rust-egg.json --output rust-config.yaml
+nexus-panel convert --input rust-egg.json --output rust-config.yaml
 
 # Bulk import directory
-game-panel import --input-dir ./eggs --output-dir ./configs
+nexus-panel import --input-dir ./eggs --output-dir ./configs
 
 # Clone and import from GitHub
-game-panel clone --repo https://github.com/parkervcp/eggs --output-dir ./configs
+nexus-panel clone --repo https://github.com/parkervcp/eggs --output-dir ./configs
 
 # Validate config
-game-panel validate --input rust-config.yaml
+nexus-panel validate --input rust-config.yaml
 ```
 
 ## Example Conversion
@@ -127,9 +127,9 @@ security:
 ## Project Structure
 
 ```
-game-panel/
+nexus-panel/
 ├── crates/
-│   ├── game-config/        # Native config format definition
+│   ├── nexus-config/        # Native config format definition
 │   │   └── src/lib.rs      # GameConfig struct + validation
 │   └── egg-importer/       # Pterodactyl egg importer
 │       ├── src/
@@ -153,14 +153,14 @@ cargo test
 
 Conversion works:
 ```bash
-$ game-panel convert --input examples/rust-egg.json --output examples/rust-config.yaml
+$ nexus-panel convert --input examples/rust-egg.json --output examples/rust-config.yaml
 📦 Converting egg: examples/rust-egg.json
 ✅ Converted to: examples/rust-config.yaml
    Game: rust
    Variables: 17
    Ports: 2
 
-$ game-panel validate --input examples/rust-config.yaml
+$ nexus-panel validate --input examples/rust-config.yaml
 ✅ Config is valid!
    Name: Rust
    Game: rust

@@ -135,7 +135,7 @@ name = "egg-importer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "game-config",
+ "nexus-config",
  "regex",
  "serde",
  "serde_json",
@@ -157,32 +157,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "game-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "game-panel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "egg-importer",
- "game-config",
- "serde_json",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -344,6 +318,32 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "nexus-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "nexus-panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "egg-importer",
+ "nexus-config",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "nu-ansi-term"

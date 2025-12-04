@@ -1,6 +1,6 @@
 # Error Codes Reference
 
-All errors in Game Panel include an error code (E###) for easy reference and troubleshooting.
+All errors in Nexus Panel include an error code (E###) for easy reference and troubleshooting.
 
 ## File System Errors (E001-E099)
 
@@ -260,7 +260,7 @@ git ls-remote https://github.com/parkervcp/eggs
 **Solution:**
 ```bash
 # Run diagnostics
-game-panel diagnose
+nexus-panel diagnose
 
 # Install missing dependencies based on your OS
 # See output of diagnose command for specific instructions
@@ -272,7 +272,7 @@ game-panel diagnose
 **Solutions:**
 ```bash
 # Run with sudo (if appropriate)
-sudo game-panel ...
+sudo nexus-panel ...
 
 # Check file ownership
 ls -la /path/to/file
@@ -291,7 +291,7 @@ sudo usermod -aG docker $USER
 **Solutions:**
 ```bash
 # Run with debug logging
-RUST_LOG=debug game-panel convert --input egg.json
+RUST_LOG=debug nexus-panel convert --input egg.json
 
 # Check egg format
 jq . egg.json
@@ -300,7 +300,7 @@ jq . egg.json
 jq '.meta, .startup, .variables, .scripts' egg.json
 
 # Try without security scanning
-game-panel convert --input egg.json --no-security-scan
+nexus-panel convert --input egg.json --no-security-scan
 
 # Report issue if egg is from official source
 ```
@@ -313,13 +313,13 @@ game-panel convert --input egg.json --no-security-scan
 **Solutions:**
 ```bash
 # Run diagnostics
-game-panel diagnose
+nexus-panel diagnose
 
 # Run with debug logging
-RUST_LOG=debug game-panel ...
+RUST_LOG=debug nexus-panel ...
 
 # Check system requirements
-game-panel diagnose
+nexus-panel diagnose
 
 # Report the issue
 # Include:
@@ -336,12 +336,12 @@ Before asking for help, try these:
 
 1. **Run Diagnostics:**
    ```bash
-   game-panel diagnose
+   nexus-panel diagnose
    ```
 
 2. **Enable Debug Logging:**
    ```bash
-   RUST_LOG=debug game-panel [command]
+   RUST_LOG=debug nexus-panel [command]
    ```
 
 3. **Validate Your Files:**
@@ -350,7 +350,7 @@ Before asking for help, try these:
    cat egg.json | jq .
    
    # For configs
-   game-panel validate --input config.yaml
+   nexus-panel validate --input config.yaml
    ```
 
 4. **Check Permissions:**
@@ -375,7 +375,7 @@ Before asking for help, try these:
 
 If you're still stuck:
 
-1. Run diagnostics: `game-panel diagnose --format json > diagnostics.json`
+1. Run diagnostics: `nexus-panel diagnose --format json > diagnostics.json`
 2. Include the error code and full error message
 3. Share what you've tried
 4. Provide your OS and version
@@ -387,4 +387,4 @@ If you're still stuck:
 
 Found a common error pattern not documented here? Submit a PR!
 
-Error codes are defined in: `crates/game-config/src/errors.rs`
+Error codes are defined in: `crates/nexus-config/src/errors.rs`
