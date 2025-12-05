@@ -14,6 +14,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 # gRPC framework
 tonic = "0.12"
 prost = "0.13"
+prost-types = "0.13"
 
 # Containerd client
 containerd-client = "0.7"
@@ -38,6 +39,7 @@ prometheus = { version = "0.13", features = ["process"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 bytes = "1.9"
 futures = "0.3"
+async-trait = "0.1"
 
 [build-dependencies]
 tonic-build = "0.12"

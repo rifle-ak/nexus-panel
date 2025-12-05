@@ -1,46 +1,40 @@
 use crate::error::{NodeError, Result};
-use crate::container::state::{ContainerState, ContainerStatus};
+use crate::container::state::ContainerState;
+use crate::runtime::{ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits};
 use nexus_config::GameConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Manages container lifecycle and state
 pub struct ContainerManager {
+    /// Container runtime (Containerd, Docker, or Mock)
+    runtime: Arc<dyn ContainerRuntime>,
+
     /// Container states (by ID)
     states: Arc<RwLock<HashMap<String, ContainerState>>>,
 
     /// Data directory for server files
     data_dir: PathBuf,
-
-    /// Containerd socket path (for future use)
-    #[allow(dead_code)]
-    containerd_socket: String,
-
-    /// Containerd namespace (for future use)
-    #[allow(dead_code)]
-    namespace: String,
 }
 
 impl ContainerManager {
-    /// Create a new container manager
-    pub fn new(data_dir: PathBuf) -> Self {
+    /// Create a new container manager with a specific runtime
+    pub fn with_runtime(runtime: Arc<dyn ContainerRuntime>, data_dir: PathBuf) -> Self {
         Self {
+            runtime,
             states: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
-            containerd_socket: "/run/containerd/containerd.sock".to_string(),
-            namespace: "nexus-panel".to_string(),
         }
     }
 
-    /// Configure Containerd connection (for future use)
-    pub fn with_containerd(mut self, socket: String, namespace: String) -> Self {
-        self.containerd_socket = socket;
-        self.namespace = namespace;
-        self
+    /// Create a new container manager with mock runtime (for testing)
+    pub fn new(data_dir: PathBuf) -> Self {
+        use crate::runtime::mock::MockRuntime;
+        Self::with_runtime(Arc::new(MockRuntime::new()), data_dir)
     }
 
     /// Create a new container from a Nexus config
@@ -71,9 +65,21 @@ impl ContainerManager {
             format!("Failed to create server directory: {}", e)
         ))?;
 
-        // TODO: Create container using Containerd API
-        // For now, we'll create the state entry
+        // Pull image first
+        info!("Pulling image: {}", config.container.image);
+        self.runtime.pull_image(&config.container.image).await?;
 
+        // Convert config to container spec
+        let spec = Self::config_to_spec(config, &server_dir)?;
+
+        // Create container via runtime
+        let _container_info = self.runtime.create(&container_id, spec).await
+            .map_err(|e| NodeError::StartFailed {
+                container_id: container_id.clone(),
+                source: e.into(),
+            })?;
+
+        // Create state
         let state = ContainerState::new(container_id.clone(), server_name.clone());
 
         // Store state
@@ -109,11 +115,13 @@ impl ContainerManager {
             return Ok(());
         }
 
-        // TODO: Start container using Containerd API
-        // For now, we'll just update the state
+        // Start container via runtime
+        let pid = self.runtime.start(container_id).await
+            .map_err(|e| NodeError::StartFailed {
+                container_id: container_id.to_string(),
+                source: e.into(),
+            })?;
 
-        // Simulate PID assignment
-        let pid = std::process::id();
         state.mark_started(pid);
 
         // Update state
@@ -147,13 +155,14 @@ impl ContainerManager {
             return Ok(());
         }
 
-        // TODO: Stop container using Containerd API with graceful shutdown
-        // 1. Send SIGTERM
-        // 2. Wait for timeout
-        // 3. Send SIGKILL if still running
+        // Stop container via runtime (handles graceful shutdown)
+        let exit_code = self.runtime.stop(container_id, timeout).await
+            .map_err(|e| NodeError::StopFailed {
+                container_id: container_id.to_string(),
+                source: e.into(),
+            })?;
 
-        // For now, we'll just update the state
-        state.mark_stopped(0);
+        state.mark_stopped(exit_code);
 
         // Update state
         {
@@ -209,7 +218,8 @@ impl ContainerManager {
             self.stop_container(container_id, Some(10)).await?;
         }
 
-        // TODO: Delete container using Containerd API
+        // Delete container via runtime
+        self.runtime.delete(container_id).await?;
 
         // Delete server data directory
         let server_dir = self.data_dir.join(container_id);
@@ -244,32 +254,149 @@ impl ContainerManager {
         let states = self.states.read().await;
         states.values().cloned().collect()
     }
+
+    /// Convert GameConfig to ContainerSpec
+    fn config_to_spec(config: &GameConfig, server_dir: &std::path::Path) -> Result<ContainerSpec> {
+        // Build command from startup config
+        let mut command = vec![config.startup.command.clone()];
+        command.extend(config.startup.args.clone());
+
+        // Convert environment variables
+        let mut env = config.container.environment.clone();
+        for var in &config.variables {
+            env.insert(var.name.clone(), var.default.clone());
+        }
+
+        // Create mount for server data
+        let mounts = vec![Mount {
+            source: server_dir.to_string_lossy().to_string(),
+            target: config.startup.working_dir.clone(),
+            read_only: false,
+        }];
+
+        // Convert ports
+        let ports: Vec<PortMapping> = config
+            .networking
+            .ports
+            .iter()
+            .filter_map(|port| {
+                // Parse internal port (skip templates)
+                if let Ok(container_port) = port.internal.parse::<u16>() {
+                    let protocol = match port.protocol {
+                        nexus_config::Protocol::Tcp => "tcp",
+                        nexus_config::Protocol::Udp => "udp",
+                        nexus_config::Protocol::Both => "tcp", // Default to TCP for Both
+                    };
+                    Some(PortMapping {
+                        container_port,
+                        host_port: container_port, // Use same port for now
+                        protocol: protocol.to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Parse resource limits
+        let cpu_shares = config.resources.cpu.shares as u64;
+        let memory_bytes = parse_size(&config.resources.memory.max)?;
+        let memory_swap_bytes = if let Some(ref swap) = config.resources.memory.swap {
+            parse_size(swap)?
+        } else {
+            0 // No swap limit
+        };
+
+        Ok(ContainerSpec {
+            image: config.container.image.clone(),
+            command: vec![],  // Base command is empty, args contain everything
+            args: command,    // Full command + args go here
+            env,
+            working_dir: config.startup.working_dir.clone(),
+            mounts,
+            ports,
+            resources: ResourceLimits {
+                cpu_shares,
+                memory_bytes,
+                memory_swap_bytes,
+            },
+        })
+    }
+}
+
+/// Parse size string (1Gi, 512Mi, etc.) to bytes
+fn parse_size(size_str: &str) -> Result<u64> {
+    let size_str = size_str.trim();
+
+    if size_str.ends_with("Gi") {
+        let num: u64 = size_str.trim_end_matches("Gi").parse()
+            .map_err(|_| NodeError::InvalidConfig {
+                reason: format!("Invalid size: {}", size_str),
+            })?;
+        Ok(num * 1024 * 1024 * 1024)
+    } else if size_str.ends_with("Mi") {
+        let num: u64 = size_str.trim_end_matches("Mi").parse()
+            .map_err(|_| NodeError::InvalidConfig {
+                reason: format!("Invalid size: {}", size_str),
+            })?;
+        Ok(num * 1024 * 1024)
+    } else {
+        // Assume bytes
+        size_str.parse().map_err(|_| NodeError::InvalidConfig {
+            reason: format!("Invalid size: {}", size_str),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::container::state::ContainerStatus;
     use tempfile::TempDir;
 
     fn create_test_config() -> GameConfig {
         GameConfig::from_yaml(r#"
 metadata:
+  id: test-server
   name: Test Server
   game: minecraft
   version: 1.0.0
+  author: test@example.com
 
 container:
   image: "itzg/minecraft-server:latest"
-  working_dir: /data
+  environment: {}
+
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
 
 startup:
-  command: "java -jar server.jar"
+  command: "java"
+  args:
+    - "-jar"
+    - "server.jar"
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop: []
 
 networking:
   ports:
-    - container: 25565
-      host: 25565
+    - name: game
+      internal: "25565"
       protocol: tcp
+      required: true
 
 variables: []
 
