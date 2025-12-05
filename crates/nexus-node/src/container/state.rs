@@ -35,6 +35,9 @@ pub struct ContainerState {
     /// Server name
     pub name: String,
 
+    /// Container image
+    pub image: String,
+
     /// Current status
     pub status: ContainerStatus,
 
@@ -58,10 +61,11 @@ pub struct ContainerState {
 }
 
 impl ContainerState {
-    pub fn new(id: String, name: String) -> Self {
+    pub fn new(id: String, name: String, image: String) -> Self {
         Self {
             id,
             name,
+            image,
             status: ContainerStatus::Created,
             pid: None,
             exit_code: None,

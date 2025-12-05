@@ -80,7 +80,11 @@ impl ContainerManager {
             })?;
 
         // Create state
-        let state = ContainerState::new(container_id.clone(), server_name.clone());
+        let state = ContainerState::new(
+            container_id.clone(),
+            server_name.clone(),
+            config.container.image.clone(),
+        );
 
         // Store state
         {
