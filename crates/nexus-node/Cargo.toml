@@ -1,0 +1,46 @@
+[package]
+name = "nexus-node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Local crates
+nexus-config = { path = "../nexus-config" }
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# gRPC framework
+tonic = "0.12"
+prost = "0.13"
+
+# Containerd client
+containerd-client = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Metrics
+prometheus = { version = "0.13", features = ["process"] }
+
+# Utilities
+uuid = { version = "1.11", features = ["v4", "serde"] }
+bytes = "1.9"
+futures = "0.3"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+tempfile = "3.14"
