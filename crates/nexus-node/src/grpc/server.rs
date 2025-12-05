@@ -221,10 +221,88 @@ impl NodeService for NodeServiceImpl {
 
     async fn stream_logs(
         &self,
-        _request: Request<StreamLogsRequest>,
+        request: Request<StreamLogsRequest>,
     ) -> std::result::Result<Response<Self::StreamLogsStream>, Status> {
-        // TODO: Implement log streaming
-        Err(Status::unimplemented("Log streaming not yet implemented"))
+        let req = request.into_inner();
+        let container_id = req.container_id.clone();
+
+        info!("gRPC: StreamLogs {} (follow: {})", container_id, req.follow);
+
+        // Attach to container console
+        let mut console = self
+            .manager
+            .attach_console(&container_id)
+            .await
+            .map_err(|e| Status::not_found(format!("Container not found: {}", e)))?;
+
+        // Create a channel for streaming log entries
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+
+        // Spawn a task to read from console and send to channel
+        tokio::spawn(async move {
+            let mut line_count = 0;
+            let tail = req.tail as usize;
+            let follow = req.follow;
+            let mut buffer = Vec::new();
+
+            loop {
+                match console.read_line().await {
+                    Ok(Some(line)) => {
+                        line_count += 1;
+
+                        // If tailing, buffer the lines
+                        if tail > 0 && !follow {
+                            buffer.push(line.clone());
+                            if buffer.len() > tail {
+                                buffer.remove(0);
+                            }
+                            continue;
+                        }
+
+                        // Create log entry
+                        let entry = LogEntry {
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            stream: "stdout".to_string(),
+                            line,
+                        };
+
+                        // Send to client
+                        if tx.send(Ok(entry)).await.is_err() {
+                            // Client disconnected
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        // EOF reached
+                        if tail > 0 && !follow {
+                            // Send buffered tail lines
+                            for line in buffer {
+                                let entry = LogEntry {
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    stream: "stdout".to_string(),
+                                    line,
+                                };
+                                if tx.send(Ok(entry)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        // Error reading logs
+                        let _ = tx
+                            .send(Err(Status::internal(format!("Error reading logs: {}", e))))
+                            .await;
+                        break;
+                    }
+                }
+            }
+
+            info!("StreamLogs for {} completed ({} lines)", container_id, line_count);
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
     type StreamLogsStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<LogEntry, Status>>;

@@ -126,9 +126,10 @@ impl ContainerRuntime for MockRuntime {
     }
 }
 
-struct MockConsoleStream {
+pub struct MockConsoleStream {
     container_id: String,
     line_count: usize,
+    follow: bool,
 }
 
 impl MockConsoleStream {
@@ -136,6 +137,15 @@ impl MockConsoleStream {
         Self {
             container_id: container_id.to_string(),
             line_count: 0,
+            follow: false,
+        }
+    }
+
+    pub fn with_follow(container_id: &str, follow: bool) -> Self {
+        Self {
+            container_id: container_id.to_string(),
+            line_count: 0,
+            follow,
         }
     }
 }
@@ -143,20 +153,41 @@ impl MockConsoleStream {
 #[async_trait]
 impl ConsoleStream for MockConsoleStream {
     async fn read_line(&mut self) -> Result<Option<String>> {
-        if self.line_count >= 3 {
-            return Ok(None); // Simulate EOF
+        // Generate some initial lines
+        if self.line_count < 10 {
+            self.line_count += 1;
+
+            let line = match self.line_count {
+                1 => format!("[{}] Server starting...", self.container_id),
+                2 => format!("[{}] Loading configuration", self.container_id),
+                3 => format!("[{}] Initializing game world", self.container_id),
+                4 => format!("[{}] Starting network listener on port 25565", self.container_id),
+                5 => format!("[{}] Server ready!", self.container_id),
+                6 => format!("[{}] Waiting for players...", self.container_id),
+                7 => format!("[{}] Player joined: TestPlayer", self.container_id),
+                8 => format!("[{}] <TestPlayer> Hello world!", self.container_id),
+                9 => format!("[{}] Autosaving world...", self.container_id),
+                10 => format!("[{}] Save complete", self.container_id),
+                _ => return Ok(None),
+            };
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            return Ok(Some(line));
         }
 
-        self.line_count += 1;
-
-        let line = match self.line_count {
-            1 => format!("[{}] Server starting...", self.container_id),
-            2 => format!("[{}] Server ready!", self.container_id),
-            3 => format!("[{}] Done!", self.container_id),
-            _ => return Ok(None),
-        };
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        Ok(Some(line))
+        // If following, generate periodic logs
+        if self.follow {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            self.line_count += 1;
+            let line = format!(
+                "[{}] Periodic log message #{}",
+                self.container_id,
+                self.line_count - 10
+            );
+            Ok(Some(line))
+        } else {
+            // EOF - no more logs
+            Ok(None)
+        }
     }
 }
