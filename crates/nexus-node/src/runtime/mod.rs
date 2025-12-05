@@ -1,3 +1,4 @@
+pub mod containerd;
 pub mod mock;
 
 use crate::error::Result;

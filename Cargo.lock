@@ -849,6 +849,7 @@ dependencies = [
  "nexus-config",
  "prometheus",
  "prost",
+ "prost-types",
  "serde",
  "serde_json",
  "serde_yaml",

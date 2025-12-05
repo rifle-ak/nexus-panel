@@ -1,5 +1,5 @@
 use crate::error::{NodeError, Result};
-use crate::container::state::{ContainerState, ContainerStatus};
+use crate::container::state::ContainerState;
 use crate::runtime::{ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits};
 use nexus_config::GameConfig;
 use std::collections::HashMap;
@@ -351,6 +351,7 @@ fn parse_size(size_str: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::container::state::ContainerStatus;
     use tempfile::TempDir;
 
     fn create_test_config() -> GameConfig {

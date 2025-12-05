@@ -13,6 +13,7 @@ pub struct MockRuntime {
 #[derive(Clone)]
 struct MockContainer {
     id: String,
+    #[allow(dead_code)]
     spec: ContainerSpec,
     pid: Option<u32>,
     status: String,
