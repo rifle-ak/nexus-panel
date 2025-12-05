@@ -254,22 +254,46 @@ mod tests {
     fn create_test_config() -> GameConfig {
         GameConfig::from_yaml(r#"
 metadata:
+  id: test-server
   name: Test Server
   game: minecraft
   version: 1.0.0
+  author: test@example.com
 
 container:
   image: "itzg/minecraft-server:latest"
-  working_dir: /data
+  environment: {}
+
+resources:
+  cpu:
+    min: 1000
+    max: 2000
+    shares: 1024
+  memory:
+    min: 1Gi
+    max: 2Gi
+    swap: 512Mi
+  disk:
+    min: 5Gi
+    io_priority: normal
 
 startup:
-  command: "java -jar server.jar"
+  command: "java"
+  args:
+    - "-jar"
+    - "server.jar"
+  working_dir: /home/container
+  lifecycle:
+    pre_start: []
+    post_start: []
+    pre_stop: []
 
 networking:
   ports:
-    - container: 25565
-      host: 25565
+    - name: game
+      internal: "25565"
       protocol: tcp
+      required: true
 
 variables: []
 
