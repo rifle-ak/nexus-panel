@@ -259,6 +259,20 @@ impl ContainerManager {
         states.values().cloned().collect()
     }
 
+    /// Attach to container console for log streaming
+    pub async fn attach_console(&self, container_id: &str) -> Result<Box<dyn crate::runtime::ConsoleStream>> {
+        // Verify container exists
+        {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+        }
+
+        // Attach to container console
+        self.runtime.attach(container_id).await
+    }
+
     /// Convert GameConfig to ContainerSpec
     fn config_to_spec(config: &GameConfig, server_dir: &std::path::Path) -> Result<ContainerSpec> {
         // Build command from startup config

@@ -86,3 +86,18 @@ pub struct ContainerInfo {
 pub trait ConsoleStream: Send {
     async fn read_line(&mut self) -> Result<Option<String>>;
 }
+
+/// Log entry from container
+#[derive(Debug, Clone)]
+pub struct LogLine {
+    pub timestamp: String,
+    pub stream: LogStream,
+    pub line: String,
+}
+
+/// Log stream type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogStream {
+    Stdout,
+    Stderr,
+}
