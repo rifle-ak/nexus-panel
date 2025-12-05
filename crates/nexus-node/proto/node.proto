@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package nexus.node.v1;
+
+// Nexus Node service for managing game server containers
+service NodeService {
+  // Container lifecycle operations
+  rpc CreateContainer(CreateContainerRequest) returns (CreateContainerResponse);
+  rpc StartContainer(StartContainerRequest) returns (StartContainerResponse);
+  rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
+  rpc RestartContainer(RestartContainerRequest) returns (RestartContainerResponse);
+  rpc DeleteContainer(DeleteContainerRequest) returns (DeleteContainerResponse);
+
+  // Container information
+  rpc GetContainer(GetContainerRequest) returns (GetContainerResponse);
+  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+
+  // Container logs (streaming)
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+  // Node health and info
+  rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Container creation
+message CreateContainerRequest {
+  // Game configuration (YAML or JSON)
+  string config_yaml = 1;
+
+  // Optional custom container ID
+  optional string container_id = 2;
+
+  // Auto-start after creation
+  bool auto_start = 3;
+}
+
+message CreateContainerResponse {
+  string container_id = 1;
+  ContainerState state = 2;
+}
+
+// Container start
+message StartContainerRequest {
+  string container_id = 1;
+}
+
+message StartContainerResponse {
+  uint32 pid = 1;
+  ContainerState state = 2;
+}
+
+// Container stop
+message StopContainerRequest {
+  string container_id = 1;
+
+  // Timeout in seconds (default: 30)
+  optional uint32 timeout_secs = 2;
+}
+
+message StopContainerResponse {
+  int32 exit_code = 1;
+  ContainerState state = 2;
+}
+
+// Container restart
+message RestartContainerRequest {
+  string container_id = 1;
+}
+
+message RestartContainerResponse {
+  uint32 pid = 1;
+  ContainerState state = 2;
+}
+
+// Container deletion
+message DeleteContainerRequest {
+  string container_id = 1;
+
+  // Force stop if running
+  bool force = 2;
+}
+
+message DeleteContainerResponse {
+  bool success = 1;
+}
+
+// Get container info
+message GetContainerRequest {
+  string container_id = 1;
+}
+
+message GetContainerResponse {
+  ContainerState state = 1;
+}
+
+// List containers
+message ListContainersRequest {
+  // Optional filter by status
+  optional string status_filter = 1;
+}
+
+message ListContainersResponse {
+  repeated ContainerState containers = 1;
+}
+
+// Log streaming
+message StreamLogsRequest {
+  string container_id = 1;
+
+  // Follow logs (tail -f style)
+  bool follow = 2;
+
+  // Number of lines from end (0 = all)
+  uint32 tail = 3;
+}
+
+message LogEntry {
+  string timestamp = 1;
+  string stream = 2;  // "stdout" or "stderr"
+  string line = 3;
+}
+
+// Node info
+message GetNodeInfoRequest {}
+
+message GetNodeInfoResponse {
+  string node_id = 1;
+  string version = 2;
+  NodeResources resources = 3;
+  uint32 container_count = 4;
+  int64 uptime_secs = 5;
+}
+
+message NodeResources {
+  uint64 total_cpu_millicores = 1;
+  uint64 total_memory_bytes = 2;
+  uint64 total_disk_bytes = 3;
+
+  uint64 used_cpu_millicores = 4;
+  uint64 used_memory_bytes = 5;
+  uint64 used_disk_bytes = 6;
+}
+
+// Health check
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> checks = 3;
+}
+
+enum HealthStatus {
+  UNKNOWN = 0;
+  HEALTHY = 1;
+  DEGRADED = 2;
+  UNHEALTHY = 3;
+}
+
+// Container state
+message ContainerState {
+  string id = 1;
+  string name = 2;
+  ContainerStatus status = 3;
+  optional uint32 pid = 4;
+  optional int32 exit_code = 5;
+  string image = 6;
+  int64 created_at = 7;
+  optional int64 started_at = 8;
+  optional int64 stopped_at = 9;
+  uint32 restart_count = 10;
+}
+
+enum ContainerStatus {
+  STATUS_UNKNOWN = 0;
+  STATUS_CREATED = 1;
+  STATUS_RUNNING = 2;
+  STATUS_STOPPED = 3;
+  STATUS_FAILED = 4;
+}
