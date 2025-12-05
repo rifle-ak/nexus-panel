@@ -38,6 +38,7 @@ prometheus = { version = "0.13", features = ["process"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 bytes = "1.9"
 futures = "0.3"
+async-trait = "0.1"
 
 [build-dependencies]
 tonic-build = "0.12"

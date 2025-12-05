@@ -6,7 +6,9 @@
 pub mod config;
 pub mod container;
 pub mod error;
+pub mod runtime;
 
 pub use config::load_config;
 pub use container::{ContainerManager, ContainerState, ContainerStatus};
 pub use error::{NodeError, Result};
+pub use runtime::ContainerRuntime;

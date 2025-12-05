@@ -842,6 +842,7 @@ name = "nexus-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "containerd-client",
  "futures",
