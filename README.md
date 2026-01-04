@@ -1,287 +1,106 @@
-# Nexus Panel - Next-Gen Game Server Management
+# Art of Rust - Community Website
 
-A high-performance game server control panel built with security and performance as first-class citizens.
+A full-featured, modular website for the Art of Rust gaming community.
 
-## 🎯 Project Goals
+## Features
 
-Build a game server panel that takes the best of Pterodactyl/Pelican and kicks it up several notches:
+- 🔐 **Authentication & User Management** - Secure user registration, login, and profile management
+- 🛒 **Shop/Marketplace** - Integrated store for game items, cosmetics, and services
+- 💬 **Forum/Community** - Discussion boards, threads, and community engagement
+- 📰 **News & Blog** - Content management for announcements, updates, and guides
+- 👥 **User Profiles** - Customizable user profiles with avatars, stats, and achievements
+- 🎮 **Game Integration** - Server status, player stats, and game-related features
+- 🎨 **Modern UI** - Beautiful, responsive design with dark mode support
+- 🔧 **Admin Dashboard** - Comprehensive admin panel for content and user management
+- 📱 **Mobile Responsive** - Fully optimized for all devices
 
-- **Performance**: Rust-based Wings daemon, sub-100ms command execution
-- **Security**: Built-in XDP firewall, proper secrets management, sandboxed execution
-- **Features**: Multi-marketplace mod integration (Umod, Codefling, Lone.Design, etc.)
-- **Developer Experience**: Native YAML configs, backward compatible with Pterodactyl eggs
+## Tech Stack
 
-## 🏗️ Architecture
+- **Framework**: Next.js 14 (App Router)
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS
+- **Database**: PostgreSQL with Prisma ORM
+- **Authentication**: NextAuth.js
+- **Payments**: Stripe (optional)
+- **Real-time**: Socket.io
 
-```
-┌─────────────────────────────────────┐
-│  Panel (Rust/Go + React)            │
-│  - API Gateway                      │
-│  - Auth (JWT + RBAC)                │
-│  - Marketplace Aggregator           │
-│  - WebSocket Hub                    │
-└──────────────┬──────────────────────┘
-               │ gRPC/WebSocket
-               ├─────────────┬─────────────┐
-          ┌────▼────┐   ┌────▼────┐   ┌────▼────┐
-          │ Wings 1 │   │ Wings 2 │   │ Wings N │
-          │ (Rust)  │   │ (Rust)  │   │ (Rust)  │
-          │         │   │         │   │         │
-          │ ┌─────┐ │   │ ┌─────┐ │   │ ┌─────┐ │
-          │ │ XDP │ │   │ │ XDP │ │   │ │ XDP │ │
-          │ └─────┘ │   │ └─────┘ │   │ └─────┘ │
-          └─────────┘   └─────────┘   └─────────┘
-```
+## Getting Started
 
-## 📦 Components
+### Prerequisites
 
-### Nexus Config Format
-
-Our native YAML format is superior to Pterodactyl eggs:
-
-- **Declarative**: No shell script nonsense
-- **Validated**: Type-safe configuration
-- **Secure**: Security policies built-in
-- **Structured lifecycle hooks**: pre_start, post_start, pre_stop
-- **XDP firewall rules**: Per-game DDoS protection
-
-Example:
-```yaml
-metadata:
-  id: rust-dedicated
-  name: Rust Dedicated Server
-  version: 2.0.0
-  game: rust
-  
-container:
-  image: ghcr.io/panel/rust-server:latest
-
-resources:
-  cpu:
-    min: 2000  # millicores
-    max: 4000
-  memory:
-    min: 4Gi
-    max: 8Gi
-
-security:
-  firewall_rules:
-    - type: connection_rate
-      name: rate_limit
-      limit: 100/s
-      action: drop
-```
-
-### Egg Importer
-
-Convert Pterodactyl eggs to native format with security enhancements.
-
-## 🚀 Quick Start
+- Node.js 18+ 
+- PostgreSQL database
+- npm or yarn
 
 ### Installation
 
+1. Clone the repository
+2. Install dependencies:
 ```bash
-# Clone the repo
-git clone https://github.com/yourusername/nexus-panel
-cd nexus-panel
-
-# Build
-cargo build --release
+npm install
 ```
 
-### Import Pterodactyl Eggs
-
+3. Set up environment variables:
 ```bash
-# Convert a single egg
-./target/release/nexus-panel convert \
-  --input eggs/rust.json \
-  --output configs/rust.yaml
-
-# Bulk import from directory
-./target/release/nexus-panel import \
-  --input-dir ./pterodactyl-eggs \
-  --output-dir ./configs
-
-# Clone and import from GitHub (Parker's eggs)
-./target/release/nexus-panel clone \
-  --repo https://github.com/parkervcp/eggs \
-  --output-dir ./configs
-
-# Validate a config
-./target/release/nexus-panel validate \
-  --input configs/rust.yaml
+cp .env.example .env
 ```
 
-### CLI Options
+4. Configure your `.env` file with:
+   - Database URL
+   - NextAuth secret
+   - OAuth credentials (if using)
+   - Stripe keys (if using payments)
 
-**convert** - Convert a single egg:
-- `--input, -i`: Path to Pterodactyl egg JSON
-- `--output, -o`: Output path (optional, defaults to same name .yaml)
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-
-**import** - Bulk import eggs:
-- `--input-dir, -i`: Directory with egg JSON files
-- `--output-dir, -o`: Output directory for configs
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-- `--continue-on-error`: Don't stop on conversion errors
-
-**clone** - Clone and import from git:
-- `--repo, -r`: Git repository URL
-- `--output-dir, -o`: Output directory
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-
-**validate** - Validate a native config:
-- `--input, -i`: Path to YAML config
-
-## 🔍 What Gets Improved During Import
-
-When converting Pterodactyl eggs, we automatically:
-
-### 1. Security Scanning
-- Detect dangerous commands (`rm -rf /`, `chmod 777`, `curl | bash`)
-- Flag security issues in startup scripts
-- Warn about privileged containers
-
-### 2. Security Enhancements
-- Drop ALL capabilities by default, only add NET_BIND_SERVICE
-- Enable seccomp profiles
-- Set no_new_privileges
-- Add default XDP firewall rules:
-  - Connection rate limiting (100/s)
-  - Packet size limits (anti-amplification)
-
-### 3. Networking
-- Auto-detect ports from variables
-- Set RCON ports to firewall deny by default
-- Add CloudFlare DNS by default
-
-### 4. Resource Limits
-- Set sensible defaults based on game type:
-  - Rust: 2-4 cores, 4-8GB RAM, 20GB disk
-  - Minecraft: 1-2 cores, 2-4GB RAM, 10GB disk
-  - ARK: 4-6 cores, 8-16GB RAM, 50GB disk
-
-### 5. Monitoring
-- Auto-configure health checks (RCON or TCP)
-- Set up monitoring intervals and thresholds
-
-### 6. Structured Lifecycle
-- Convert installation scripts to structured hooks
-- Add timeouts and conditions
-- Proper stop commands
-
-## 📊 Example Conversion
-
-**Before (Pterodactyl Egg):**
-```json
-{
-  "startup": "cd /home/container && ./RustDedicated -batchmode +server.port {{SERVER_PORT}}",
-  "stop": "quit",
-  "scripts": {
-    "installation": {
-      "script": "#!/bin/bash\napt-get update && apt-get install -y steamcmd"
-    }
-  }
-}
-```
-
-**After (Native Config):**
-```yaml
-startup:
-  command: ./RustDedicated
-  args:
-    - "-batchmode"
-    - "+server.port"
-    - "{{SERVER_PORT}}"
-  working_dir: /home/container
-  lifecycle:
-    pre_start:
-      - type: execute
-        command: "apt-get update && apt-get install -y steamcmd"
-        condition: first_start
-        timeout: 300s
-    pre_stop:
-      - type: execute
-        command: "quit"
-        timeout: 30s
-
-security:
-  capabilities:
-    drop: [ALL]
-    add: [NET_BIND_SERVICE]
-  firewall_rules:
-    - type: connection_rate
-      name: rate_limit_connections
-      limit: 100/s
-      action: drop
-```
-
-## 🧪 Testing
-
+5. Run database migrations:
 ```bash
-# Run tests
-cargo test
-
-# Run with logging
-RUST_LOG=debug cargo run -- convert --input test.json
+npx prisma migrate dev
 ```
 
-## 🗺️ Roadmap
+6. Start the development server:
+```bash
+npm run dev
+```
 
-### Phase 1: Egg Importer ✅
-- [x] Parse Pterodactyl eggs
-- [x] Convert to native format
-- [x] Security scanning
-- [x] CLI tool
-- [ ] Bulk import from GitHub repos
+7. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-### Phase 2: Wings Daemon
-- [ ] Container orchestration
-- [ ] XDP firewall integration
-- [ ] Resource management
-- [ ] Health checks
-- [ ] Metrics collection
+## Project Structure
 
-### Phase 3: Panel API
-- [ ] REST/gRPC API
-- [ ] Authentication & RBAC
-- [ ] Server management
-- [ ] File management
-- [ ] WebSocket real-time updates
+```
+├── app/                    # Next.js app directory
+│   ├── (auth)/            # Authentication routes
+│   ├── (dashboard)/       # Dashboard routes
+│   ├── api/               # API routes
+│   └── layout.tsx         # Root layout
+├── components/            # Reusable UI components
+├── modules/               # Feature modules
+│   ├── auth/              # Authentication module
+│   ├── shop/              # Shop/marketplace module
+│   ├── forum/             # Forum module
+│   ├── news/              # News/blog module
+│   ├── users/             # User management module
+│   └── admin/             # Admin module
+├── lib/                   # Utility functions
+├── prisma/                # Database schema
+└── types/                 # TypeScript types
+```
 
-### Phase 4: Marketplace Integration
-- [ ] Pluggable marketplace adapters
-- [ ] Umod, Codefling, Lone.Design adapters
-- [ ] Unified search
-- [ ] Dependency resolution
-- [ ] Auto-updates
+## Modules
 
-### Phase 5: Frontend
-- [ ] React dashboard
-- [ ] Server console
-- [ ] File editor
-- [ ] Marketplace browser
-- [ ] Monitoring dashboards
+The website is built with a modular architecture, making it easy to add, remove, or customize features:
 
-### Phase 6: WHMCS Integration
-- [ ] Provisioning module
-- [ ] Suspend/unsuspend
-- [ ] Usage-based billing
-- [ ] Customer portal
+- **Auth Module**: User authentication and authorization
+- **Shop Module**: E-commerce functionality
+- **Forum Module**: Community discussions
+- **News Module**: Content management
+- **Users Module**: User profiles and management
+- **Admin Module**: Administrative tools
 
-## 🤝 Contributing
+## Development
 
-This is in early development. Contributions welcome!
+- Run type checking: `npm run type-check`
+- Run linter: `npm run lint`
+- Generate Prisma client: `npx prisma generate`
 
-## 📄 License
+## License
 
-MIT License - see LICENSE file
-
-## 🔗 Resources
-
-- [Pterodactyl Eggs](https://github.com/pterodactyl/panel/wiki/Egg-JSON-Format)
-- [Parker's Egg Repository](https://github.com/parkervcp/eggs)
-- [eBPF/XDP Documentation](https://ebpf.io/)
+MIT
