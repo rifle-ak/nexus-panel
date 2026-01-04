@@ -3,9 +3,12 @@ use super::proto::{
     *,
 };
 use crate::container::ContainerManager;
+use crate::health::HealthChecker;
+use crate::metrics::Metrics;
 use nexus_config::GameConfig;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::info;
 
@@ -14,15 +17,24 @@ pub struct NodeServiceImpl {
     manager: Arc<ContainerManager>,
     node_id: String,
     start_time: SystemTime,
+    metrics: Arc<Metrics>,
+    health_checker: Arc<RwLock<HealthChecker>>,
 }
 
 impl NodeServiceImpl {
     /// Create a new NodeService
-    pub fn new(manager: Arc<ContainerManager>, node_id: String) -> Self {
+    pub fn new(
+        manager: Arc<ContainerManager>,
+        node_id: String,
+        health_checker: Arc<RwLock<HealthChecker>>,
+    ) -> Self {
+        let metrics = manager.metrics().clone();
         Self {
             manager,
             node_id,
             start_time: SystemTime::now(),
+            metrics,
+            health_checker,
         }
     }
 
@@ -38,27 +50,37 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<CreateContainerRequest>,
     ) -> std::result::Result<Response<CreateContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: CreateContainer request");
 
         // Parse GameConfig from YAML
         let config = GameConfig::from_yaml(&req.config_yaml)
-            .map_err(|e| Status::invalid_argument(format!("Invalid config: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateContainer", "invalid_argument", start.elapsed());
+                Status::invalid_argument(format!("Invalid config: {}", e))
+            })?;
 
         // Create container
         let container_id = self
             .manager
             .create_container(&config, req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to create container: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to create container: {}", e))
+            })?;
 
         // Auto-start if requested
         if req.auto_start {
             self.manager
                 .start_container(&container_id)
                 .await
-                .map_err(|e| Status::internal(format!("Failed to start container: {}", e)))?;
+                .map_err(|e| {
+                    self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
+                    Status::internal(format!("Failed to start container: {}", e))
+                })?;
         }
 
         // Get container state
@@ -66,7 +88,12 @@ impl NodeService for NodeServiceImpl {
             .manager
             .get_state(&container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to get state: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CreateContainer", "ok", start.elapsed());
 
         Ok(Response::new(CreateContainerResponse {
             container_id,
@@ -78,6 +105,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<StartContainerRequest>,
     ) -> std::result::Result<Response<StartContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: StartContainer {}", req.container_id);
@@ -86,16 +114,24 @@ impl NodeService for NodeServiceImpl {
         self.manager
             .start_container(&req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to start container: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("StartContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to start container: {}", e))
+            })?;
 
         // Get updated state
         let state = self
             .manager
             .get_state(&req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("StartContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to get state: {}", e))
+            })?;
 
         let pid = state.pid.unwrap_or(0);
+
+        self.metrics.record_grpc_request("StartContainer", "ok", start.elapsed());
 
         Ok(Response::new(StartContainerResponse {
             pid,
@@ -107,6 +143,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<StopContainerRequest>,
     ) -> std::result::Result<Response<StopContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: StopContainer {}", req.container_id);
@@ -117,16 +154,24 @@ impl NodeService for NodeServiceImpl {
         self.manager
             .stop_container(&req.container_id, timeout)
             .await
-            .map_err(|e| Status::internal(format!("Failed to stop container: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("StopContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to stop container: {}", e))
+            })?;
 
         // Get updated state
         let state = self
             .manager
             .get_state(&req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("StopContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to get state: {}", e))
+            })?;
 
         let exit_code = state.exit_code.unwrap_or(0);
+
+        self.metrics.record_grpc_request("StopContainer", "ok", start.elapsed());
 
         Ok(Response::new(StopContainerResponse {
             exit_code,
@@ -138,6 +183,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<RestartContainerRequest>,
     ) -> std::result::Result<Response<RestartContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: RestartContainer {}", req.container_id);
@@ -146,16 +192,24 @@ impl NodeService for NodeServiceImpl {
         self.manager
             .restart_container(&req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to restart container: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("RestartContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to restart container: {}", e))
+            })?;
 
         // Get updated state
         let state = self
             .manager
             .get_state(&req.container_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("RestartContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to get state: {}", e))
+            })?;
 
         let pid = state.pid.unwrap_or(0);
+
+        self.metrics.record_grpc_request("RestartContainer", "ok", start.elapsed());
 
         Ok(Response::new(RestartContainerResponse {
             pid,
@@ -167,6 +221,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<DeleteContainerRequest>,
     ) -> std::result::Result<Response<DeleteContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: DeleteContainer {}", req.container_id);
@@ -175,7 +230,12 @@ impl NodeService for NodeServiceImpl {
         self.manager
             .delete_container(&req.container_id, req.force)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete container: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("DeleteContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to delete container: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("DeleteContainer", "ok", start.elapsed());
 
         Ok(Response::new(DeleteContainerResponse { success: true }))
     }
@@ -184,6 +244,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         request: Request<GetContainerRequest>,
     ) -> std::result::Result<Response<GetContainerResponse>, Status> {
+        let start = Instant::now();
         let req = request.into_inner();
 
         info!("gRPC: GetContainer {}", req.container_id);
@@ -193,7 +254,12 @@ impl NodeService for NodeServiceImpl {
             .manager
             .get_state(&req.container_id)
             .await
-            .map_err(|e| Status::not_found(format!("Container not found: {}", e)))?;
+            .map_err(|e| {
+                self.metrics.record_grpc_request("GetContainer", "not_found", start.elapsed());
+                Status::not_found(format!("Container not found: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("GetContainer", "ok", start.elapsed());
 
         Ok(Response::new(GetContainerResponse {
             state: Some(convert_container_state(&state)),
@@ -204,6 +270,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         _request: Request<ListContainersRequest>,
     ) -> std::result::Result<Response<ListContainersResponse>, Status> {
+        let start = Instant::now();
         info!("gRPC: ListContainers");
 
         // List all containers
@@ -213,6 +280,8 @@ impl NodeService for NodeServiceImpl {
             .iter()
             .map(convert_container_state)
             .collect();
+
+        self.metrics.record_grpc_request("ListContainers", "ok", start.elapsed());
 
         Ok(Response::new(ListContainersResponse {
             containers: states,
@@ -311,6 +380,7 @@ impl NodeService for NodeServiceImpl {
         &self,
         _request: Request<GetNodeInfoRequest>,
     ) -> std::result::Result<Response<GetNodeInfoResponse>, Status> {
+        let start = Instant::now();
         info!("gRPC: GetNodeInfo");
 
         let uptime = self
@@ -319,13 +389,18 @@ impl NodeService for NodeServiceImpl {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
+        // Update uptime metric
+        self.metrics.update_uptime(uptime as u64);
+
         let container_count = self.manager.list_containers().await.len() as u32;
+
+        self.metrics.record_grpc_request("GetNodeInfo", "ok", start.elapsed());
 
         Ok(Response::new(GetNodeInfoResponse {
             node_id: self.node_id.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             resources: Some(NodeResources {
-                // TODO: Get actual resource info
+                // TODO: Get actual resource info from system
                 total_cpu_millicores: 4000,
                 total_memory_bytes: 8 * 1024 * 1024 * 1024,
                 total_disk_bytes: 100 * 1024 * 1024 * 1024,
@@ -342,23 +417,36 @@ impl NodeService for NodeServiceImpl {
         &self,
         _request: Request<HealthCheckRequest>,
     ) -> std::result::Result<Response<HealthCheckResponse>, Status> {
+        let start = Instant::now();
         info!("gRPC: HealthCheck");
 
-        // Basic health check - just verify we can list containers
-        let containers_result = self.manager.list_containers().await;
+        // Run comprehensive health checks
+        let mut checker = self.health_checker.write().await;
+        let health_result = checker.check().await;
 
-        let status = if !containers_result.is_empty() || containers_result.is_empty() {
-            HealthStatus::Healthy
-        } else {
-            HealthStatus::Healthy
+        let status = match health_result.status {
+            crate::health::HealthStatus::Healthy => HealthStatus::Healthy,
+            crate::health::HealthStatus::Degraded => HealthStatus::Degraded,
+            crate::health::HealthStatus::Unhealthy => HealthStatus::Unhealthy,
         };
 
         let mut checks = std::collections::HashMap::new();
-        checks.insert("container_manager".to_string(), "ok".to_string());
+        for (component, component_health) in &health_result.checks {
+            checks.insert(
+                component.clone(),
+                format!("{:?}", component_health.status),
+            );
+        }
+
+        let message = health_result.message.unwrap_or_else(|| {
+            format!("Health check completed: {}", health_result.status.as_str())
+        });
+
+        self.metrics.record_grpc_request("HealthCheck", "ok", start.elapsed());
 
         Ok(Response::new(HealthCheckResponse {
             status: status as i32,
-            message: "Node is healthy".to_string(),
+            message,
             checks,
         }))
     }
