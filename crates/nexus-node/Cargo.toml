@@ -36,6 +36,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Metrics
 prometheus = { version = "0.13", features = ["process"] }
 
+# HTTP server for metrics
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
 # Utilities
 uuid = { version = "1.11", features = ["v4", "serde"] }
 bytes = "1.9"

@@ -1,0 +1,26 @@
+# Rustfmt configuration for Nexus Panel
+
+# Edition
+edition = "2021"
+
+# Formatting options
+max_width = 100
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
+
+# Imports
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+
+# Other options
+chain_width = 80
+wrap_comments = true
+format_code_in_doc_comments = true
+format_strings = true
+format_macro_matchers = true
+format_macro_bodies = true
+format_macro_definitions = true
+
+
