@@ -11,3 +11,4 @@ anyhow.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 url.workspace = true
+once_cell = "1.19"

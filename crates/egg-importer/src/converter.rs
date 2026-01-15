@@ -112,32 +112,81 @@ impl EggConverter {
     }
 
     fn detect_game_type(&self, egg: &PterodactylEgg) -> String {
-        // Try to detect game type from name or description
+        // Try to detect game type from name, description, and docker image
         let searchable = format!(
-            "{} {}",
+            "{} {} {}",
             egg.name.to_lowercase(),
-            egg.description.as_deref().unwrap_or("").to_lowercase()
+            egg.description.as_deref().unwrap_or("").to_lowercase(),
+            egg.default_image().unwrap_or_default().to_lowercase()
         );
 
-        if searchable.contains("minecraft") {
-            "minecraft".to_string()
-        } else if searchable.contains("rust") {
-            "rust".to_string()
-        } else if searchable.contains("ark") {
-            "ark".to_string()
-        } else if searchable.contains("valheim") {
-            "valheim".to_string()
-        } else if searchable.contains("terraria") {
-            "terraria".to_string()
-        } else if searchable.contains("csgo") || searchable.contains("counter-strike") {
-            "csgo".to_string()
-        } else if searchable.contains("satisfactory") {
-            "satisfactory".to_string()
-        } else if searchable.contains("palworld") {
-            "palworld".to_string()
-        } else {
-            "generic".to_string()
+        // Game detection rules - ordered by specificity
+        let game_patterns: &[(&[&str], &str)] = &[
+            // Minecraft variants (most specific first)
+            (&["paper", "spigot", "bukkit", "purpur", "fabric", "forge", "bungeecord", "waterfall", "velocity"], "minecraft"),
+            (&["minecraft"], "minecraft"),
+            // Survival games
+            (&["rust dedicated", "rust server", "rustdedicated"], "rust"),
+            (&["ark:", "ark survival", "arksurvival"], "ark"),
+            (&["valheim"], "valheim"),
+            (&["terraria"], "terraria"),
+            (&["7 days to die", "7daystodie", "7dtd"], "7daystodie"),
+            (&["project zomboid", "projectzomboid"], "projectzomboid"),
+            (&["dayz"], "dayz"),
+            (&["unturned"], "unturned"),
+            (&["conan exiles", "conanexiles"], "conanexiles"),
+            (&["the forest", "theforest", "sons of the forest"], "theforest"),
+            (&["raft"], "raft"),
+            (&["palworld"], "palworld"),
+            (&["enshrouded"], "enshrouded"),
+            (&["v rising", "vrising"], "vrising"),
+            // FPS/Competitive
+            (&["counter-strike 2", "cs2", "csgo", "counter-strike"], "csgo"),
+            (&["team fortress", "tf2"], "tf2"),
+            (&["garry's mod", "gmod", "garrysmod"], "gmod"),
+            (&["left 4 dead", "l4d"], "l4d2"),
+            (&["insurgency"], "insurgency"),
+            (&["squad"], "squad"),
+            (&["arma"], "arma"),
+            // Sandbox/Creative
+            (&["factorio"], "factorio"),
+            (&["satisfactory"], "satisfactory"),
+            (&["stationeers"], "stationeers"),
+            (&["space engineers"], "spaceengineers"),
+            (&["starbound"], "starbound"),
+            // Racing/Sports
+            (&["assetto corsa"], "assettocorsa"),
+            (&["beammp", "beamng"], "beamng"),
+            // MMO/RPG
+            (&["fivem", "cfx"], "fivem"),
+            (&["alt:v", "altv"], "altv"),
+            (&["rage:mp", "ragemp"], "ragemp"),
+            (&["samp", "sa-mp"], "samp"),
+            (&["mta", "multi theft auto"], "mta"),
+            // Other popular games
+            (&["don't starve", "dontstarve"], "dontstarve"),
+            (&["eco"], "eco"),
+            (&["vintage story"], "vintagestory"),
+            (&["barotrauma"], "barotrauma"),
+            (&["corekeeper", "core keeper"], "corekeeper"),
+            (&["among us"], "amongus"),
+            // Bots and applications
+            (&["discord", "bot"], "bot"),
+            (&["teamspeak", "ts3"], "voiceserver"),
+            (&["mumble"], "voiceserver"),
+            // Generic source engine
+            (&["source", "srcds"], "source"),
+        ];
+
+        for (patterns, game_type) in game_patterns {
+            for pattern in *patterns {
+                if searchable.contains(pattern) {
+                    return game_type.to_string();
+                }
+            }
         }
+
+        "generic".to_string()
     }
 
     fn convert_container(&self, egg: &PterodactylEgg) -> Result<Container> {
@@ -299,6 +348,8 @@ impl EggConverter {
 
     fn parse_validation_rules(&self, rules: &str) -> Result<Vec<ValidationRule>> {
         let mut parsed_rules = Vec::new();
+        let mut min_val: Option<i64> = None;
+        let mut max_val: Option<i64> = None;
 
         // Parse Pterodactyl validation rules format
         // Common formats: "required|string|min:8", "required|numeric|between:1024,65535"
@@ -306,28 +357,94 @@ impl EggConverter {
             let rule = rule.trim();
 
             if rule.starts_with("between:") {
-                // Port range: "between:1024,65535"
-                let range_str = rule.strip_prefix("between:").unwrap();
-                let parts: Vec<&str> = range_str.split(',').collect();
-                if parts.len() == 2 {
-                    if let (Ok(min), Ok(max)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>())
-                    {
-                        parsed_rules.push(ValidationRule::Port { range: (min, max) });
+                // Port/numeric range: "between:1024,65535"
+                if let Some(range_str) = rule.strip_prefix("between:") {
+                    let parts: Vec<&str> = range_str.split(',').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(min), Ok(max)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>())
+                        {
+                            parsed_rules.push(ValidationRule::Port { range: (min, max) });
+                        }
                     }
                 }
             } else if rule.starts_with("regex:") {
-                let pattern = rule.strip_prefix("regex:").unwrap();
-                parsed_rules.push(ValidationRule::Regex {
-                    pattern: pattern.to_string(),
-                });
+                if let Some(pattern) = rule.strip_prefix("regex:") {
+                    parsed_rules.push(ValidationRule::Regex {
+                        pattern: pattern.to_string(),
+                    });
+                }
             } else if rule.starts_with("in:") {
-                let values_str = rule.strip_prefix("in:").unwrap();
-                let values: Vec<String> = values_str.split(',').map(|s| s.to_string()).collect();
-                parsed_rules.push(ValidationRule::Enum { values });
-            } else if rule.starts_with("min:") || rule.starts_with("max:") {
-                // Numeric min/max
-                // This is simplified - real implementation would handle both
-                continue;
+                if let Some(values_str) = rule.strip_prefix("in:") {
+                    let values: Vec<String> = values_str.split(',').map(|s| s.trim().to_string()).collect();
+                    parsed_rules.push(ValidationRule::Enum { values });
+                }
+            } else if rule.starts_with("min:") {
+                if let Some(val_str) = rule.strip_prefix("min:") {
+                    min_val = val_str.parse().ok();
+                }
+            } else if rule.starts_with("max:") {
+                if let Some(val_str) = rule.strip_prefix("max:") {
+                    max_val = val_str.parse().ok();
+                }
+            } else if rule == "email" {
+                // Email validation - use standard email regex
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$".to_string(),
+                });
+            } else if rule == "url" || rule == "active_url" {
+                // URL validation
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^https?://[^\s/$.?#].[^\s]*$".to_string(),
+                });
+            } else if rule == "ip" || rule == "ipv4" {
+                // IPv4 validation
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$".to_string(),
+                });
+            } else if rule == "ipv6" {
+                // IPv6 validation (simplified)
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$".to_string(),
+                });
+            } else if rule == "alpha" {
+                // Letters only
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^[a-zA-Z]+$".to_string(),
+                });
+            } else if rule == "alpha_num" || rule == "alphanumeric" {
+                // Letters and numbers
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^[a-zA-Z0-9]+$".to_string(),
+                });
+            } else if rule == "alpha_dash" {
+                // Letters, numbers, dashes, underscores
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^[a-zA-Z0-9_-]+$".to_string(),
+                });
+            } else if rule == "numeric" || rule == "integer" {
+                // Numeric values
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^-?\d+$".to_string(),
+                });
+            } else if rule == "boolean" {
+                // Boolean values
+                parsed_rules.push(ValidationRule::Enum {
+                    values: vec!["true".to_string(), "false".to_string(), "1".to_string(), "0".to_string()],
+                });
+            } else if rule == "uuid" {
+                // UUID validation
+                parsed_rules.push(ValidationRule::Regex {
+                    pattern: r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".to_string(),
+                });
+            }
+        }
+
+        // Handle min/max if both are present (create a range)
+        if let (Some(min), Some(max)) = (min_val, max_val) {
+            if min >= 0 && max <= 65535 {
+                parsed_rules.push(ValidationRule::Port {
+                    range: (min as u16, max as u16),
+                });
             }
         }
 
