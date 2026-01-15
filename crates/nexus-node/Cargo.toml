@@ -95,6 +95,9 @@ cron = "0.12"
 # Directory traversal
 walkdir = "2.5"
 
+# Random number generation
+rand = "0.8"
+
 [build-dependencies]
 tonic-build = "0.12"
 

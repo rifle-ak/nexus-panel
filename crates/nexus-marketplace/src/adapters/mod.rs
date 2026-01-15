@@ -1,5 +1,7 @@
 //! Marketplace adapters for different providers
 
+pub mod codefling;
+pub mod lone_design;
 pub mod umod;
 
 use crate::error::Result;
@@ -7,6 +9,8 @@ use crate::models::*;
 use async_trait::async_trait;
 use std::path::Path;
 
+pub use codefling::CodeflingAdapter;
+pub use lone_design::LoneDesignAdapter;
 pub use umod::UmodAdapter;
 
 /// Trait for marketplace provider adapters

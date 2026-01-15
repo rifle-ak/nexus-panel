@@ -1807,6 +1807,7 @@ dependencies = [
  "prometheus",
  "prost",
  "prost-types",
+ "rand 0.8.5",
  "reqwest 0.12.28",
  "rustls",
  "rustls-pemfile 2.2.0",
@@ -1847,6 +1848,30 @@ dependencies = [
  "serde_yaml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nexus-whmcs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "hmac",
+ "rand 0.8.5",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -3298,6 +3323,17 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
+dependencies = [
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
