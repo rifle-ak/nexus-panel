@@ -1,0 +1,328 @@
+# Rust Dedicated Server Blueprint
+# Optimized with Oxide mod support and auto-scaling
+blueprint_version: "1.0"
+
+metadata:
+  id: rust-dedicated
+  name: Rust Dedicated Server
+  version: "2024.1"
+  game: rust
+  author: Nexus Panel
+  description: Rust dedicated server with Oxide/uMod support and DDoS protection
+  tags:
+    - rust
+    - survival
+    - pvp
+    - oxide
+    - umod
+  min_panel_version: "1.0.0"
+
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  pull_policy: if_not_present
+  environment:
+    SRCDS_APPID: "258550"
+
+resources:
+  cpu:
+    min: 3000
+    max: 6000
+    shares: 1024
+  memory:
+    min: 6Gi
+    max: 12Gi
+    swap: 2Gi
+  disk:
+    min: 25Gi
+    io_priority: high
+    iops_limit: 5000
+
+startup:
+  command: ./RustDedicated
+  args:
+    - -batchmode
+    - +server.port {{SERVER_PORT}}
+    - +server.queryport {{QUERY_PORT}}
+    - +rcon.port {{RCON_PORT}}
+    - +rcon.password "{{RCON_PASSWORD}}"
+    - +rcon.web {{RCON_WEB}}
+    - +server.hostname "{{SERVER_NAME}}"
+    - +server.identity "{{SERVER_IDENTITY}}"
+    - +server.seed {{WORLD_SEED}}
+    - +server.worldsize {{WORLD_SIZE}}
+    - +server.maxplayers {{MAX_PLAYERS}}
+    - +server.saveinterval {{SAVE_INTERVAL}}
+  working_dir: /home/container
+  startup_grace_period: 120s
+  startup_timeout: 600s
+  lifecycle:
+    pre_start:
+      - type: execute
+        command: |
+          ./steamcmd/steamcmd.sh +force_install_dir /home/container \
+            +login anonymous \
+            +app_update 258550 validate \
+            +quit
+        condition: first_start
+        timeout: 600s
+    pre_stop:
+      - type: send_command
+        command: "server.save"
+        delay: 5s
+      - type: send_command
+        command: "quit"
+
+variables:
+  - name: SERVER_NAME
+    description: Server name shown in browser
+    default: "Nexus Rust Server"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: SERVER_PORT
+    description: Game server port
+    default: "28015"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+    rules:
+      - type: port
+        range: [1024, 65535]
+
+  - name: QUERY_PORT
+    description: Steam query port
+    default: "28016"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: RCON_PORT
+    description: RCON port
+    default: "28017"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Administration
+
+  - name: RCON_PASSWORD
+    description: RCON password
+    default: ""
+    required: true
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Administration
+
+  - name: RCON_WEB
+    description: Enable web RCON (1 or 0)
+    default: "1"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Administration
+    rules:
+      - type: enum
+        values: ["0", "1"]
+
+  - name: SERVER_IDENTITY
+    description: Server identity folder name
+    default: "nexus"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: WORLD_SEED
+    description: World generation seed
+    default: "12345"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: World
+
+  - name: WORLD_SIZE
+    description: World size (1000-6000)
+    default: "4000"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: World
+    rules:
+      - type: numeric
+        min: 1000
+        max: 6000
+
+  - name: MAX_PLAYERS
+    description: Maximum players
+    default: "100"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: numeric
+        min: 1
+        max: 500
+
+  - name: SAVE_INTERVAL
+    description: Auto-save interval in seconds
+    default: "600"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: OXIDE_ENABLED
+    description: Enable Oxide/uMod modding framework
+    default: "true"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Mods
+    rules:
+      - type: enum
+        values: ["true", "false"]
+
+networking:
+  ports:
+    - name: Game Port
+      internal: "{{SERVER_PORT}}"
+      protocol: udp
+      required: true
+      description: Main game connection port
+
+    - name: Query Port
+      internal: "{{QUERY_PORT}}"
+      protocol: udp
+      required: true
+      description: Steam server browser query port
+
+    - name: RCON Port
+      internal: "{{RCON_PORT}}"
+      protocol: tcp
+      required: true
+      firewall_default: deny
+      description: Remote console port
+
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+security:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+    - type: connection_rate
+      name: ddos_protection
+      limit: 200/s
+      action: drop
+    - type: packet_size
+      name: amplification_protection
+      max_size: 1500
+      action: drop
+
+monitoring:
+  health_check:
+    type: game_query
+    protocol: source
+    port: "{{QUERY_PORT}}"
+    interval: 30s
+    timeout: 10s
+    failure_threshold: 3
+
+  ready_check:
+    type: log_pattern
+    pattern: "Server startup complete"
+    timeout: 600s
+
+  metrics:
+    - type: game_query
+      name: players_online
+      protocol: source
+      field: players
+      interval: 30s
+
+    - type: rcon
+      name: fps
+      command: "fps"
+      parse: "(\\d+\\.\\d+)"
+      interval: 60s
+
+    - type: rcon
+      name: entities
+      command: "ent count"
+      parse: "(\\d+)"
+      interval: 120s
+
+backups:
+  paths:
+    - /server/{{SERVER_IDENTITY}}
+    - /oxide/config
+    - /oxide/data
+    - /oxide/plugins
+  exclude:
+    - "*.log"
+    - /oxide/logs
+    - /server/{{SERVER_IDENTITY}}/Log*.txt
+  retention: 5
+  pre_backup_command: "server.save"
+
+performance:
+  kernel:
+    sysctl:
+      net.core.rmem_max: "26214400"
+      net.core.wmem_max: "26214400"
+      net.core.somaxconn: "65535"
+    ulimits:
+      nofile: 100000
+      nproc: 65535
+
+  nice: -10
+  io_class: realtime
+
+scaling:
+  enabled: true
+  metric: player_count
+  min_resources:
+    cpu: 2000
+    memory: 4Gi
+  max_resources:
+    cpu: 6000
+    memory: 12Gi
+  scale_up_threshold: 50
+  scale_down_threshold: 10
+  cooldown: 15m
+
+mods:
+  loader: oxide
+  mods_dir: /oxide/plugins
+  config_dir: /oxide/config
+  marketplaces:
+    - umod
+    - codefling
+    - lone_design
+  auto_update: true
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 258550
+  apply:
+    type: steam_cmd
+    app_id: 258550
+  auto_update: false
+  pre_update_command: "server.save"
+  post_update_command: "quit"

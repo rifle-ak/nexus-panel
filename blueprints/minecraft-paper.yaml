@@ -1,0 +1,308 @@
+# Minecraft Paper Server Blueprint
+# Optimized for performance with Aikar's flags and auto-scaling
+blueprint_version: "1.0"
+
+metadata:
+  id: minecraft-paper
+  name: Minecraft Paper Server
+  version: "1.21.0"
+  game: minecraft
+  author: Nexus Panel
+  description: High-performance Minecraft server using Paper with optimized JVM flags
+  tags:
+    - minecraft
+    - paper
+    - java
+    - survival
+    - creative
+  min_panel_version: "1.0.0"
+
+container:
+  image: ghcr.io/parkervcp/yolks:java_21
+  pull_policy: if_not_present
+  environment:
+    PAPER_CHANNEL: default
+
+resources:
+  cpu:
+    min: 2000
+    max: 4000
+    shares: 1024
+  memory:
+    min: 4Gi
+    max: 8Gi
+    swap: 1Gi
+  disk:
+    min: 10Gi
+    io_priority: high
+
+startup:
+  command: java
+  args:
+    - -jar
+    - paper.jar
+    - --nogui
+  working_dir: /home/container
+  startup_grace_period: 60s
+  startup_timeout: 300s
+  lifecycle:
+    pre_start:
+      - type: download
+        url: "https://api.papermc.io/v2/projects/paper/versions/{{MC_VERSION}}/builds/{{PAPER_BUILD}}/downloads/paper-{{MC_VERSION}}-{{PAPER_BUILD}}.jar"
+        destination: paper.jar
+        condition: "!file_exists('paper.jar') || env('AUTO_UPDATE') == 'true'"
+    pre_stop:
+      - type: send_command
+        command: "save-all"
+        delay: 2s
+      - type: send_command
+        command: "stop"
+
+variables:
+  - name: MC_VERSION
+    description: Minecraft version
+    default: "1.21"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: regex
+        pattern: "^1\\.(\\d+)(\\.\\d+)?$"
+
+  - name: PAPER_BUILD
+    description: Paper build number (latest or specific number)
+    default: "latest"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: SERVER_PORT
+    description: Server port
+    default: "25565"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+    rules:
+      - type: port
+        range: [1024, 65535]
+
+  - name: MEMORY
+    description: Server memory allocation
+    default: "4G"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Resources
+
+  - name: MAX_PLAYERS
+    description: Maximum player count
+    default: "20"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: numeric
+        min: 1
+        max: 1000
+
+  - name: VIEW_DISTANCE
+    description: View distance in chunks
+    default: "10"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Performance
+    rules:
+      - type: numeric
+        min: 2
+        max: 32
+
+  - name: SIMULATION_DISTANCE
+    description: Simulation distance in chunks
+    default: "8"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Performance
+    rules:
+      - type: numeric
+        min: 2
+        max: 32
+
+  - name: RCON_PASSWORD
+    description: RCON password for remote administration
+    default: ""
+    required: false
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Administration
+
+  - name: RCON_PORT
+    description: RCON port
+    default: "25575"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Administration
+    rules:
+      - type: port
+        range: [1024, 65535]
+
+networking:
+  ports:
+    - name: Game Port
+      internal: "{{SERVER_PORT}}"
+      protocol: tcp
+      required: true
+      description: Main Minecraft server port
+
+    - name: RCON Port
+      internal: "{{RCON_PORT}}"
+      protocol: tcp
+      required: false
+      firewall_default: deny
+      description: Remote console administration port
+
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+  ipv6: false
+
+security:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+    - type: connection_rate
+      name: rate_limit
+      limit: 50/s
+      action: drop
+    - type: packet_size
+      name: max_packet
+      max_size: 1500
+      action: drop
+
+monitoring:
+  health_check:
+    type: game_query
+    protocol: minecraft
+    port: "{{SERVER_PORT}}"
+    interval: 30s
+    timeout: 10s
+    failure_threshold: 3
+
+  ready_check:
+    type: log_pattern
+    pattern: "Done \\(.*\\)! For help, type"
+    timeout: 300s
+
+  metrics:
+    - type: game_query
+      name: players_online
+      protocol: minecraft
+      field: players
+      interval: 30s
+
+    - type: game_query
+      name: max_players
+      protocol: minecraft
+      field: max_players
+      interval: 60s
+
+    - type: rcon
+      name: tps
+      command: "tps"
+      parse: "TPS from last.*: (\\d+\\.\\d+)"
+      interval: 30s
+
+backups:
+  paths:
+    - /world
+    - /world_nether
+    - /world_the_end
+    - /plugins
+    - /server.properties
+    - /bukkit.yml
+    - /spigot.yml
+    - /paper.yml
+  exclude:
+    - "*.log"
+    - "*.tmp"
+    - /cache
+    - /logs
+  retention: 7
+  pre_backup_command: "save-all"
+
+# Nexus-exclusive performance features
+performance:
+  jvm:
+    gc: g1gc
+    initial_heap: "{{MEMORY}}"
+    max_heap: "{{MEMORY}}"
+    aikar_flags: true
+    flags:
+      - -Dusing.aikars.flags=https://mcflags.emc.gs
+      - -Daikars.new.flags=true
+      - -Dpaper.maxChunkThreads=2
+
+  kernel:
+    sysctl:
+      net.core.somaxconn: "65535"
+      net.ipv4.tcp_max_syn_backlog: "65535"
+    ulimits:
+      nofile: 65535
+      nproc: 65535
+
+  nice: -5
+  io_class: best-effort
+
+# Auto-scaling based on player count
+scaling:
+  enabled: true
+  metric: player_count
+  min_resources:
+    cpu: 1000
+    memory: 2Gi
+  max_resources:
+    cpu: 4000
+    memory: 8Gi
+  scale_up_threshold: 15
+  scale_down_threshold: 5
+  cooldown: 10m
+
+# Plugin support
+mods:
+  loader: bukkit
+  mods_dir: /plugins
+  config_dir: /plugins
+  marketplaces:
+    - spigot
+    - modrinth
+    - hangar
+  auto_update: false
+
+# Update configuration
+updates:
+  check:
+    type: http
+    url: "https://api.papermc.io/v2/projects/paper/versions/{{MC_VERSION}}"
+    version_path: "builds[-1]"
+  apply:
+    type: download
+    url: "https://api.papermc.io/v2/projects/paper/versions/{{MC_VERSION}}/builds/{{PAPER_BUILD}}/downloads/paper-{{MC_VERSION}}-{{PAPER_BUILD}}.jar"
+  auto_update: false
+  pre_update_command: "save-all"
+  post_update_command: "restart"

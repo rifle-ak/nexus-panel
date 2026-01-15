@@ -1,0 +1,239 @@
+# Valheim Dedicated Server Blueprint
+# Optimized for performance with BepInEx mod support
+blueprint_version: "1.0"
+
+metadata:
+  id: valheim-dedicated
+  name: Valheim Dedicated Server
+  version: "0.218"
+  game: valheim
+  author: Nexus Panel
+  description: Valheim dedicated server with BepInEx mod support and auto-backups
+  tags:
+    - valheim
+    - survival
+    - viking
+    - coop
+    - bepinex
+  min_panel_version: "1.0.0"
+
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  pull_policy: if_not_present
+  environment:
+    SRCDS_APPID: "896660"
+
+resources:
+  cpu:
+    min: 2000
+    max: 4000
+    shares: 1024
+  memory:
+    min: 4Gi
+    max: 8Gi
+    swap: 1Gi
+  disk:
+    min: 15Gi
+    io_priority: high
+
+startup:
+  command: ./valheim_server.x86_64
+  args:
+    - -name "{{SERVER_NAME}}"
+    - -port {{SERVER_PORT}}
+    - -world "{{WORLD_NAME}}"
+    - -password "{{SERVER_PASSWORD}}"
+    - -savedir /home/container/saves
+    - -public {{PUBLIC}}
+    - -preset {{PRESET}}
+  working_dir: /home/container
+  startup_grace_period: 60s
+  startup_timeout: 300s
+  lifecycle:
+    pre_start:
+      - type: execute
+        command: |
+          ./steamcmd/steamcmd.sh +force_install_dir /home/container \
+            +login anonymous \
+            +app_update 896660 validate \
+            +quit
+        condition: first_start
+        timeout: 600s
+
+variables:
+  - name: SERVER_NAME
+    description: Server name
+    default: "Nexus Valheim Server"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: SERVER_PORT
+    description: Server port
+    default: "2456"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: WORLD_NAME
+    description: World name
+    default: "Nexus"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: World
+
+  - name: SERVER_PASSWORD
+    description: Server password (min 5 characters)
+    default: ""
+    required: true
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Server
+
+  - name: PUBLIC
+    description: List on public server browser
+    default: "1"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: enum
+        values: ["0", "1"]
+
+  - name: PRESET
+    description: Difficulty preset
+    default: "normal"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+    rules:
+      - type: enum
+        values: ["easy", "normal", "hard", "hardcore", "casual", "immersive", "hammer"]
+
+  - name: BEPINEX_ENABLED
+    description: Enable BepInEx mod framework
+    default: "false"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Mods
+
+networking:
+  ports:
+    - name: Game Port
+      internal: "{{SERVER_PORT}}"
+      protocol: udp
+      required: true
+
+    - name: Game Port +1
+      internal: "{{SERVER_PORT}}+1"
+      protocol: udp
+      required: true
+      description: Required secondary port
+
+    - name: Game Port +2
+      internal: "{{SERVER_PORT}}+2"
+      protocol: udp
+      required: true
+      description: Required third port for Steam
+
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+security:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+    - type: connection_rate
+      name: ddos_protection
+      limit: 100/s
+      action: drop
+
+monitoring:
+  health_check:
+    type: game_query
+    protocol: source
+    port: "{{SERVER_PORT}}+1"
+    interval: 30s
+    timeout: 10s
+    failure_threshold: 3
+
+  ready_check:
+    type: log_pattern
+    pattern: "Game server connected"
+    timeout: 300s
+
+  metrics:
+    - type: game_query
+      name: players_online
+      protocol: source
+      field: players
+      interval: 30s
+
+backups:
+  paths:
+    - /saves
+    - /BepInEx/config
+    - /BepInEx/plugins
+  exclude:
+    - "*.log"
+    - "*.old"
+  retention: 10
+  schedule: "0 */6 * * *"
+
+performance:
+  kernel:
+    sysctl:
+      net.core.somaxconn: "65535"
+    ulimits:
+      nofile: 65535
+
+  nice: -5
+  io_class: best-effort
+
+scaling:
+  enabled: true
+  metric: player_count
+  min_resources:
+    cpu: 1500
+    memory: 3Gi
+  max_resources:
+    cpu: 4000
+    memory: 8Gi
+  scale_up_threshold: 5
+  scale_down_threshold: 1
+  cooldown: 10m
+
+mods:
+  loader: bepinex
+  mods_dir: /BepInEx/plugins
+  config_dir: /BepInEx/config
+  marketplaces:
+    - thunderstore
+    - nexusmods
+  auto_update: false
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 896660
+  apply:
+    type: steam_cmd
+    app_id: 896660
+  auto_update: false
