@@ -24,7 +24,7 @@ pub async fn start_metrics_server(
         .route("/health", get(health_handler))
         .with_state(metrics);
 
-    let addr = bind_addr.parse()?;
+    let addr: std::net::SocketAddr = bind_addr.parse()?;
     let listener = TcpListener::bind(addr).await?;
 
     info!("Prometheus metrics server listening on {}", addr);
