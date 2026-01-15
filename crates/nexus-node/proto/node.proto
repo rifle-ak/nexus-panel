@@ -10,6 +10,9 @@ service NodeService {
   rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
   rpc RestartContainer(RestartContainerRequest) returns (RestartContainerResponse);
   rpc DeleteContainer(DeleteContainerRequest) returns (DeleteContainerResponse);
+  rpc SuspendContainer(SuspendContainerRequest) returns (SuspendContainerResponse);
+  rpc UnsuspendContainer(UnsuspendContainerRequest) returns (UnsuspendContainerResponse);
+  rpc ReinstallContainer(ReinstallContainerRequest) returns (ReinstallContainerResponse);
 
   // Container information
   rpc GetContainer(GetContainerRequest) returns (GetContainerResponse);
@@ -17,6 +20,37 @@ service NodeService {
 
   // Container logs (streaming)
   rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+  // Console operations (bidirectional)
+  rpc SendCommand(SendCommandRequest) returns (SendCommandResponse);
+  rpc AttachConsole(stream ConsoleInput) returns (stream ConsoleOutput);
+
+  // File management
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  rpc RenameFile(RenameFileRequest) returns (RenameFileResponse);
+  rpc CopyFile(CopyFileRequest) returns (CopyFileResponse);
+  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse);
+  rpc CompressFiles(CompressFilesRequest) returns (CompressFilesResponse);
+  rpc DecompressFile(DecompressFileRequest) returns (DecompressFileResponse);
+  rpc DownloadFile(DownloadFileRequest) returns (stream FileChunk);
+  rpc UploadFile(stream FileChunk) returns (UploadFileResponse);
+
+  // Backup management
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc DownloadBackup(DownloadBackupRequest) returns (stream FileChunk);
+
+  // Schedule management
+  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse);
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+  rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
 
   // Node health and info
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
@@ -121,6 +155,36 @@ message LogEntry {
   string line = 3;
 }
 
+// Console command (one-shot)
+message SendCommandRequest {
+  string container_id = 1;
+  string command = 2;
+}
+
+message SendCommandResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+// Console attach (bidirectional streaming)
+message ConsoleInput {
+  string container_id = 1;
+  oneof input {
+    string data = 2;        // Raw input data (stdin)
+    bool resize = 3;        // Terminal resize signal
+  }
+  optional uint32 rows = 4;   // Terminal rows (for resize)
+  optional uint32 cols = 5;   // Terminal cols (for resize)
+}
+
+message ConsoleOutput {
+  oneof output {
+    string data = 1;        // Raw output data (stdout/stderr combined)
+    bool closed = 2;        // Console was closed
+  }
+  optional string error = 3;  // Error message if any
+}
+
 // Node info
 message GetNodeInfoRequest {}
 
@@ -178,4 +242,326 @@ enum ContainerStatus {
   STATUS_RUNNING = 2;
   STATUS_STOPPED = 3;
   STATUS_FAILED = 4;
+  STATUS_SUSPENDED = 5;
+}
+
+// Suspend container (stops but marks as suspended for billing)
+message SuspendContainerRequest {
+  string container_id = 1;
+}
+
+message SuspendContainerResponse {
+  bool success = 1;
+  ContainerState state = 2;
+}
+
+// Unsuspend container
+message UnsuspendContainerRequest {
+  string container_id = 1;
+  bool auto_start = 2;  // Auto-start after unsuspend
+}
+
+message UnsuspendContainerResponse {
+  bool success = 1;
+  ContainerState state = 2;
+}
+
+// Reinstall container (wipe data, re-run installation)
+message ReinstallContainerRequest {
+  string container_id = 1;
+  bool preserve_data = 2;  // Keep server data, only reinstall base
+}
+
+message ReinstallContainerResponse {
+  bool success = 1;
+  ContainerState state = 2;
+}
+
+// ====================
+// File Management
+// ====================
+
+message ListFilesRequest {
+  string container_id = 1;
+  string path = 2;  // Directory path (relative to server root)
+}
+
+message ListFilesResponse {
+  repeated FileInfo files = 1;
+}
+
+message FileInfo {
+  string name = 1;
+  string path = 2;
+  bool is_directory = 3;
+  uint64 size = 4;           // Size in bytes
+  int64 modified_at = 5;     // Unix timestamp
+  string mime_type = 6;      // MIME type (if file)
+  bool is_symlink = 7;
+  optional string symlink_target = 8;
+}
+
+message ReadFileRequest {
+  string container_id = 1;
+  string path = 2;
+  optional uint64 offset = 3;  // Byte offset
+  optional uint64 length = 4;  // Max bytes to read (0 = all)
+}
+
+message ReadFileResponse {
+  bytes content = 1;
+  uint64 total_size = 2;
+  string mime_type = 3;
+}
+
+message WriteFileRequest {
+  string container_id = 1;
+  string path = 2;
+  bytes content = 3;
+  bool create_dirs = 4;  // Create parent directories if needed
+}
+
+message WriteFileResponse {
+  bool success = 1;
+  uint64 bytes_written = 2;
+}
+
+message DeleteFileRequest {
+  string container_id = 1;
+  repeated string paths = 2;  // Files/directories to delete
+  bool recursive = 3;         // Delete directories recursively
+}
+
+message DeleteFileResponse {
+  bool success = 1;
+  uint32 deleted_count = 2;
+}
+
+message RenameFileRequest {
+  string container_id = 1;
+  string old_path = 2;
+  string new_path = 3;
+}
+
+message RenameFileResponse {
+  bool success = 1;
+}
+
+message CopyFileRequest {
+  string container_id = 1;
+  string source_path = 2;
+  string dest_path = 3;
+  bool overwrite = 4;
+}
+
+message CopyFileResponse {
+  bool success = 1;
+}
+
+message CreateDirectoryRequest {
+  string container_id = 1;
+  string path = 2;
+  bool recursive = 3;  // Create parent directories
+}
+
+message CreateDirectoryResponse {
+  bool success = 1;
+}
+
+message CompressFilesRequest {
+  string container_id = 1;
+  repeated string paths = 2;    // Files/directories to compress
+  string output_path = 3;       // Output archive path
+  string format = 4;            // tar.gz, zip, etc.
+}
+
+message CompressFilesResponse {
+  bool success = 1;
+  string archive_path = 2;
+  uint64 archive_size = 3;
+}
+
+message DecompressFileRequest {
+  string container_id = 1;
+  string archive_path = 2;
+  string output_dir = 3;        // Directory to extract to
+  bool overwrite = 4;
+}
+
+message DecompressFileResponse {
+  bool success = 1;
+  uint32 files_extracted = 2;
+}
+
+message DownloadFileRequest {
+  string container_id = 1;
+  string path = 2;
+}
+
+message FileChunk {
+  string container_id = 1;      // Set for upload, echoed for download
+  string path = 2;              // File path
+  bytes data = 3;               // Chunk data
+  uint64 offset = 4;            // Byte offset
+  uint64 total_size = 5;        // Total file size
+  bool is_last = 6;             // Last chunk indicator
+}
+
+message UploadFileResponse {
+  bool success = 1;
+  uint64 bytes_written = 2;
+  string path = 3;
+}
+
+// ====================
+// Backup Management
+// ====================
+
+message CreateBackupRequest {
+  string container_id = 1;
+  string name = 2;              // Backup name
+  bool ignore_running = 3;      // Create backup even if container running
+  repeated string include_paths = 4;  // Paths to include (empty = all)
+  repeated string exclude_paths = 5;  // Paths to exclude
+}
+
+message CreateBackupResponse {
+  bool success = 1;
+  BackupInfo backup = 2;
+}
+
+message ListBackupsRequest {
+  string container_id = 1;
+}
+
+message ListBackupsResponse {
+  repeated BackupInfo backups = 1;
+}
+
+message BackupInfo {
+  string id = 1;
+  string container_id = 2;
+  string name = 3;
+  uint64 size = 4;              // Size in bytes
+  int64 created_at = 5;         // Unix timestamp
+  string checksum = 6;          // SHA256 checksum
+  BackupStatus status = 7;
+  optional string error = 8;
+}
+
+enum BackupStatus {
+  BACKUP_UNKNOWN = 0;
+  BACKUP_PENDING = 1;
+  BACKUP_IN_PROGRESS = 2;
+  BACKUP_COMPLETED = 3;
+  BACKUP_FAILED = 4;
+}
+
+message RestoreBackupRequest {
+  string container_id = 1;
+  string backup_id = 2;
+  bool stop_container = 3;      // Stop container before restore
+  bool delete_existing = 4;     // Delete existing data before restore
+}
+
+message RestoreBackupResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+message DeleteBackupRequest {
+  string container_id = 1;
+  string backup_id = 2;
+}
+
+message DeleteBackupResponse {
+  bool success = 1;
+}
+
+message DownloadBackupRequest {
+  string container_id = 1;
+  string backup_id = 2;
+}
+
+// ====================
+// Schedule Management
+// ====================
+
+message CreateScheduleRequest {
+  string container_id = 1;
+  string name = 2;
+  string cron_expression = 3;   // Cron format (e.g., "0 0 * * *")
+  bool is_active = 4;
+  repeated ScheduleTask tasks = 5;
+}
+
+message CreateScheduleResponse {
+  bool success = 1;
+  ScheduleInfo schedule = 2;
+}
+
+message ListSchedulesRequest {
+  string container_id = 1;
+}
+
+message ListSchedulesResponse {
+  repeated ScheduleInfo schedules = 1;
+}
+
+message UpdateScheduleRequest {
+  string container_id = 1;
+  string schedule_id = 2;
+  optional string name = 3;
+  optional string cron_expression = 4;
+  optional bool is_active = 5;
+  repeated ScheduleTask tasks = 6;
+}
+
+message UpdateScheduleResponse {
+  bool success = 1;
+  ScheduleInfo schedule = 2;
+}
+
+message DeleteScheduleRequest {
+  string container_id = 1;
+  string schedule_id = 2;
+}
+
+message DeleteScheduleResponse {
+  bool success = 1;
+}
+
+message TriggerScheduleRequest {
+  string container_id = 1;
+  string schedule_id = 2;
+}
+
+message TriggerScheduleResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+message ScheduleInfo {
+  string id = 1;
+  string container_id = 2;
+  string name = 3;
+  string cron_expression = 4;
+  bool is_active = 5;
+  int64 created_at = 6;
+  optional int64 last_run_at = 7;
+  optional int64 next_run_at = 8;
+  repeated ScheduleTask tasks = 9;
+}
+
+message ScheduleTask {
+  ScheduleTaskType task_type = 1;
+  uint32 time_offset = 2;       // Seconds after schedule triggers
+  string payload = 3;           // Task-specific payload (command, path, etc.)
+}
+
+enum ScheduleTaskType {
+  TASK_UNKNOWN = 0;
+  TASK_COMMAND = 1;             // Send console command
+  TASK_POWER = 2;               // Power action (start, stop, restart, kill)
+  TASK_BACKUP = 3;              // Create backup
 }

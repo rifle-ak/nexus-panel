@@ -41,12 +41,15 @@
 pub mod config;
 pub mod container;
 pub mod error;
+pub mod files;
 pub mod grpc;
 pub mod health;
 pub mod metrics;
 pub mod metrics_server;
 pub mod runtime;
 pub mod secrets;
+pub mod backup;
+pub mod schedule;
 
 // Enterprise modules
 pub mod audit;
@@ -75,6 +78,9 @@ pub use runtime::{
     mock::MockRuntime,
 };
 pub use secrets::{SecretsManager, SecretResolver, EnvSecretsManager, MemorySecretsManager};
+pub use files::FileManager;
+pub use backup::{BackupManager, BackupInfo, BackupStatus};
+pub use schedule::{ScheduleManager, ScheduleInfo, ScheduleTask, ScheduleTaskType};
 
 // Enterprise re-exports
 pub use audit::{AuditConfig, AuditEvent, AuditEventType, AuditLogger};

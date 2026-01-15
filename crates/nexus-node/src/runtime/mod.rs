@@ -31,8 +31,14 @@ pub trait ContainerRuntime: Send + Sync {
     /// Get container info
     async fn inspect(&self, id: &str) -> Result<ContainerInfo>;
 
-    /// Attach to container console (stdout/stderr)
+    /// Attach to container console (stdout/stderr) - read only
     async fn attach(&self, id: &str) -> Result<Box<dyn ConsoleStream>>;
+
+    /// Attach to container console (bidirectional stdin/stdout/stderr)
+    async fn attach_bidirectional(&self, id: &str) -> Result<Box<dyn BidirectionalConsole>>;
+
+    /// Send a single command to container stdin
+    async fn send_command(&self, id: &str, command: &str) -> Result<()>;
 }
 
 /// Container specification
@@ -81,10 +87,36 @@ pub struct ContainerInfo {
     pub exit_code: Option<i32>,
 }
 
-/// Console stream (stdout/stderr)
+/// Console stream (stdout/stderr) - read only
 #[async_trait]
 pub trait ConsoleStream: Send {
     async fn read_line(&mut self) -> Result<Option<String>>;
+}
+
+/// Bidirectional console stream (stdin/stdout/stderr)
+#[async_trait]
+pub trait BidirectionalConsole: Send {
+    /// Read data from console (stdout/stderr combined)
+    async fn read(&mut self) -> Result<Option<Vec<u8>>>;
+
+    /// Write data to console (stdin)
+    async fn write(&mut self, data: &[u8]) -> Result<()>;
+
+    /// Resize the terminal
+    async fn resize(&mut self, rows: u16, cols: u16) -> Result<()>;
+
+    /// Close the console connection
+    async fn close(&mut self) -> Result<()>;
+
+    /// Check if console is still open
+    fn is_open(&self) -> bool;
+}
+
+/// Console command sender (for one-shot commands without full attach)
+#[async_trait]
+pub trait CommandSender: Send + Sync {
+    /// Send a command to container stdin and return immediately
+    async fn send_command(&self, container_id: &str, command: &str) -> Result<()>;
 }
 
 /// Log entry from container

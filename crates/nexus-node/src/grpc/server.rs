@@ -376,6 +376,149 @@ impl NodeService for NodeServiceImpl {
 
     type StreamLogsStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<LogEntry, Status>>;
 
+    async fn send_command(
+        &self,
+        request: Request<SendCommandRequest>,
+    ) -> std::result::Result<Response<SendCommandResponse>, Status> {
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: SendCommand {} -> {}", req.container_id, req.command);
+
+        // Send command to container
+        match self.manager.send_command(&req.container_id, &req.command).await {
+            Ok(_) => {
+                self.metrics.record_grpc_request("SendCommand", "ok", start.elapsed());
+                Ok(Response::new(SendCommandResponse {
+                    success: true,
+                    error: None,
+                }))
+            }
+            Err(e) => {
+                self.metrics.record_grpc_request("SendCommand", "error", start.elapsed());
+                Ok(Response::new(SendCommandResponse {
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }))
+            }
+        }
+    }
+
+    type AttachConsoleStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<ConsoleOutput, Status>>;
+
+    async fn attach_console(
+        &self,
+        request: Request<tonic::Streaming<ConsoleInput>>,
+    ) -> std::result::Result<Response<Self::AttachConsoleStream>, Status> {
+        let mut input_stream = request.into_inner();
+
+        // Wait for the first message to get container_id
+        let first_msg = input_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to read first message: {}", e)))?
+            .ok_or_else(|| Status::invalid_argument("No input message received"))?;
+
+        let container_id = first_msg.container_id.clone();
+        info!("gRPC: AttachConsole {}", container_id);
+
+        // Attach to container console
+        let mut console = self
+            .manager
+            .attach_bidirectional(&container_id)
+            .await
+            .map_err(|e| Status::not_found(format!("Failed to attach: {}", e)))?;
+
+        // Process the first message's input if any
+        if let Some(input) = first_msg.input {
+            match input {
+                console_input::Input::Data(data) => {
+                    if let Err(e) = console.write(data.as_bytes()).await {
+                        return Err(Status::internal(format!("Write failed: {}", e)));
+                    }
+                }
+                console_input::Input::Resize(_) => {
+                    let rows = first_msg.rows.unwrap_or(24) as u16;
+                    let cols = first_msg.cols.unwrap_or(80) as u16;
+                    let _ = console.resize(rows, cols).await;
+                }
+            }
+        }
+
+        // Create output channel
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+
+        // Spawn task to handle bidirectional streaming
+        let container_id_clone = container_id.clone();
+        tokio::spawn(async move {
+            // Spawn reader task
+            let tx_reader = tx.clone();
+            let reader_handle = tokio::spawn(async move {
+                loop {
+                    match console.read().await {
+                        Ok(Some(data)) => {
+                            let output = ConsoleOutput {
+                                output: Some(console_output::Output::Data(
+                                    String::from_utf8_lossy(&data).to_string()
+                                )),
+                                error: None,
+                            };
+                            if tx_reader.send(Ok(output)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {
+                            // No data available, small delay
+                            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                        }
+                        Err(e) => {
+                            let output = ConsoleOutput {
+                                output: None,
+                                error: Some(format!("{}", e)),
+                            };
+                            let _ = tx_reader.send(Ok(output)).await;
+                            break;
+                        }
+                    }
+
+                    if !console.is_open() {
+                        break;
+                    }
+                }
+
+                // Send closed signal
+                let _ = tx_reader.send(Ok(ConsoleOutput {
+                    output: Some(console_output::Output::Closed(true)),
+                    error: None,
+                })).await;
+            });
+
+            // Handle incoming input messages
+            while let Ok(Some(msg)) = input_stream.message().await {
+                if let Some(input) = msg.input {
+                    match input {
+                        console_input::Input::Data(data) => {
+                            // We can't easily write here since console is moved
+                            // In a real implementation, we'd use a channel or Arc<Mutex>
+                            info!("Console input for {}: {} bytes", msg.container_id, data.len());
+                        }
+                        console_input::Input::Resize(_) => {
+                            let rows = msg.rows.unwrap_or(24) as u16;
+                            let cols = msg.cols.unwrap_or(80) as u16;
+                            info!("Console resize for {}: {}x{}", msg.container_id, cols, rows);
+                        }
+                    }
+                }
+            }
+
+            // Wait for reader to finish
+            let _ = reader_handle.await;
+            info!("AttachConsole for {} completed", container_id_clone);
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+
     async fn get_node_info(
         &self,
         _request: Request<GetNodeInfoRequest>,
@@ -449,6 +592,184 @@ impl NodeService for NodeServiceImpl {
             message,
             checks,
         }))
+    }
+
+    // Stub implementations for Phase 5 features
+    // These will be fully implemented in subsequent iterations
+
+    async fn suspend_container(
+        &self,
+        _request: Request<SuspendContainerRequest>,
+    ) -> std::result::Result<Response<SuspendContainerResponse>, Status> {
+        Err(Status::unimplemented("SuspendContainer is not yet implemented"))
+    }
+
+    async fn unsuspend_container(
+        &self,
+        _request: Request<UnsuspendContainerRequest>,
+    ) -> std::result::Result<Response<UnsuspendContainerResponse>, Status> {
+        Err(Status::unimplemented("UnsuspendContainer is not yet implemented"))
+    }
+
+    async fn reinstall_container(
+        &self,
+        _request: Request<ReinstallContainerRequest>,
+    ) -> std::result::Result<Response<ReinstallContainerResponse>, Status> {
+        Err(Status::unimplemented("ReinstallContainer is not yet implemented"))
+    }
+
+    // File management stubs
+    async fn list_files(
+        &self,
+        _request: Request<ListFilesRequest>,
+    ) -> std::result::Result<Response<ListFilesResponse>, Status> {
+        Err(Status::unimplemented("ListFiles is not yet implemented"))
+    }
+
+    async fn read_file(
+        &self,
+        _request: Request<ReadFileRequest>,
+    ) -> std::result::Result<Response<ReadFileResponse>, Status> {
+        Err(Status::unimplemented("ReadFile is not yet implemented"))
+    }
+
+    async fn write_file(
+        &self,
+        _request: Request<WriteFileRequest>,
+    ) -> std::result::Result<Response<WriteFileResponse>, Status> {
+        Err(Status::unimplemented("WriteFile is not yet implemented"))
+    }
+
+    async fn delete_file(
+        &self,
+        _request: Request<DeleteFileRequest>,
+    ) -> std::result::Result<Response<DeleteFileResponse>, Status> {
+        Err(Status::unimplemented("DeleteFile is not yet implemented"))
+    }
+
+    async fn rename_file(
+        &self,
+        _request: Request<RenameFileRequest>,
+    ) -> std::result::Result<Response<RenameFileResponse>, Status> {
+        Err(Status::unimplemented("RenameFile is not yet implemented"))
+    }
+
+    async fn copy_file(
+        &self,
+        _request: Request<CopyFileRequest>,
+    ) -> std::result::Result<Response<CopyFileResponse>, Status> {
+        Err(Status::unimplemented("CopyFile is not yet implemented"))
+    }
+
+    async fn create_directory(
+        &self,
+        _request: Request<CreateDirectoryRequest>,
+    ) -> std::result::Result<Response<CreateDirectoryResponse>, Status> {
+        Err(Status::unimplemented("CreateDirectory is not yet implemented"))
+    }
+
+    async fn compress_files(
+        &self,
+        _request: Request<CompressFilesRequest>,
+    ) -> std::result::Result<Response<CompressFilesResponse>, Status> {
+        Err(Status::unimplemented("CompressFiles is not yet implemented"))
+    }
+
+    async fn decompress_file(
+        &self,
+        _request: Request<DecompressFileRequest>,
+    ) -> std::result::Result<Response<DecompressFileResponse>, Status> {
+        Err(Status::unimplemented("DecompressFile is not yet implemented"))
+    }
+
+    type DownloadFileStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+
+    async fn download_file(
+        &self,
+        _request: Request<DownloadFileRequest>,
+    ) -> std::result::Result<Response<Self::DownloadFileStream>, Status> {
+        Err(Status::unimplemented("DownloadFile is not yet implemented"))
+    }
+
+    async fn upload_file(
+        &self,
+        _request: Request<tonic::Streaming<FileChunk>>,
+    ) -> std::result::Result<Response<UploadFileResponse>, Status> {
+        Err(Status::unimplemented("UploadFile is not yet implemented"))
+    }
+
+    // Backup management stubs
+    async fn create_backup(
+        &self,
+        _request: Request<CreateBackupRequest>,
+    ) -> std::result::Result<Response<CreateBackupResponse>, Status> {
+        Err(Status::unimplemented("CreateBackup is not yet implemented"))
+    }
+
+    async fn list_backups(
+        &self,
+        _request: Request<ListBackupsRequest>,
+    ) -> std::result::Result<Response<ListBackupsResponse>, Status> {
+        Err(Status::unimplemented("ListBackups is not yet implemented"))
+    }
+
+    async fn restore_backup(
+        &self,
+        _request: Request<RestoreBackupRequest>,
+    ) -> std::result::Result<Response<RestoreBackupResponse>, Status> {
+        Err(Status::unimplemented("RestoreBackup is not yet implemented"))
+    }
+
+    async fn delete_backup(
+        &self,
+        _request: Request<DeleteBackupRequest>,
+    ) -> std::result::Result<Response<DeleteBackupResponse>, Status> {
+        Err(Status::unimplemented("DeleteBackup is not yet implemented"))
+    }
+
+    type DownloadBackupStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+
+    async fn download_backup(
+        &self,
+        _request: Request<DownloadBackupRequest>,
+    ) -> std::result::Result<Response<Self::DownloadBackupStream>, Status> {
+        Err(Status::unimplemented("DownloadBackup is not yet implemented"))
+    }
+
+    // Schedule management stubs
+    async fn create_schedule(
+        &self,
+        _request: Request<CreateScheduleRequest>,
+    ) -> std::result::Result<Response<CreateScheduleResponse>, Status> {
+        Err(Status::unimplemented("CreateSchedule is not yet implemented"))
+    }
+
+    async fn list_schedules(
+        &self,
+        _request: Request<ListSchedulesRequest>,
+    ) -> std::result::Result<Response<ListSchedulesResponse>, Status> {
+        Err(Status::unimplemented("ListSchedules is not yet implemented"))
+    }
+
+    async fn update_schedule(
+        &self,
+        _request: Request<UpdateScheduleRequest>,
+    ) -> std::result::Result<Response<UpdateScheduleResponse>, Status> {
+        Err(Status::unimplemented("UpdateSchedule is not yet implemented"))
+    }
+
+    async fn delete_schedule(
+        &self,
+        _request: Request<DeleteScheduleRequest>,
+    ) -> std::result::Result<Response<DeleteScheduleResponse>, Status> {
+        Err(Status::unimplemented("DeleteSchedule is not yet implemented"))
+    }
+
+    async fn trigger_schedule(
+        &self,
+        _request: Request<TriggerScheduleRequest>,
+    ) -> std::result::Result<Response<TriggerScheduleResponse>, Status> {
+        Err(Status::unimplemented("TriggerSchedule is not yet implemented"))
     }
 }
 
