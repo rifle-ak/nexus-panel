@@ -51,6 +51,11 @@ pub mod secrets;
 pub mod backup;
 pub mod schedule;
 
+// Management modules
+pub mod allocation;
+pub mod database;
+pub mod subuser;
+
 // Enterprise modules
 pub mod audit;
 pub mod auth;
@@ -81,6 +86,11 @@ pub use secrets::{SecretsManager, SecretResolver, EnvSecretsManager, MemorySecre
 pub use files::FileManager;
 pub use backup::{BackupManager, BackupInfo, BackupStatus};
 pub use schedule::{ScheduleManager, ScheduleInfo, ScheduleTask, ScheduleTaskType};
+
+// Management re-exports
+pub use allocation::{Allocation, AllocationManager, AllocationPool, PortRange};
+pub use database::{Database, DatabaseHost, DatabaseManager, DatabaseType};
+pub use subuser::{Permission, Subuser, SubuserManager};
 
 // Enterprise re-exports
 pub use audit::{AuditConfig, AuditEvent, AuditEventType, AuditLogger};

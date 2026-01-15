@@ -175,10 +175,307 @@ impl MarketplaceManager {
 
         Ok(updates)
     }
+
+    /// Resolve dependencies for a mod
+    ///
+    /// Returns a list of dependencies that need to be installed, including transitive dependencies.
+    /// Dependencies are returned in installation order (dependencies first).
+    pub async fn resolve_dependencies(
+        &self,
+        provider: &str,
+        mod_id: &str,
+        installed: &[InstalledMod],
+    ) -> Result<Vec<DependencyResolution>> {
+        let mut resolutions = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+
+        self.resolve_dependencies_recursive(
+            provider,
+            mod_id,
+            installed,
+            &mut resolutions,
+            &mut visited,
+        )
+        .await?;
+
+        Ok(resolutions)
+    }
+
+    /// Recursive helper for dependency resolution
+    async fn resolve_dependencies_recursive(
+        &self,
+        provider: &str,
+        mod_id: &str,
+        installed: &[InstalledMod],
+        resolutions: &mut Vec<DependencyResolution>,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Result<()> {
+        let key = format!("{}:{}", provider, mod_id);
+        if visited.contains(&key) {
+            return Ok(()); // Already processed
+        }
+        visited.insert(key);
+
+        let details = self.get_mod(provider, mod_id).await?;
+
+        for dep in &details.dependencies {
+            // Check if dependency is already installed
+            let is_installed = installed.iter().any(|m| {
+                m.provider == provider && m.mod_id == dep.mod_id
+            });
+
+            let needs_update = if is_installed {
+                // Check if installed version meets minimum requirement
+                if let Some(ref min_ver) = dep.min_version {
+                    installed
+                        .iter()
+                        .find(|m| m.provider == provider && m.mod_id == dep.mod_id)
+                        .map(|m| version_compare(&m.version, min_ver) < 0)
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Recursively resolve sub-dependencies first
+            Box::pin(self.resolve_dependencies_recursive(
+                provider,
+                &dep.mod_id,
+                installed,
+                resolutions,
+                visited,
+            ))
+            .await?;
+
+            // Add this dependency if not installed or needs update
+            if !is_installed || needs_update {
+                resolutions.push(DependencyResolution {
+                    mod_id: dep.mod_id.clone(),
+                    name: dep.name.clone(),
+                    provider: provider.to_string(),
+                    required: dep.required,
+                    min_version: dep.min_version.clone(),
+                    action: if needs_update {
+                        DependencyAction::Update
+                    } else {
+                        DependencyAction::Install
+                    },
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Auto-update all installed mods that have updates available
+    ///
+    /// Returns a list of successfully updated mods and any errors encountered.
+    pub async fn auto_update(
+        &self,
+        installed: &[InstalledMod],
+        target_dir: &Path,
+    ) -> Result<AutoUpdateResult> {
+        let updates = self.check_updates(installed).await?;
+        let mut result = AutoUpdateResult {
+            updated: Vec::new(),
+            failed: Vec::new(),
+            skipped: Vec::new(),
+        };
+
+        for update in updates {
+            // Only update if auto-update is enabled for this mod
+            if !update.installed.auto_update {
+                result.skipped.push(AutoUpdateSkipped {
+                    mod_id: update.installed.mod_id.clone(),
+                    provider: update.installed.provider.clone(),
+                    reason: "Auto-update disabled".to_string(),
+                });
+                continue;
+            }
+
+            info!(
+                "Auto-updating {} from {} to {}",
+                update.installed.name, update.installed.version, update.latest_version
+            );
+
+            match self
+                .download_mod(
+                    &update.installed.provider,
+                    &update.installed.mod_id,
+                    Some(&update.latest_version),
+                    target_dir,
+                )
+                .await
+            {
+                Ok(download_result) => {
+                    result.updated.push(AutoUpdateSuccess {
+                        mod_id: update.installed.mod_id.clone(),
+                        provider: update.installed.provider.clone(),
+                        name: update.installed.name.clone(),
+                        old_version: update.installed.version.clone(),
+                        new_version: update.latest_version.clone(),
+                        file_path: download_result.file_path,
+                    });
+                }
+                Err(e) => {
+                    result.failed.push(AutoUpdateFailure {
+                        mod_id: update.installed.mod_id.clone(),
+                        provider: update.installed.provider.clone(),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get categories for a game from a specific provider
+    pub async fn get_categories(&self, provider: &str, game: &str) -> Result<Vec<Category>> {
+        let adapter = self.adapters.get(provider).ok_or_else(|| {
+            MarketplaceError::UnknownProvider(provider.to_string())
+        })?;
+
+        adapter.get_categories(game).await
+    }
+
+    /// Get supported games across all providers
+    pub fn supported_games(&self) -> Vec<String> {
+        let mut games = std::collections::HashSet::new();
+        for adapter in self.adapters.values() {
+            for game in adapter.supported_games() {
+                games.insert(game);
+            }
+        }
+        games.into_iter().collect()
+    }
 }
 
 impl Default for MarketplaceManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Dependency resolution result
+#[derive(Debug, Clone)]
+pub struct DependencyResolution {
+    /// Mod ID of the dependency
+    pub mod_id: String,
+    /// Name of the dependency
+    pub name: String,
+    /// Provider for this dependency
+    pub provider: String,
+    /// Whether this dependency is required
+    pub required: bool,
+    /// Minimum version required
+    pub min_version: Option<String>,
+    /// Action to take
+    pub action: DependencyAction,
+}
+
+/// Action to take for a dependency
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependencyAction {
+    /// Install the dependency (not currently installed)
+    Install,
+    /// Update the dependency (installed but version too old)
+    Update,
+}
+
+/// Result of auto-update operation
+#[derive(Debug, Clone)]
+pub struct AutoUpdateResult {
+    /// Successfully updated mods
+    pub updated: Vec<AutoUpdateSuccess>,
+    /// Failed updates
+    pub failed: Vec<AutoUpdateFailure>,
+    /// Skipped mods (auto-update disabled or other reason)
+    pub skipped: Vec<AutoUpdateSkipped>,
+}
+
+/// Successfully updated mod info
+#[derive(Debug, Clone)]
+pub struct AutoUpdateSuccess {
+    /// Mod ID
+    pub mod_id: String,
+    /// Provider
+    pub provider: String,
+    /// Mod name
+    pub name: String,
+    /// Previous version
+    pub old_version: String,
+    /// New version
+    pub new_version: String,
+    /// Path to downloaded file
+    pub file_path: std::path::PathBuf,
+}
+
+/// Failed update info
+#[derive(Debug, Clone)]
+pub struct AutoUpdateFailure {
+    /// Mod ID
+    pub mod_id: String,
+    /// Provider
+    pub provider: String,
+    /// Error message
+    pub error: String,
+}
+
+/// Skipped update info
+#[derive(Debug, Clone)]
+pub struct AutoUpdateSkipped {
+    /// Mod ID
+    pub mod_id: String,
+    /// Provider
+    pub provider: String,
+    /// Reason for skipping
+    pub reason: String,
+}
+
+/// Simple version comparison (semver-like)
+/// Returns: -1 if a < b, 0 if a == b, 1 if a > b
+fn version_compare(a: &str, b: &str) -> i32 {
+    let parse_parts = |v: &str| -> Vec<u32> {
+        v.split('.')
+            .filter_map(|p| p.trim_start_matches(|c: char| !c.is_ascii_digit())
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|s| s.parse().ok()))
+            .collect()
+    };
+
+    let parts_a = parse_parts(a);
+    let parts_b = parse_parts(b);
+
+    for i in 0..std::cmp::max(parts_a.len(), parts_b.len()) {
+        let pa = parts_a.get(i).copied().unwrap_or(0);
+        let pb = parts_b.get(i).copied().unwrap_or(0);
+
+        if pa < pb {
+            return -1;
+        } else if pa > pb {
+            return 1;
+        }
+    }
+
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_compare() {
+        assert_eq!(version_compare("1.0.0", "1.0.0"), 0);
+        assert_eq!(version_compare("1.0.0", "2.0.0"), -1);
+        assert_eq!(version_compare("2.0.0", "1.0.0"), 1);
+        assert_eq!(version_compare("1.0", "1.0.0"), 0);
+        assert_eq!(version_compare("1.2.3", "1.2.4"), -1);
+        assert_eq!(version_compare("1.10.0", "1.9.0"), 1);
+        assert_eq!(version_compare("v1.0.0", "1.0.0"), 0);
     }
 }
