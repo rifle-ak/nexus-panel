@@ -1,5 +1,11 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Pre-compiled regex for memory format validation (e.g., 512Mi, 4Gi, 1Ti)
+static MEMORY_FORMAT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\d+(\.\d+)?(Mi|Gi|Ti)$").expect("Invalid memory format regex"));
 
 pub mod errors;
 pub mod diagnostics;
@@ -434,8 +440,8 @@ impl GameConfig {
 
     fn is_valid_memory_format(mem: &str) -> bool {
         // Valid formats: 512Mi, 4Gi, 8Gi, 1Ti
-        let re = regex::Regex::new(r"^\d+(\.\d+)?(Mi|Gi|Ti)$").unwrap();
-        re.is_match(mem)
+        // Uses pre-compiled regex for performance
+        MEMORY_FORMAT_REGEX.is_match(mem)
     }
 
     /// Export to YAML

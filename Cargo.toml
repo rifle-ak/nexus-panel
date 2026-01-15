@@ -31,3 +31,11 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+serde_yaml.workspace = true
+
+[[bench]]
+name = "conversion_benchmark"
+harness = false
