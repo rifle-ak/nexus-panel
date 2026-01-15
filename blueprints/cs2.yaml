@@ -1,0 +1,311 @@
+# Counter-Strike 2 Dedicated Server Blueprint
+# Optimized for competitive play with GSLT support
+blueprint_version: "1.0"
+
+metadata:
+  id: cs2-dedicated
+  name: Counter-Strike 2 Dedicated Server
+  version: "2024.1"
+  game: cs2
+  author: Nexus Panel
+  description: CS2 dedicated server with competitive configs and workshop support
+  tags:
+    - cs2
+    - counter-strike
+    - fps
+    - competitive
+    - esports
+  min_panel_version: "1.0.0"
+
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  pull_policy: if_not_present
+  environment:
+    SRCDS_APPID: "730"
+
+resources:
+  cpu:
+    min: 2000
+    max: 4000
+    shares: 1024
+  memory:
+    min: 2Gi
+    max: 4Gi
+    swap: 512Mi
+  disk:
+    min: 50Gi
+    io_priority: high
+
+startup:
+  command: ./game/bin/linuxsteamrt64/cs2
+  args:
+    - -dedicated
+    - -port {{SERVER_PORT}}
+    - -console
+    - -usercon
+    - +game_type {{GAME_TYPE}}
+    - +game_mode {{GAME_MODE}}
+    - +mapgroup {{MAP_GROUP}}
+    - +map {{DEFAULT_MAP}}
+    - +sv_setsteamaccount {{GSLT_TOKEN}}
+    - -maxplayers {{MAX_PLAYERS}}
+    - +hostname "{{SERVER_NAME}}"
+    - +rcon_password "{{RCON_PASSWORD}}"
+    - +sv_password "{{SERVER_PASSWORD}}"
+  working_dir: /home/container
+  startup_grace_period: 30s
+  startup_timeout: 180s
+  lifecycle:
+    pre_start:
+      - type: execute
+        command: |
+          ./steamcmd/steamcmd.sh +force_install_dir /home/container \
+            +login anonymous \
+            +app_update 730 validate \
+            +quit
+        condition: first_start
+        timeout: 900s
+
+variables:
+  - name: SERVER_NAME
+    description: Server name
+    default: "Nexus CS2 Server"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: SERVER_PORT
+    description: Server port
+    default: "27015"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: GSLT_TOKEN
+    description: Game Server Login Token (required for public servers)
+    default: ""
+    required: false
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Server
+    placeholder: Get from steamcommunity.com/dev/managegameservers
+
+  - name: RCON_PASSWORD
+    description: RCON password
+    default: ""
+    required: true
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Administration
+
+  - name: SERVER_PASSWORD
+    description: Server password (leave empty for public)
+    default: ""
+    required: false
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Server
+
+  - name: GAME_TYPE
+    description: "Game type (0=casual, 1=competitive)"
+    default: "0"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+    rules:
+      - type: enum
+        values: ["0", "1"]
+
+  - name: GAME_MODE
+    description: "Game mode (0=casual/competitive, 1=deathmatch, 2=wingman)"
+    default: "0"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+    rules:
+      - type: enum
+        values: ["0", "1", "2"]
+
+  - name: DEFAULT_MAP
+    description: Starting map
+    default: "de_dust2"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Maps
+    rules:
+      - type: enum
+        values:
+          - de_dust2
+          - de_mirage
+          - de_inferno
+          - de_nuke
+          - de_overpass
+          - de_vertigo
+          - de_ancient
+          - de_anubis
+          - cs_office
+          - cs_italy
+
+  - name: MAP_GROUP
+    description: Map group
+    default: "mg_active"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Maps
+    rules:
+      - type: enum
+        values:
+          - mg_active
+          - mg_reserves
+          - mg_hostage
+          - mg_de_dust2
+
+  - name: MAX_PLAYERS
+    description: Maximum players
+    default: "10"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: numeric
+        min: 2
+        max: 64
+
+  - name: TICKRATE
+    description: Server tickrate
+    default: "128"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Performance
+    rules:
+      - type: enum
+        values: ["64", "128"]
+
+networking:
+  ports:
+    - name: Game Port
+      internal: "{{SERVER_PORT}}"
+      protocol: both
+      required: true
+      description: Main game port
+
+    - name: GOTV Port
+      internal: "{{SERVER_PORT}}+1"
+      protocol: udp
+      required: false
+      description: GOTV spectator port
+
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+security:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+    - type: connection_rate
+      name: ddos_protection
+      limit: 500/s
+      action: drop
+    - type: packet_size
+      name: amplification_protection
+      max_size: 1500
+      action: drop
+
+monitoring:
+  health_check:
+    type: game_query
+    protocol: source
+    port: "{{SERVER_PORT}}"
+    interval: 15s
+    timeout: 5s
+    failure_threshold: 3
+
+  ready_check:
+    type: log_pattern
+    pattern: "VAC secure mode is activated"
+    timeout: 180s
+
+  metrics:
+    - type: game_query
+      name: players_online
+      protocol: source
+      field: players
+      interval: 15s
+
+    - type: game_query
+      name: current_map
+      protocol: source
+      field: map
+      interval: 60s
+
+    - type: rcon
+      name: sv_fps
+      command: "stats"
+      parse: "fps\\s+(\\d+\\.\\d+)"
+      interval: 30s
+
+backups:
+  paths:
+    - /game/csgo/cfg
+    - /game/csgo/addons
+  exclude:
+    - "*.log"
+    - "*.dem"
+  retention: 3
+
+performance:
+  kernel:
+    sysctl:
+      net.core.rmem_max: "26214400"
+      net.core.wmem_max: "26214400"
+      net.core.somaxconn: "65535"
+      net.ipv4.tcp_timestamps: "1"
+    ulimits:
+      nofile: 65535
+
+  nice: -15
+  io_class: realtime
+
+scaling:
+  enabled: false
+  metric: player_count
+  min_resources:
+    cpu: 1500
+    memory: 2Gi
+  max_resources:
+    cpu: 4000
+    memory: 4Gi
+  scale_up_threshold: 8
+  scale_down_threshold: 2
+  cooldown: 5m
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 730
+  apply:
+    type: steam_cmd
+    app_id: 730
+  auto_update: true
+  schedule: "0 4 * * *"

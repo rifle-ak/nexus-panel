@@ -1,0 +1,309 @@
+# Palworld Dedicated Server Blueprint
+# Optimized for performance with auto-scaling
+blueprint_version: "1.0"
+
+metadata:
+  id: palworld-dedicated
+  name: Palworld Dedicated Server
+  version: "0.3"
+  game: palworld
+  author: Nexus Panel
+  description: Palworld dedicated server with optimized settings and auto-backups
+  tags:
+    - palworld
+    - survival
+    - creature-collector
+    - coop
+    - multiplayer
+  min_panel_version: "1.0.0"
+
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  pull_policy: if_not_present
+  environment:
+    SRCDS_APPID: "2394010"
+
+resources:
+  cpu:
+    min: 4000
+    max: 8000
+    shares: 1024
+  memory:
+    min: 8Gi
+    max: 16Gi
+    swap: 2Gi
+  disk:
+    min: 20Gi
+    io_priority: high
+
+startup:
+  command: ./PalServer.sh
+  args:
+    - -port={{SERVER_PORT}}
+    - -queryport={{QUERY_PORT}}
+    - -players={{MAX_PLAYERS}}
+    - EpicApp=PalServer
+    - -useperfthreads
+    - -NoAsyncLoadingThread
+    - -UseMultithreadForDS
+  working_dir: /home/container
+  startup_grace_period: 120s
+  startup_timeout: 600s
+  lifecycle:
+    pre_start:
+      - type: execute
+        command: |
+          ./steamcmd/steamcmd.sh +force_install_dir /home/container \
+            +login anonymous \
+            +app_update 2394010 validate \
+            +quit
+        condition: first_start
+        timeout: 900s
+
+variables:
+  - name: SERVER_NAME
+    description: Server name
+    default: "Nexus Palworld Server"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Server
+
+  - name: SERVER_PORT
+    description: Game server port
+    default: "8211"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: QUERY_PORT
+    description: Query port for server browser
+    default: "27015"
+    required: true
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: MAX_PLAYERS
+    description: Maximum players
+    default: "32"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Server
+    rules:
+      - type: numeric
+        min: 1
+        max: 32
+
+  - name: ADMIN_PASSWORD
+    description: Admin password for server management
+    default: ""
+    required: true
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Administration
+
+  - name: SERVER_PASSWORD
+    description: Server password (leave empty for public)
+    default: ""
+    required: false
+    secret: true
+    user_editable: true
+    user_viewable: false
+    category: Server
+
+  - name: PUBLIC_IP
+    description: Public IP address for server
+    default: ""
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Network
+    placeholder: Leave empty for auto-detect
+
+  - name: PUBLIC_PORT
+    description: Public port (if different from SERVER_PORT)
+    default: ""
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Network
+
+  - name: RCON_ENABLED
+    description: Enable RCON
+    default: "true"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Administration
+    rules:
+      - type: enum
+        values: ["true", "false"]
+
+  - name: RCON_PORT
+    description: RCON port
+    default: "25575"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Administration
+
+  - name: DAY_TIME_SPEED_RATE
+    description: Day time speed multiplier
+    default: "1.0"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+
+  - name: NIGHT_TIME_SPEED_RATE
+    description: Night time speed multiplier
+    default: "1.0"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+
+  - name: EXP_RATE
+    description: Experience gain rate
+    default: "1.0"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+
+  - name: PAL_CAPTURE_RATE
+    description: Pal capture rate multiplier
+    default: "1.0"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+
+  - name: DEATH_PENALTY
+    description: "Death penalty (None, Item, ItemAndEquipment, All)"
+    default: "Item"
+    required: false
+    user_editable: true
+    user_viewable: true
+    category: Gameplay
+    rules:
+      - type: enum
+        values: ["None", "Item", "ItemAndEquipment", "All"]
+
+networking:
+  ports:
+    - name: Game Port
+      internal: "{{SERVER_PORT}}"
+      protocol: udp
+      required: true
+      description: Main game server port
+
+    - name: Query Port
+      internal: "{{QUERY_PORT}}"
+      protocol: udp
+      required: true
+      description: Steam server browser query port
+
+    - name: RCON Port
+      internal: "{{RCON_PORT}}"
+      protocol: tcp
+      required: false
+      firewall_default: deny
+      description: Remote console port
+
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+security:
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+  read_only_root: false
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  firewall_rules:
+    - type: connection_rate
+      name: ddos_protection
+      limit: 200/s
+      action: drop
+    - type: packet_size
+      name: amplification_protection
+      max_size: 1500
+      action: drop
+
+monitoring:
+  health_check:
+    type: tcp
+    port: "{{SERVER_PORT}}"
+    interval: 30s
+    timeout: 10s
+    failure_threshold: 3
+
+  ready_check:
+    type: log_pattern
+    pattern: "Setting breakance level"
+    timeout: 600s
+
+  metrics:
+    - type: log_parse
+      name: players_online
+      pattern: "Player .* joined"
+      interval: 30s
+
+backups:
+  paths:
+    - /Pal/Saved
+  exclude:
+    - "*.log"
+    - /Pal/Saved/Logs
+    - /Pal/Saved/Crashes
+  retention: 7
+  schedule: "0 */4 * * *"
+  pre_backup_command: "Broadcast Server_backup_starting"
+
+performance:
+  kernel:
+    sysctl:
+      net.core.rmem_max: "26214400"
+      net.core.wmem_max: "26214400"
+      net.core.somaxconn: "65535"
+      vm.max_map_count: "262144"
+    ulimits:
+      nofile: 100000
+      nproc: 65535
+
+  nice: -10
+  io_class: best-effort
+
+scaling:
+  enabled: true
+  metric: player_count
+  min_resources:
+    cpu: 3000
+    memory: 6Gi
+  max_resources:
+    cpu: 8000
+    memory: 16Gi
+  scale_up_threshold: 16
+  scale_down_threshold: 4
+  cooldown: 15m
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 2394010
+  apply:
+    type: steam_cmd
+    app_id: 2394010
+  auto_update: false
+  pre_update_command: "Broadcast Server_updating_please_rejoin"

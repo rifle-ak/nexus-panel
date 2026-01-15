@@ -4,6 +4,7 @@ use nexus_config::*;
 use regex::Regex;
 use std::collections::HashMap;
 
+/// Converts Pterodactyl eggs to Nexus Blueprints
 pub struct EggConverter {
     /// Security scanning enabled
     security_scan: bool,
@@ -35,16 +36,19 @@ impl EggConverter {
         self
     }
 
-    /// Convert Pterodactyl egg to native GameConfig
-    pub fn convert(&self, egg: &PterodactylEgg) -> Result<GameConfig> {
-        tracing::info!("Converting egg: {}", egg.name);
+    /// Convert Pterodactyl egg to Nexus Blueprint
+    pub fn convert(&self, egg: &PterodactylEgg) -> Result<Blueprint> {
+        tracing::info!("Converting egg to blueprint: {}", egg.name);
 
         // Security scan the egg first
         if self.security_scan {
             self.scan_egg_security(egg)?;
         }
 
-        let config = GameConfig {
+        let game_type = self.detect_game_type(egg);
+
+        let blueprint = Blueprint {
+            blueprint_version: "1.0".to_string(),
             metadata: self.convert_metadata(egg)?,
             container: self.convert_container(egg)?,
             resources: self.convert_resources(egg)?,
@@ -53,11 +57,134 @@ impl EggConverter {
             networking: self.convert_networking(egg)?,
             security: self.convert_security(egg)?,
             monitoring: self.convert_monitoring(egg)?,
-            backups: None, // Eggs don't have backup config
+            backups: self.generate_backup_config(&game_type),
+            performance: self.generate_performance_config(&game_type),
+            scaling: None, // Eggs don't have scaling config
+            mods: self.detect_mod_support(&game_type),
+            updates: self.generate_update_config(egg),
+            dependencies: None,
+            clustering: None,
         };
 
-        config.validate()?;
-        Ok(config)
+        blueprint.validate()?;
+        Ok(blueprint)
+    }
+
+    /// Generate backup configuration based on game type
+    fn generate_backup_config(&self, game_type: &str) -> Option<Backups> {
+        let (paths, exclude) = match game_type {
+            "minecraft" => (
+                vec!["/world".to_string(), "/world_nether".to_string(), "/world_the_end".to_string(), "/plugins".to_string()],
+                vec!["*.log".to_string(), "/logs".to_string(), "/cache".to_string()],
+            ),
+            "rust" => (
+                vec!["/server".to_string(), "/oxide".to_string()],
+                vec!["*.log".to_string(), "/oxide/logs".to_string()],
+            ),
+            "valheim" => (
+                vec!["/saves".to_string(), "/BepInEx".to_string()],
+                vec!["*.log".to_string()],
+            ),
+            _ => (
+                vec!["/home/container".to_string()],
+                vec!["*.log".to_string(), "*.tmp".to_string()],
+            ),
+        };
+
+        Some(Backups {
+            paths,
+            exclude,
+            schedule: None,
+            retention: Some(5),
+            pre_backup_command: None,
+        })
+    }
+
+    /// Generate performance configuration based on game type
+    fn generate_performance_config(&self, game_type: &str) -> Option<Performance> {
+        match game_type {
+            "minecraft" => Some(Performance {
+                jvm: Some(JvmTuning {
+                    gc: "g1gc".to_string(),
+                    initial_heap: None,
+                    max_heap: None,
+                    flags: vec![],
+                    aikar_flags: true,
+                }),
+                kernel: None,
+                nice: Some(-5),
+                io_class: Some("best-effort".to_string()),
+                cpu_affinity: None,
+                huge_pages: None,
+            }),
+            "rust" | "ark" => Some(Performance {
+                jvm: None,
+                kernel: Some(KernelTuning {
+                    sysctl: [
+                        ("net.core.rmem_max".to_string(), "26214400".to_string()),
+                        ("net.core.wmem_max".to_string(), "26214400".to_string()),
+                    ].into_iter().collect(),
+                    ulimits: [
+                        ("nofile".to_string(), 100000),
+                    ].into_iter().collect(),
+                }),
+                nice: Some(-10),
+                io_class: Some("realtime".to_string()),
+                cpu_affinity: None,
+                huge_pages: None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Detect mod support based on game type
+    fn detect_mod_support(&self, game_type: &str) -> Option<ModSupport> {
+        match game_type {
+            "minecraft" => Some(ModSupport {
+                loader: ModLoader::Bukkit,
+                mods_dir: "/plugins".to_string(),
+                config_dir: Some("/plugins".to_string()),
+                marketplaces: vec!["spigot".to_string(), "modrinth".to_string()],
+                auto_update: false,
+            }),
+            "rust" => Some(ModSupport {
+                loader: ModLoader::Oxide,
+                mods_dir: "/oxide/plugins".to_string(),
+                config_dir: Some("/oxide/config".to_string()),
+                marketplaces: vec!["umod".to_string(), "codefling".to_string()],
+                auto_update: false,
+            }),
+            "valheim" => Some(ModSupport {
+                loader: ModLoader::BepInEx,
+                mods_dir: "/BepInEx/plugins".to_string(),
+                config_dir: Some("/BepInEx/config".to_string()),
+                marketplaces: vec!["thunderstore".to_string()],
+                auto_update: false,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Generate update configuration from egg
+    fn generate_update_config(&self, egg: &PterodactylEgg) -> Option<Updates> {
+        // Check if egg uses SteamCMD
+        if egg.scripts.installation.script.contains("steamcmd") {
+            // Try to extract app ID from installation script
+            let app_id_regex = Regex::new(r"app_update\s+(\d+)").ok()?;
+            if let Some(caps) = app_id_regex.captures(&egg.scripts.installation.script) {
+                if let Ok(app_id) = caps[1].parse::<u32>() {
+                    return Some(Updates {
+                        check: UpdateCheck::SteamCmd { app_id },
+                        apply: UpdateApply::SteamCmd { app_id, beta: None },
+                        auto_update: false,
+                        schedule: None,
+                        pre_update_command: None,
+                        post_update_command: None,
+                    });
+                }
+            }
+        }
+        None
     }
 
     fn scan_egg_security(&self, egg: &PterodactylEgg) -> Result<()> {
@@ -108,6 +235,9 @@ impl EggConverter {
             } else {
                 Some(egg.features.clone())
             },
+            min_panel_version: None,
+            docs_url: None,
+            support_url: None,
         })
     }
 
@@ -194,11 +324,11 @@ impl EggConverter {
         let image = egg.default_image().unwrap_or_else(|| {
             let game = self.detect_game_type(egg);
             match game.as_str() {
-                "minecraft" => "ghcr.io/pterodactyl/yolks:java_17".to_string(),
-                "rust" => "ghcr.io/pterodactyl/games:rust".to_string(),
-                "ark" => "ghcr.io/pterodactyl/games:source".to_string(),
-                "valheim" => "ghcr.io/pterodactyl/games:source".to_string(),
-                _ => "ghcr.io/pterodactyl/yolks:debian".to_string(),
+                "minecraft" => "ghcr.io/parkervcp/yolks:java_21".to_string(),
+                "rust" => "ghcr.io/parkervcp/steamcmd:debian".to_string(),
+                "ark" => "ghcr.io/parkervcp/steamcmd:debian".to_string(),
+                "valheim" => "ghcr.io/parkervcp/steamcmd:debian".to_string(),
+                _ => "ghcr.io/parkervcp/yolks:debian".to_string(),
             }
         });
 
@@ -213,6 +343,8 @@ impl EggConverter {
             image,
             entrypoint: None,
             environment: HashMap::new(),
+            pull_policy: "if_not_present".to_string(),
+            image_pull_secret: None,
         })
     }
 
@@ -243,6 +375,8 @@ impl EggConverter {
             disk: DiskResources {
                 min: disk_min.to_string(),
                 io_priority: "normal".to_string(),
+                iops_limit: None,
+                bandwidth_limit: None,
             },
         })
     }
@@ -263,6 +397,8 @@ impl EggConverter {
             args,
             working_dir: "/home/container".to_string(),
             lifecycle,
+            startup_grace_period: Some("60s".to_string()),
+            startup_timeout: Some("300s".to_string()),
         })
     }
 
@@ -343,6 +479,8 @@ impl EggConverter {
             user_editable: var.user_editable,
             user_viewable: var.user_viewable,
             rules: if rules.is_empty() { None } else { Some(rules) },
+            category: None,
+            placeholder: None,
         })
     }
 
@@ -480,6 +618,7 @@ impl EggConverter {
                     protocol,
                     required: var.rules.contains("required"),
                     firewall_default,
+                    description: Some(var.description.clone()),
                 });
             }
         }
@@ -487,6 +626,7 @@ impl EggConverter {
         Ok(Networking {
             ports,
             dns: vec!["1.1.1.1".to_string(), "1.0.0.1".to_string()],
+            ipv6: false,
         })
     }
 
@@ -536,6 +676,7 @@ impl EggConverter {
                     failure_threshold: 3,
                 },
                 metrics: vec![],
+                ready_check: None,
             }))
         } else {
             // Try TCP health check on main port
@@ -556,6 +697,7 @@ impl EggConverter {
                         failure_threshold: 3,
                     },
                     metrics: vec![],
+                    ready_check: None,
                 }))
             } else {
                 Ok(None)
