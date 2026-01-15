@@ -99,7 +99,7 @@ EOF
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/nexus-panel.git
+git clone https://github.com/rifle-ak/nexus-panel.git
 cd nexus-panel
 
 # Build in release mode
@@ -176,7 +176,7 @@ Create `/etc/systemd/system/nexus-node.service`:
 ```ini
 [Unit]
 Description=Nexus Node - Game Server Container Runtime
-Documentation=https://github.com/your-org/nexus-panel
+Documentation=https://github.com/rifle-ak/nexus-panel
 After=network.target containerd.service
 Requires=containerd.service
 
@@ -500,6 +500,5 @@ systemctl start nexus-node
 
 ## Support
 
-- **Documentation**: https://docs.nexus-panel.dev
-- **Issues**: https://github.com/your-org/nexus-panel/issues
-- **Discord**: https://discord.gg/nexus-panel
+- **Documentation**: https://github.com/rifle-ak/nexus-panel
+- **Issues**: https://github.com/rifle-ak/nexus-panel/issues
