@@ -1,0 +1,20 @@
+[package]
+name = "nexus-marketplace"
+version = "0.1.0"
+edition = "2021"
+description = "Mod marketplace integration for Nexus Panel"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+url.workspace = true
+semver.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+urlencoding.workspace = true

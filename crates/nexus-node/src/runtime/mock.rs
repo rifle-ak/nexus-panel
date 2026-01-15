@@ -114,7 +114,7 @@ impl ContainerRuntime for MockRuntime {
     }
 
     async fn attach(&self, id: &str) -> Result<Box<dyn ConsoleStream>> {
-        tracing::info!("[MOCK] Attaching to container: {}", id);
+        tracing::info!("[MOCK] Attaching to container (read-only): {}", id);
 
         // Check container exists
         let containers = self.containers.read().await;
@@ -123,6 +123,46 @@ impl ContainerRuntime for MockRuntime {
         }
 
         Ok(Box::new(MockConsoleStream::new(id)))
+    }
+
+    async fn attach_bidirectional(&self, id: &str) -> Result<Box<dyn BidirectionalConsole>> {
+        tracing::info!("[MOCK] Attaching to container (bidirectional): {}", id);
+
+        // Check container exists and is running
+        let containers = self.containers.read().await;
+        let container = containers
+            .get(id)
+            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+
+        if container.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running",
+                id
+            )));
+        }
+
+        Ok(Box::new(MockBidirectionalConsole::new(id)))
+    }
+
+    async fn send_command(&self, id: &str, command: &str) -> Result<()> {
+        tracing::info!("[MOCK] Sending command to container {}: {}", id, command);
+
+        // Check container exists and is running
+        let containers = self.containers.read().await;
+        let container = containers
+            .get(id)
+            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+
+        if container.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running",
+                id
+            )));
+        }
+
+        // Simulate command being sent
+        tracing::debug!("[MOCK] Command received: {}", command);
+        Ok(())
     }
 }
 
@@ -189,5 +229,98 @@ impl ConsoleStream for MockConsoleStream {
             // EOF - no more logs
             Ok(None)
         }
+    }
+}
+
+/// Mock bidirectional console for testing
+pub struct MockBidirectionalConsole {
+    container_id: String,
+    is_open: bool,
+    command_buffer: Vec<String>,
+    output_queue: Vec<String>,
+}
+
+impl MockBidirectionalConsole {
+    fn new(container_id: &str) -> Self {
+        Self {
+            container_id: container_id.to_string(),
+            is_open: true,
+            command_buffer: Vec::new(),
+            output_queue: vec![
+                format!("[{}] Console attached", container_id),
+                format!("[{}] Type 'help' for available commands", container_id),
+            ],
+        }
+    }
+}
+
+#[async_trait]
+impl BidirectionalConsole for MockBidirectionalConsole {
+    async fn read(&mut self) -> Result<Option<Vec<u8>>> {
+        if !self.is_open {
+            return Ok(None);
+        }
+
+        // Return queued output messages
+        if let Some(line) = self.output_queue.pop() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            return Ok(Some(format!("{}\n", line).into_bytes()));
+        }
+
+        // Simulate waiting for output
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        Ok(None)
+    }
+
+    async fn write(&mut self, data: &[u8]) -> Result<()> {
+        if !self.is_open {
+            return Err(NodeError::InvalidInput("Console is closed".to_string()));
+        }
+
+        let command = String::from_utf8_lossy(data).trim().to_string();
+        tracing::info!(
+            "[MOCK] Console input for {}: {}",
+            self.container_id,
+            command
+        );
+
+        // Store command and generate mock response
+        self.command_buffer.push(command.clone());
+
+        // Generate mock responses based on common commands
+        let response = if command.eq_ignore_ascii_case("help") {
+            format!("[{}] Available commands: help, status, players, stop", self.container_id)
+        } else if command.eq_ignore_ascii_case("status") {
+            format!("[{}] Server is running | Players: 5/20 | TPS: 20.0", self.container_id)
+        } else if command.eq_ignore_ascii_case("players") || command.eq_ignore_ascii_case("list") {
+            format!("[{}] Online players (5): Player1, Player2, Player3, Player4, Player5", self.container_id)
+        } else if command.starts_with("say ") {
+            format!("[{}] [Server] {}", self.container_id, &command[4..])
+        } else {
+            format!("[{}] Unknown command: {}", self.container_id, command)
+        };
+
+        self.output_queue.insert(0, response);
+        Ok(())
+    }
+
+    async fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+        tracing::debug!(
+            "[MOCK] Terminal resize for {}: {}x{}",
+            self.container_id,
+            cols,
+            rows
+        );
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        tracing::info!("[MOCK] Closing console for {}", self.container_id);
+        self.is_open = false;
+        Ok(())
+    }
+
+    fn is_open(&self) -> bool {
+        self.is_open
     }
 }

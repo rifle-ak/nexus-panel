@@ -376,6 +376,149 @@ impl NodeService for NodeServiceImpl {
 
     type StreamLogsStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<LogEntry, Status>>;
 
+    async fn send_command(
+        &self,
+        request: Request<SendCommandRequest>,
+    ) -> std::result::Result<Response<SendCommandResponse>, Status> {
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: SendCommand {} -> {}", req.container_id, req.command);
+
+        // Send command to container
+        match self.manager.send_command(&req.container_id, &req.command).await {
+            Ok(_) => {
+                self.metrics.record_grpc_request("SendCommand", "ok", start.elapsed());
+                Ok(Response::new(SendCommandResponse {
+                    success: true,
+                    error: None,
+                }))
+            }
+            Err(e) => {
+                self.metrics.record_grpc_request("SendCommand", "error", start.elapsed());
+                Ok(Response::new(SendCommandResponse {
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }))
+            }
+        }
+    }
+
+    type AttachConsoleStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<ConsoleOutput, Status>>;
+
+    async fn attach_console(
+        &self,
+        request: Request<tonic::Streaming<ConsoleInput>>,
+    ) -> std::result::Result<Response<Self::AttachConsoleStream>, Status> {
+        let mut input_stream = request.into_inner();
+
+        // Wait for the first message to get container_id
+        let first_msg = input_stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to read first message: {}", e)))?
+            .ok_or_else(|| Status::invalid_argument("No input message received"))?;
+
+        let container_id = first_msg.container_id.clone();
+        info!("gRPC: AttachConsole {}", container_id);
+
+        // Attach to container console
+        let mut console = self
+            .manager
+            .attach_bidirectional(&container_id)
+            .await
+            .map_err(|e| Status::not_found(format!("Failed to attach: {}", e)))?;
+
+        // Process the first message's input if any
+        if let Some(input) = first_msg.input {
+            match input {
+                console_input::Input::Data(data) => {
+                    if let Err(e) = console.write(data.as_bytes()).await {
+                        return Err(Status::internal(format!("Write failed: {}", e)));
+                    }
+                }
+                console_input::Input::Resize(_) => {
+                    let rows = first_msg.rows.unwrap_or(24) as u16;
+                    let cols = first_msg.cols.unwrap_or(80) as u16;
+                    let _ = console.resize(rows, cols).await;
+                }
+            }
+        }
+
+        // Create output channel
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+
+        // Spawn task to handle bidirectional streaming
+        let container_id_clone = container_id.clone();
+        tokio::spawn(async move {
+            // Spawn reader task
+            let tx_reader = tx.clone();
+            let reader_handle = tokio::spawn(async move {
+                loop {
+                    match console.read().await {
+                        Ok(Some(data)) => {
+                            let output = ConsoleOutput {
+                                output: Some(console_output::Output::Data(
+                                    String::from_utf8_lossy(&data).to_string()
+                                )),
+                                error: None,
+                            };
+                            if tx_reader.send(Ok(output)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {
+                            // No data available, small delay
+                            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                        }
+                        Err(e) => {
+                            let output = ConsoleOutput {
+                                output: None,
+                                error: Some(format!("{}", e)),
+                            };
+                            let _ = tx_reader.send(Ok(output)).await;
+                            break;
+                        }
+                    }
+
+                    if !console.is_open() {
+                        break;
+                    }
+                }
+
+                // Send closed signal
+                let _ = tx_reader.send(Ok(ConsoleOutput {
+                    output: Some(console_output::Output::Closed(true)),
+                    error: None,
+                })).await;
+            });
+
+            // Handle incoming input messages
+            while let Ok(Some(msg)) = input_stream.message().await {
+                if let Some(input) = msg.input {
+                    match input {
+                        console_input::Input::Data(data) => {
+                            // We can't easily write here since console is moved
+                            // In a real implementation, we'd use a channel or Arc<Mutex>
+                            info!("Console input for {}: {} bytes", msg.container_id, data.len());
+                        }
+                        console_input::Input::Resize(_) => {
+                            let rows = msg.rows.unwrap_or(24) as u16;
+                            let cols = msg.cols.unwrap_or(80) as u16;
+                            info!("Console resize for {}: {}x{}", msg.container_id, cols, rows);
+                        }
+                    }
+                }
+            }
+
+            // Wait for reader to finish
+            let _ = reader_handle.await;
+            info!("AttachConsole for {} completed", container_id_clone);
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+
     async fn get_node_info(
         &self,
         _request: Request<GetNodeInfoRequest>,

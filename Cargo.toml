@@ -6,7 +6,9 @@ edition = "2021"
 [workspace]
 members = [
     "crates/egg-importer",
-    "crates/nexus-config", "crates/nexus-node",
+    "crates/nexus-config",
+    "crates/nexus-node",
+    "crates/nexus-marketplace",
 ]
 
 [workspace.dependencies]
@@ -22,6 +24,11 @@ tracing-subscriber = "0.3"
 regex = "1.10"
 url = "2.5"
 reqwest = { version = "0.11", features = ["json"] }
+sha2 = "0.10"
+urlencoding = "2.1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+semver = "1.0"
 
 [dependencies]
 egg-importer = { path = "crates/egg-importer" }

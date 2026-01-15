@@ -22,6 +22,9 @@ pub enum NodeError {
     #[error("Invalid config: {reason}")]
     InvalidConfig { reason: String },
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("Containerd error: {0}")]
     ContainerdError(String),
 

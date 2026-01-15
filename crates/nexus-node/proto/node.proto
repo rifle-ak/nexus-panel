@@ -18,6 +18,10 @@ service NodeService {
   // Container logs (streaming)
   rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
 
+  // Console operations (bidirectional)
+  rpc SendCommand(SendCommandRequest) returns (SendCommandResponse);
+  rpc AttachConsole(stream ConsoleInput) returns (stream ConsoleOutput);
+
   // Node health and info
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
@@ -119,6 +123,36 @@ message LogEntry {
   string timestamp = 1;
   string stream = 2;  // "stdout" or "stderr"
   string line = 3;
+}
+
+// Console command (one-shot)
+message SendCommandRequest {
+  string container_id = 1;
+  string command = 2;
+}
+
+message SendCommandResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
+// Console attach (bidirectional streaming)
+message ConsoleInput {
+  string container_id = 1;
+  oneof input {
+    string data = 2;        // Raw input data (stdin)
+    bool resize = 3;        // Terminal resize signal
+  }
+  optional uint32 rows = 4;   // Terminal rows (for resize)
+  optional uint32 cols = 5;   // Terminal cols (for resize)
+}
+
+message ConsoleOutput {
+  oneof output {
+    string data = 1;        // Raw output data (stdout/stderr combined)
+    bool closed = 2;        // Console was closed
+  }
+  optional string error = 3;  // Error message if any
 }
 
 // Node info

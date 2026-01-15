@@ -379,7 +379,7 @@ impl ContainerManager {
         self.metrics.update_container_counts(total, running, &by_state_vec);
     }
 
-    /// Attach to container console for log streaming
+    /// Attach to container console for log streaming (read-only)
     pub async fn attach_console(&self, container_id: &str) -> Result<Box<dyn crate::runtime::ConsoleStream>> {
         // Verify container exists
         {
@@ -391,6 +391,48 @@ impl ContainerManager {
 
         // Attach to container console
         self.runtime.attach(container_id).await
+    }
+
+    /// Attach to container console (bidirectional - stdin/stdout/stderr)
+    pub async fn attach_bidirectional(&self, container_id: &str) -> Result<Box<dyn crate::runtime::BidirectionalConsole>> {
+        // Verify container exists and is running
+        {
+            let states = self.states.read().await;
+            let state = states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+
+            if !state.status.is_running() {
+                return Err(NodeError::InvalidInput(format!(
+                    "Container {} is not running",
+                    container_id
+                )));
+            }
+        }
+
+        // Attach to container console
+        self.runtime.attach_bidirectional(container_id).await
+    }
+
+    /// Send a command to container stdin (one-shot)
+    pub async fn send_command(&self, container_id: &str, command: &str) -> Result<()> {
+        // Verify container exists and is running
+        {
+            let states = self.states.read().await;
+            let state = states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+
+            if !state.status.is_running() {
+                return Err(NodeError::InvalidInput(format!(
+                    "Container {} is not running",
+                    container_id
+                )));
+            }
+        }
+
+        // Send command via runtime
+        self.runtime.send_command(container_id, command).await
     }
 
     /// Convert GameConfig to ContainerSpec

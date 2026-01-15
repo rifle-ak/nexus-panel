@@ -385,13 +385,55 @@ impl ContainerRuntime for ContainerdRuntime {
     }
 
     async fn attach(&self, id: &str) -> Result<Box<dyn ConsoleStream>> {
-        info!("[Containerd] Attaching to container: {}", id);
+        info!("[Containerd] Attaching to container (read-only): {}", id);
 
         // For now, return a placeholder stream
         // Real implementation would use containerd's attach API
         // This requires more complex stream handling with containerd's I/O pipes
 
         Ok(Box::new(ContainerdConsoleStream::new(id)))
+    }
+
+    async fn attach_bidirectional(&self, id: &str) -> Result<Box<dyn BidirectionalConsole>> {
+        info!("[Containerd] Attaching to container (bidirectional): {}", id);
+
+        // Verify container exists and is running
+        let info = self.inspect(id).await?;
+        if info.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running (status: {})",
+                id, info.status
+            )));
+        }
+
+        Ok(Box::new(ContainerdBidirectionalConsole::new(
+            id,
+            &self.socket_path,
+            &self.namespace,
+        )))
+    }
+
+    async fn send_command(&self, id: &str, command: &str) -> Result<()> {
+        info!("[Containerd] Sending command to container {}: {}", id, command);
+
+        // Verify container exists and is running
+        let info = self.inspect(id).await?;
+        if info.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running (status: {})",
+                id, info.status
+            )));
+        }
+
+        // Get a bidirectional console and write the command
+        let mut console = self.attach_bidirectional(id).await?;
+
+        // Write command with newline
+        let command_with_newline = format!("{}\n", command);
+        console.write(command_with_newline.as_bytes()).await?;
+
+        info!("Successfully sent command to container {}", id);
+        Ok(())
     }
 }
 
@@ -508,5 +550,172 @@ impl ConsoleStream for ContainerdConsoleStream {
         // 3. Handling EOF and errors
 
         Ok(None) // Return EOF for now
+    }
+}
+
+/// Bidirectional console for Containerd containers
+/// Provides full stdin/stdout/stderr access via FIFO pipes
+pub struct ContainerdBidirectionalConsole {
+    container_id: String,
+    #[allow(dead_code)]
+    socket_path: String,
+    namespace: String,
+    stdin_writer: Option<tokio::fs::File>,
+    stdout_reader: Option<tokio::io::BufReader<tokio::fs::File>>,
+    is_open: bool,
+}
+
+impl ContainerdBidirectionalConsole {
+    pub fn new(container_id: &str, socket_path: &str, namespace: &str) -> Self {
+        Self {
+            container_id: container_id.to_string(),
+            socket_path: socket_path.to_string(),
+            namespace: namespace.to_string(),
+            stdin_writer: None,
+            stdout_reader: None,
+            is_open: true,
+        }
+    }
+
+    /// Initialize the FIFO pipes for I/O
+    /// Containerd creates FIFOs at: /run/containerd/fifo/<task-id>/
+    async fn init_fifos(&mut self) -> Result<()> {
+        if self.stdin_writer.is_some() {
+            return Ok(()); // Already initialized
+        }
+
+        // Standard FIFO paths used by containerd
+        let fifo_base = format!("/run/containerd/io.containerd.runtime.v2.task/{}/{}",
+            self.namespace, self.container_id);
+
+        let stdin_path = format!("{}/stdin", fifo_base);
+        let stdout_path = format!("{}/stdout", fifo_base);
+
+        debug!("Opening FIFOs for container {}: stdin={}, stdout={}",
+            self.container_id, stdin_path, stdout_path);
+
+        // Open stdin for writing (non-blocking)
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&stdin_path)
+            .await
+        {
+            Ok(file) => {
+                self.stdin_writer = Some(file);
+            }
+            Err(e) => {
+                warn!("Failed to open stdin FIFO {}: {}", stdin_path, e);
+                // Continue without stdin - read-only mode
+            }
+        }
+
+        // Open stdout for reading
+        match tokio::fs::File::open(&stdout_path).await {
+            Ok(file) => {
+                self.stdout_reader = Some(tokio::io::BufReader::new(file));
+            }
+            Err(e) => {
+                warn!("Failed to open stdout FIFO {}: {}", stdout_path, e);
+                // Continue without stdout
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl BidirectionalConsole for ContainerdBidirectionalConsole {
+    async fn read(&mut self) -> Result<Option<Vec<u8>>> {
+        use tokio::io::AsyncBufReadExt;
+
+        if !self.is_open {
+            return Ok(None);
+        }
+
+        // Initialize FIFOs if not already done
+        self.init_fifos().await?;
+
+        if let Some(ref mut reader) = self.stdout_reader {
+            let mut line = String::new();
+
+            match tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                reader.read_line(&mut line)
+            ).await {
+                Ok(Ok(0)) => Ok(None), // EOF
+                Ok(Ok(n)) if n > 0 => Ok(Some(line.into_bytes())),
+                Ok(Ok(_)) => Ok(None),
+                Ok(Err(e)) => Err(NodeError::Internal(format!("Read error: {}", e))),
+                Err(_) => Ok(None), // Timeout - no data available
+            }
+        } else {
+            // No stdout reader, return empty
+            Ok(None)
+        }
+    }
+
+    async fn write(&mut self, data: &[u8]) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        if !self.is_open {
+            return Err(NodeError::InvalidInput("Console is closed".to_string()));
+        }
+
+        // Initialize FIFOs if not already done
+        self.init_fifos().await?;
+
+        if let Some(ref mut writer) = self.stdin_writer {
+            writer
+                .write_all(data)
+                .await
+                .map_err(|e| NodeError::Internal(format!("Write error: {}", e)))?;
+
+            writer
+                .flush()
+                .await
+                .map_err(|e| NodeError::Internal(format!("Flush error: {}", e)))?;
+
+            debug!("Wrote {} bytes to container {} stdin", data.len(), self.container_id);
+            Ok(())
+        } else {
+            Err(NodeError::InvalidInput(format!(
+                "No stdin available for container {}",
+                self.container_id
+            )))
+        }
+    }
+
+    async fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+        debug!(
+            "Resize request for container {}: {}x{}",
+            self.container_id, cols, rows
+        );
+
+        // Terminal resize requires ioctl on the PTY
+        // This is typically handled by containerd's shim process
+        // For now, log and acknowledge the resize request
+        // Full implementation would require:
+        // 1. Getting the PTY master fd from containerd
+        // 2. Calling ioctl(fd, TIOCSWINSZ, &winsize)
+
+        info!(
+            "Terminal resize requested for container {}: {}x{} (not yet implemented)",
+            self.container_id, cols, rows
+        );
+
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        debug!("Closing console for container {}", self.container_id);
+        self.is_open = false;
+        self.stdin_writer = None;
+        self.stdout_reader = None;
+        Ok(())
+    }
+
+    fn is_open(&self) -> bool {
+        self.is_open
     }
 }
