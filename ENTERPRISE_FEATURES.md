@@ -6,6 +6,7 @@ This document describes the enterprise-grade features available in Nexus Node fo
 
 Nexus Node includes comprehensive enterprise features designed for:
 
+- **DDoS Protection**: Cloudflare Spectrum integration and XDP/eBPF firewall
 - **Security**: Authentication, authorization, TLS/mTLS, input validation
 - **Reliability**: Circuit breakers, rate limiting, graceful degradation
 - **Observability**: Audit logging, distributed tracing, correlation IDs
@@ -15,16 +16,309 @@ All enterprise features are **disabled by default** for backward compatibility a
 
 ## Table of Contents
 
-1. [Authentication](#authentication)
-2. [Rate Limiting](#rate-limiting)
-3. [TLS/mTLS](#tlsmtls)
-4. [Audit Logging](#audit-logging)
-5. [Circuit Breakers](#circuit-breakers)
-6. [Request Tracing](#request-tracing)
-7. [Input Validation](#input-validation)
-8. [Graceful Degradation](#graceful-degradation)
-9. [Configuration Hot Reload](#configuration-hot-reload)
-10. [Environment Variables Reference](#environment-variables-reference)
+### Key Features
+1. [Cloudflare Integration](#cloudflare-integration) - DDoS protection and Spectrum proxy
+2. [XDP Firewall](#xdp-firewall) - Kernel-level packet filtering
+
+### Security & Operations
+3. [Authentication](#authentication)
+4. [Rate Limiting](#rate-limiting)
+5. [TLS/mTLS](#tlsmtls)
+6. [Audit Logging](#audit-logging)
+7. [Circuit Breakers](#circuit-breakers)
+8. [Request Tracing](#request-tracing)
+9. [Input Validation](#input-validation)
+10. [Graceful Degradation](#graceful-degradation)
+11. [Configuration Hot Reload](#configuration-hot-reload)
+12. [Environment Variables Reference](#environment-variables-reference)
+
+---
+
+## Cloudflare Integration
+
+**Enterprise-grade DDoS protection for game servers using Cloudflare Spectrum.**
+
+Cloudflare Spectrum provides Layer 4 reverse proxy capabilities, protecting TCP/UDP game server traffic from DDoS attacks while maintaining low latency for players.
+
+### Key Benefits
+
+- **DDoS Mitigation**: Enterprise-grade protection against volumetric and protocol attacks
+- **Low Latency**: Anycast network with 300+ data centers worldwide
+- **No IP Exposure**: Origin server IP hidden behind Cloudflare's network
+- **Automatic Failover**: Built-in health checks and failover capabilities
+- **UDP Support**: Full support for UDP-based game protocols
+
+### Supported Games
+
+| Game | Protocol | Default Port |
+|------|----------|--------------|
+| Minecraft | TCP | 25565 |
+| Rust | UDP | 28015 |
+| ARK: Survival | UDP | 7777 |
+| Valheim | UDP | 2456 |
+| Counter-Strike 2 | UDP | 27015 |
+| Team Fortress 2 | UDP | 27015 |
+| Garry's Mod | UDP | 27015 |
+| Custom | TCP/UDP | Any |
+
+### Configuration
+
+```bash
+# Enable Cloudflare integration
+CLOUDFLARE_ENABLED=true
+
+# Cloudflare API credentials
+CLOUDFLARE_API_TOKEN=your-api-token
+CLOUDFLARE_ZONE_ID=your-zone-id
+
+# Domain configuration
+CLOUDFLARE_DOMAIN=servers.example.com
+
+# Optional: Custom API URL (for enterprise accounts)
+CLOUDFLARE_API_URL=https://api.cloudflare.com/client/v4
+
+# Spectrum settings
+CLOUDFLARE_SPECTRUM_IP_FIREWALL=true
+CLOUDFLARE_SPECTRUM_PROXY_PROTOCOL=off
+CLOUDFLARE_SPECTRUM_EDGE_IPS=dynamic
+```
+
+### Quick Setup
+
+```rust
+use nexus_node::{CloudflareClient, CloudflareConfig};
+
+// Initialize client
+let config = CloudflareConfig::from_env()?;
+let client = CloudflareClient::new(config);
+
+// One-call game server setup with DDoS protection
+let result = client.setup_game_server(
+    "my-rust-server",           // Server name
+    "rust",                     // Game type
+    "192.168.1.100",           // Origin IP
+    28015,                      // Port
+).await?;
+
+println!("Players connect to: {}", result.dns_record.name);
+// Output: Players connect to: my-rust-server.servers.example.com
+```
+
+### Manual Spectrum App Creation
+
+```rust
+// Create Spectrum app for custom game/port
+let app = client.create_spectrum_app(
+    "custom-game",              // Name
+    "tcp",                      // Protocol (tcp/udp)
+    12345,                      // Edge port (Cloudflare-facing)
+    "192.168.1.100",           // Origin IP
+    12345,                      // Origin port
+).await?;
+```
+
+### DNS Record Management
+
+```rust
+// Create A record pointing to Spectrum
+let record = client.create_dns_record(
+    "A",                        // Record type
+    "game.example.com",         // Name
+    "spectrum-ip",              // Content (Cloudflare provides)
+    true,                       // Proxied through Cloudflare
+    Some(300),                  // TTL (ignored when proxied)
+).await?;
+
+// Create SRV record for Minecraft
+let srv = client.create_srv_record(
+    "minecraft",                // Service name
+    "tcp",                      // Protocol
+    "mc.example.com",          // Target
+    25565,                      // Port
+    1,                          // Priority
+    1,                          // Weight
+).await?;
+```
+
+### Complete Server Teardown
+
+```rust
+// Remove all Cloudflare resources for a server
+client.teardown_game_server("my-rust-server").await?;
+```
+
+### API Token Permissions
+
+Create a Cloudflare API token with these permissions:
+
+| Permission | Access Level |
+|------------|--------------|
+| Zone.Spectrum | Edit |
+| Zone.DNS | Edit |
+| Zone.Zone | Read |
+
+---
+
+## XDP Firewall
+
+**High-performance kernel-level packet filtering using XDP/eBPF technology.**
+
+XDP (eXpress Data Path) provides the fastest possible packet filtering by processing packets at the earliest point in the Linux network stack - before the kernel allocates any memory for the packet.
+
+### Performance
+
+| Metric | XDP | iptables |
+|--------|-----|----------|
+| Packets/sec | 20M+ | ~3M |
+| Latency | <1μs | ~10μs |
+| CPU Usage | Minimal | High |
+| Memory | Zero-copy | Per-packet allocation |
+
+### Key Features
+
+- **Kernel-Level Filtering**: Packets filtered before reaching userspace
+- **Game-Specific Profiles**: Pre-configured protections for popular games
+- **Rate Limiting**: Per-IP and global rate limiting
+- **IP Management**: Allowlists, blocklists, and auto-blocking
+- **Zero Downtime**: Rules updated without service restart
+- **Statistics**: Real-time packet and byte counters
+
+### Configuration
+
+```bash
+# Enable XDP firewall
+XDP_FIREWALL_ENABLED=true
+
+# Network interface to attach XDP program
+XDP_INTERFACE=eth0
+
+# XDP mode: native (fastest), offload (NIC), generic (fallback)
+XDP_MODE=native
+
+# Rate limiting
+XDP_PER_IP_RATE_LIMIT=10000
+XDP_GLOBAL_RATE_LIMIT=1000000
+XDP_BURST_SIZE=1000
+
+# Auto-blocking
+XDP_AUTO_BLOCK_ENABLED=true
+XDP_AUTO_BLOCK_THRESHOLD=50000
+XDP_AUTO_BLOCK_DURATION=300
+
+# Game protection (enabled by default)
+XDP_GAME_PROTECTION_ENABLED=true
+```
+
+### Quick Setup
+
+```rust
+use nexus_node::{XdpFirewall, FirewallConfig, GameType};
+
+// Initialize firewall
+let config = FirewallConfig::from_env()?;
+let firewall = XdpFirewall::new(config).await?;
+
+// Apply game-specific protection profile
+firewall.apply_game_profile(GameType::Rust, 28015).await?;
+```
+
+### Game Protection Profiles
+
+Each game profile includes optimized rules for that game's protocol:
+
+```rust
+// Available game types
+GameType::Minecraft     // TCP 25565 - Block invalid packets, query floods
+GameType::Rust          // UDP 28015 - RCON protection, query rate limits
+GameType::Ark           // UDP 7777  - Query flood protection
+GameType::Valheim       // UDP 2456  - Steam query protection
+GameType::Csgo          // UDP 27015 - A2S query rate limiting
+GameType::Tf2           // UDP 27015 - Similar to CS:GO
+GameType::GarrysMod     // UDP 27015 - Lua exploit protection
+GameType::Custom        // Any port  - Basic DDoS protection
+```
+
+### IP Management
+
+```rust
+// Block a malicious IP
+firewall.block_ip("192.168.1.50".parse()?).await?;
+
+// Allow a trusted IP (bypasses rate limits)
+firewall.allow_ip("10.0.0.1".parse()?).await?;
+
+// Rate limit a specific IP
+firewall.rate_limit_ip(
+    "192.168.1.100".parse()?,
+    1000,  // packets per second
+).await?;
+
+// Remove an IP from blocklist
+firewall.unblock_ip("192.168.1.50".parse()?).await?;
+
+// Get current blocklist
+let blocked = firewall.get_blocked_ips().await?;
+```
+
+### Custom Rules
+
+```rust
+use nexus_node::FirewallRule;
+
+// Block specific port
+let rule = FirewallRule::new()
+    .destination_port(22)
+    .action(Action::Drop)
+    .build();
+firewall.add_rule(rule).await?;
+
+// Allow specific subnet
+let rule = FirewallRule::new()
+    .source_cidr("10.0.0.0/8".parse()?)
+    .action(Action::Allow)
+    .build();
+firewall.add_rule(rule).await?;
+
+// Rate limit UDP traffic on port 27015
+let rule = FirewallRule::new()
+    .protocol(Protocol::Udp)
+    .destination_port(27015)
+    .rate_limit(5000)  // pps
+    .action(Action::RateLimit)
+    .build();
+firewall.add_rule(rule).await?;
+```
+
+### Statistics
+
+```rust
+// Get firewall statistics
+let stats = firewall.get_stats().await?;
+println!("Packets processed: {}", stats.packets_processed);
+println!("Packets dropped: {}", stats.packets_dropped);
+println!("Bytes processed: {}", stats.bytes_processed);
+
+// Get per-IP statistics
+let ip_stats = firewall.get_ip_stats("192.168.1.100".parse()?).await?;
+println!("Packets from IP: {}", ip_stats.packet_count);
+```
+
+### XDP Modes
+
+| Mode | Performance | Requirements |
+|------|-------------|--------------|
+| `native` | Fastest | Driver support required |
+| `offload` | Hardware | NIC with XDP offload |
+| `generic` | Slower | Any Linux kernel 4.8+ |
+
+### Kernel Requirements
+
+- Linux kernel 4.8+ for generic XDP
+- Linux kernel 4.15+ for native XDP
+- `CAP_NET_ADMIN` and `CAP_BPF` capabilities
+- BPF filesystem mounted at `/sys/fs/bpf`
+
+---
 
 ---
 
@@ -527,11 +821,48 @@ env_config.reload();
 | `OTLP_ENDPOINT` | - | OpenTelemetry endpoint |
 | `TRACING_SAMPLE_RATE` | `1.0` | Sample rate (0.0-1.0) |
 
+### Cloudflare Integration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLOUDFLARE_ENABLED` | `false` | Enable Cloudflare integration |
+| `CLOUDFLARE_API_TOKEN` | - | Cloudflare API token |
+| `CLOUDFLARE_ZONE_ID` | - | Cloudflare zone ID |
+| `CLOUDFLARE_DOMAIN` | - | Base domain for game servers |
+| `CLOUDFLARE_API_URL` | `https://api.cloudflare.com/client/v4` | API endpoint |
+| `CLOUDFLARE_SPECTRUM_IP_FIREWALL` | `true` | Enable IP firewall on Spectrum |
+| `CLOUDFLARE_SPECTRUM_PROXY_PROTOCOL` | `off` | Proxy protocol setting |
+
+### XDP Firewall
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `XDP_FIREWALL_ENABLED` | `false` | Enable XDP firewall |
+| `XDP_INTERFACE` | `eth0` | Network interface |
+| `XDP_MODE` | `native` | XDP mode (native/offload/generic) |
+| `XDP_PER_IP_RATE_LIMIT` | `10000` | Per-IP packet rate limit |
+| `XDP_GLOBAL_RATE_LIMIT` | `1000000` | Global packet rate limit |
+| `XDP_BURST_SIZE` | `1000` | Burst allowance |
+| `XDP_AUTO_BLOCK_ENABLED` | `true` | Auto-block abusive IPs |
+| `XDP_AUTO_BLOCK_THRESHOLD` | `50000` | Packets/sec to trigger block |
+| `XDP_AUTO_BLOCK_DURATION` | `300` | Block duration (seconds) |
+| `XDP_GAME_PROTECTION_ENABLED` | `true` | Enable game-specific rules |
+
 ---
 
 ## Production Checklist
 
 Before deploying to production, ensure:
+
+### DDoS Protection
+
+- [ ] `CLOUDFLARE_ENABLED=true` with valid API token
+- [ ] Cloudflare Spectrum configured for game server ports
+- [ ] `XDP_FIREWALL_ENABLED=true` for kernel-level protection
+- [ ] `XDP_MODE=native` for maximum performance (if supported)
+- [ ] Game-specific protection profiles applied
+- [ ] Auto-blocking configured with appropriate thresholds
+- [ ] IP allowlists configured for trusted sources
 
 ### Security
 
@@ -556,6 +887,7 @@ Before deploying to production, ensure:
 - [ ] `LOG_FORMAT=json` for structured logging
 - [ ] Metrics scraped by Prometheus
 - [ ] Dashboards configured in Grafana
+- [ ] XDP firewall statistics monitored
 
 ### Operations
 
@@ -564,3 +896,5 @@ Before deploying to production, ensure:
 - [ ] Audit logs archived and retained
 - [ ] Runbooks documented
 - [ ] Incident response procedures in place
+- [ ] Cloudflare API token rotation scheduled
+- [ ] XDP rules backup and recovery tested
