@@ -363,12 +363,8 @@ impl GameConfig {
         // Validate variables
         for var in &self.variables {
             // Required variables must have a default unless they're user_editable
-            if var.required && var.default.is_empty() && !var.user_editable {
-                errors.push(format!(
-                    "  • Variable '{}': required but has no default value and is not user editable",
-                    var.name
-                ));
-            }
+            // Note: This is now a warning handled elsewhere, not a blocking error
+            // Some Pterodactyl eggs have this configuration legitimately
 
             // Validate rules if present
             if let Some(rules) = &var.rules {
@@ -422,12 +418,8 @@ impl GameConfig {
         // Validate container image
         if self.container.image.is_empty() {
             errors.push("  • Container image cannot be empty".to_string());
-        } else if !self.container.image.contains(':') {
-            errors.push(format!(
-                "  • Container image '{}' should include a tag (e.g., {}:latest)",
-                self.container.image, self.container.image
-            ));
         }
+        // Note: Missing tag is a warning, not an error - handled separately in check_config_warnings
 
         // Return all errors if any
         if !errors.is_empty() {

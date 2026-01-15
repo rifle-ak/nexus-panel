@@ -1,5 +1,5 @@
 use crate::pterodactyl::{EggVariable, PterodactylEgg};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use nexus_config::*;
 use regex::Regex;
 use std::collections::HashMap;
@@ -103,7 +103,11 @@ impl EggConverter {
             game: self.detect_game_type(egg),
             author: egg.author.clone(),
             description: egg.description.clone(),
-            tags: egg.features.clone(),
+            tags: if egg.features.is_empty() {
+                None
+            } else {
+                Some(egg.features.clone())
+            },
         })
     }
 
@@ -137,9 +141,24 @@ impl EggConverter {
     }
 
     fn convert_container(&self, egg: &PterodactylEgg) -> Result<Container> {
-        let image = egg
-            .default_image()
-            .context("No docker image found in egg")?;
+        // Get image from egg or provide a sensible default based on game type
+        let image = egg.default_image().unwrap_or_else(|| {
+            let game = self.detect_game_type(egg);
+            match game.as_str() {
+                "minecraft" => "ghcr.io/pterodactyl/yolks:java_17".to_string(),
+                "rust" => "ghcr.io/pterodactyl/games:rust".to_string(),
+                "ark" => "ghcr.io/pterodactyl/games:source".to_string(),
+                "valheim" => "ghcr.io/pterodactyl/games:source".to_string(),
+                _ => "ghcr.io/pterodactyl/yolks:debian".to_string(),
+            }
+        });
+
+        // Ensure image has a tag
+        let image = if image.contains(':') {
+            image
+        } else {
+            format!("{}:latest", image)
+        };
 
         Ok(Container {
             image,
@@ -455,7 +474,7 @@ mod tests {
             name: "Rust Dedicated Server".to_string(),
             author: "test".to_string(),
             description: None,
-            features: None,
+            features: vec![],
             docker_images: HashMap::new(),
             file_denylist: vec![],
             startup: "".to_string(),

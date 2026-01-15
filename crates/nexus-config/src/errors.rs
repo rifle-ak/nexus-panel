@@ -182,7 +182,7 @@ mod tests {
 
         // Check all error codes are unique
         let mut codes = std::collections::HashSet::new();
-        for error in errors {
+        for error in &errors {
             assert!(codes.insert(error.error_code()));
         }
     }

@@ -82,7 +82,7 @@ Convert Pterodactyl eggs to native format with security enhancements.
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/nexus-panel
+git clone https://github.com/rifle-ak/nexus-panel.git
 cd nexus-panel
 
 # Build
@@ -236,7 +236,7 @@ RUST_LOG=debug cargo run -- convert --input test.json
 - [x] Convert to native format
 - [x] Security scanning
 - [x] CLI tool
-- [ ] Bulk import from GitHub repos
+- [x] Bulk import from GitHub repos
 
 ### Phase 2: Wings Daemon
 - [ ] Container orchestration

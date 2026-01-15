@@ -286,6 +286,49 @@ fn import_directory(
     Ok(())
 }
 
+/// Check if a JSON file is a Pterodactyl egg (vs config/settings files)
+fn is_egg_file(path: &Path) -> bool {
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Skip known non-egg configuration files
+    let non_egg_patterns = [
+        "config.json",
+        "conf.json",
+        "settings.json",
+        "settings_dict.json",
+        "serverconfiguration.json",
+    ];
+
+    for pattern in &non_egg_patterns {
+        if filename == *pattern {
+            return false;
+        }
+    }
+
+    // Accept files that start with "egg-" or end with "_egg.json"
+    // Also accept files in directories typically containing eggs
+    if filename.starts_with("egg-") || filename.starts_with("egg_") {
+        return true;
+    }
+
+    if filename.ends_with("_egg.json") || filename.ends_with("-egg.json") {
+        return true;
+    }
+
+    // For other JSON files, check if they look like eggs by reading first few bytes
+    // to look for required egg fields
+    if let Ok(content) = std::fs::read_to_string(path) {
+        // Quick heuristic: eggs have "meta" and "startup" fields
+        return content.contains("\"meta\"") && content.contains("\"startup\"");
+    }
+
+    false
+}
+
 fn find_egg_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut egg_files = Vec::new();
 
@@ -297,7 +340,10 @@ fn find_egg_files(dir: &Path) -> Result<Vec<PathBuf>> {
             // Recursively search subdirectories
             egg_files.extend(find_egg_files(&path)?);
         } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            egg_files.push(path);
+            // Only add if it looks like an egg file
+            if is_egg_file(&path) {
+                egg_files.push(path);
+            }
         }
     }
 

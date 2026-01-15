@@ -7,7 +7,7 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone <repo-url>
+git clone https://github.com/rifle-ak/nexus-panel.git
 cd nexus-panel
 cargo build --release
 
