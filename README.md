@@ -1,51 +1,56 @@
-# Nexus Panel - Next-Gen Game Server Management
+# Nexus Panel
 
-A high-performance game server control panel built with security and performance as first-class citizens.
+A high-performance game server control panel built in Rust with security and performance as first-class citizens.
 
-## 🎯 Project Goals
+## Features
 
-Build a game server panel that takes the best of Pterodactyl/Pelican and kicks it up several notches:
+- **High Performance**: Rust-based daemon with sub-100ms command execution
+- **Security First**: XDP firewall, secrets management, sandboxed execution
+- **Mod Marketplace**: Unified interface for Umod, Codefling, Lone.Design
+- **WHMCS Integration**: Full billing and provisioning support
+- **Developer Friendly**: Native YAML configs, backward compatible with Pterodactyl eggs
 
-- **Performance**: Rust-based Wings daemon, sub-100ms command execution
-- **Security**: Built-in XDP firewall, proper secrets management, sandboxed execution
-- **Features**: Multi-marketplace mod integration (Umod, Codefling, Lone.Design, etc.)
-- **Developer Experience**: Native YAML configs, backward compatible with Pterodactyl eggs
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────┐
-│  Panel (Rust/Go + React)            │
+│  Panel (Rust + React)               │
 │  - API Gateway                      │
 │  - Auth (JWT + RBAC)                │
 │  - Marketplace Aggregator           │
-│  - WebSocket Hub                    │
 └──────────────┬──────────────────────┘
-               │ gRPC/WebSocket
+               │ gRPC/mTLS
                ├─────────────┬─────────────┐
           ┌────▼────┐   ┌────▼────┐   ┌────▼────┐
-          │ Wings 1 │   │ Wings 2 │   │ Wings N │
+          │  Node 1 │   │  Node 2 │   │  Node N │
           │ (Rust)  │   │ (Rust)  │   │ (Rust)  │
-          │         │   │         │   │         │
           │ ┌─────┐ │   │ ┌─────┐ │   │ ┌─────┐ │
           │ │ XDP │ │   │ │ XDP │ │   │ │ XDP │ │
           │ └─────┘ │   │ └─────┘ │   │ └─────┘ │
           └─────────┘   └─────────┘   └─────────┘
 ```
 
-## 📦 Components
+## Quick Start
 
-### Nexus Config Format
+```bash
+# Clone and build
+git clone https://github.com/rifle-ak/nexus-panel.git
+cd nexus-panel
+cargo build --release
 
-Our native YAML format is superior to Pterodactyl eggs:
+# Run the node daemon
+./target/release/nexus-node
 
-- **Declarative**: No shell script nonsense
-- **Validated**: Type-safe configuration
-- **Secure**: Security policies built-in
-- **Structured lifecycle hooks**: pre_start, post_start, pre_stop
-- **XDP firewall rules**: Per-game DDoS protection
+# Convert Pterodactyl eggs
+./target/release/nexus-panel convert --input egg.json --output config.yaml
+```
 
-Example:
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for detailed setup instructions.
+
+## Native Config Format
+
+Our YAML format replaces Pterodactyl's JSON eggs with a more secure, declarative approach:
+
 ```yaml
 metadata:
   id: rust-dedicated
@@ -58,155 +63,11 @@ container:
 
 resources:
   cpu:
-    min: 2000  # millicores
+    min: 2000
     max: 4000
   memory:
     min: 4Gi
     max: 8Gi
-
-security:
-  firewall_rules:
-    - type: connection_rate
-      name: rate_limit
-      limit: 100/s
-      action: drop
-```
-
-### Egg Importer
-
-Convert Pterodactyl eggs to native format with security enhancements.
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/rifle-ak/nexus-panel.git
-cd nexus-panel
-
-# Build
-cargo build --release
-```
-
-### Import Pterodactyl Eggs
-
-```bash
-# Convert a single egg
-./target/release/nexus-panel convert \
-  --input eggs/rust.json \
-  --output configs/rust.yaml
-
-# Bulk import from directory
-./target/release/nexus-panel import \
-  --input-dir ./pterodactyl-eggs \
-  --output-dir ./configs
-
-# Clone and import from GitHub (Parker's eggs)
-./target/release/nexus-panel clone \
-  --repo https://github.com/parkervcp/eggs \
-  --output-dir ./configs
-
-# Validate a config
-./target/release/nexus-panel validate \
-  --input configs/rust.yaml
-```
-
-### CLI Options
-
-**convert** - Convert a single egg:
-- `--input, -i`: Path to Pterodactyl egg JSON
-- `--output, -o`: Output path (optional, defaults to same name .yaml)
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-
-**import** - Bulk import eggs:
-- `--input-dir, -i`: Directory with egg JSON files
-- `--output-dir, -o`: Output directory for configs
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-- `--continue-on-error`: Don't stop on conversion errors
-
-**clone** - Clone and import from git:
-- `--repo, -r`: Git repository URL
-- `--output-dir, -o`: Output directory
-- `--no-security-scan`: Skip security scanning
-- `--no-firewall-rules`: Don't add default firewall rules
-
-**validate** - Validate a native config:
-- `--input, -i`: Path to YAML config
-
-## 🔍 What Gets Improved During Import
-
-When converting Pterodactyl eggs, we automatically:
-
-### 1. Security Scanning
-- Detect dangerous commands (`rm -rf /`, `chmod 777`, `curl | bash`)
-- Flag security issues in startup scripts
-- Warn about privileged containers
-
-### 2. Security Enhancements
-- Drop ALL capabilities by default, only add NET_BIND_SERVICE
-- Enable seccomp profiles
-- Set no_new_privileges
-- Add default XDP firewall rules:
-  - Connection rate limiting (100/s)
-  - Packet size limits (anti-amplification)
-
-### 3. Networking
-- Auto-detect ports from variables
-- Set RCON ports to firewall deny by default
-- Add CloudFlare DNS by default
-
-### 4. Resource Limits
-- Set sensible defaults based on game type:
-  - Rust: 2-4 cores, 4-8GB RAM, 20GB disk
-  - Minecraft: 1-2 cores, 2-4GB RAM, 10GB disk
-  - ARK: 4-6 cores, 8-16GB RAM, 50GB disk
-
-### 5. Monitoring
-- Auto-configure health checks (RCON or TCP)
-- Set up monitoring intervals and thresholds
-
-### 6. Structured Lifecycle
-- Convert installation scripts to structured hooks
-- Add timeouts and conditions
-- Proper stop commands
-
-## 📊 Example Conversion
-
-**Before (Pterodactyl Egg):**
-```json
-{
-  "startup": "cd /home/container && ./RustDedicated -batchmode +server.port {{SERVER_PORT}}",
-  "stop": "quit",
-  "scripts": {
-    "installation": {
-      "script": "#!/bin/bash\napt-get update && apt-get install -y steamcmd"
-    }
-  }
-}
-```
-
-**After (Native Config):**
-```yaml
-startup:
-  command: ./RustDedicated
-  args:
-    - "-batchmode"
-    - "+server.port"
-    - "{{SERVER_PORT}}"
-  working_dir: /home/container
-  lifecycle:
-    pre_start:
-      - type: execute
-        command: "apt-get update && apt-get install -y steamcmd"
-        condition: first_start
-        timeout: 300s
-    pre_stop:
-      - type: execute
-        command: "quit"
-        timeout: 30s
 
 security:
   capabilities:
@@ -214,92 +75,128 @@ security:
     add: [NET_BIND_SERVICE]
   firewall_rules:
     - type: connection_rate
-      name: rate_limit_connections
       limit: 100/s
       action: drop
 ```
 
-## 🧪 Testing
+## Egg Import
+
+Convert existing Pterodactyl eggs with automatic security enhancements:
 
 ```bash
-# Run tests
-cargo test
+# Single egg
+./target/release/nexus-panel convert --input rust-egg.json
 
-# Run with logging
-RUST_LOG=debug cargo run -- convert --input test.json
+# Bulk import
+./target/release/nexus-panel import --input-dir ./eggs --output-dir ./configs
+
+# From GitHub
+./target/release/nexus-panel clone --repo https://github.com/parkervcp/eggs
 ```
 
-## 🗺️ Roadmap
+**Automatic improvements during import:**
+- Security scanning for dangerous commands
+- Capability dropping (principle of least privilege)
+- XDP firewall rules (connection rate limiting, packet size limits)
+- Resource defaults based on game type
+- RCON ports set to firewall deny by default
 
-### Phase 1: Egg Importer ✅
-- [x] Parse Pterodactyl eggs
-- [x] Convert to native format
-- [x] Security scanning
-- [x] CLI tool
-- [x] Bulk import from GitHub repos
+## Project Status
 
-### Phase 2: Wings Daemon ✅
-- [x] Container orchestration (Containerd runtime)
-- [x] XDP firewall integration
-- [x] Resource management (CPU, memory, disk limits)
-- [x] Health checks (comprehensive component checks)
-- [x] Metrics collection (Prometheus compatible)
-- [x] Cloudflare Spectrum integration
+All core functionality is implemented:
 
-### Phase 3: Panel API ✅
-- [x] gRPC API (12 endpoints)
-- [x] Authentication (API key + JWT)
-- [x] Server management (create, start, stop, restart, delete)
-- [x] Bidirectional console (stdin/stdout/stderr)
-- [x] Log streaming (real-time with tail support)
-- [x] mTLS support
-- [x] Rate limiting
-- [x] Audit logging
-- [x] Circuit breakers
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Egg Importer | Complete |
+| 2 | Container Runtime | Complete |
+| 3 | gRPC API | Complete |
+| 4 | Marketplace | Complete |
+| 5 | File/Backup/Schedule | Complete |
+| 6 | WHMCS Integration | Complete |
 
-### Phase 4: Marketplace Integration ✅
-- [x] Pluggable marketplace adapters
-- [x] Umod adapter (Rust, ARK, 7DTD, Valheim, etc.)
-- [x] Unified search with filtering
-- [x] Mod details and version history
-- [x] Secure download with checksum verification
-- [ ] Codefling, Lone.Design adapters
-- [ ] Dependency resolution
-- [ ] Auto-updates
+### Implemented Features
 
-### Phase 5: File & User Management (In Progress)
-- [ ] File browser API (list, read, write, delete)
-- [ ] File upload/download
-- [ ] Archive management (compress/decompress)
-- [ ] Database management
-- [ ] Scheduled tasks/cron jobs
-- [ ] Backup system
-- [ ] Server reinstall
-- [ ] Server suspend/unsuspend
-- [ ] Subuser management
-- [ ] Allocation management
-- [ ] React dashboard
-- [ ] Server console UI
-- [ ] File editor
-- [ ] Marketplace browser
-- [ ] Monitoring dashboards
+**Container Management**
+- Containerd runtime integration
+- Container lifecycle (create, start, stop, restart, delete)
+- Resource limits (CPU, memory, disk)
+- Health checks and automatic restarts
+- Bidirectional console (stdin/stdout)
+- Real-time log streaming
 
-### Phase 6: WHMCS Integration
-- [ ] Provisioning module
-- [ ] Suspend/unsuspend hooks
-- [ ] Usage-based billing
-- [ ] Customer portal integration
+**gRPC API**
+- 12+ RPC endpoints
+- mTLS authentication
+- API key and JWT support
+- Rate limiting and circuit breakers
+- Audit logging
+- Request tracing
 
-## 🤝 Contributing
+**File Management**
+- File browser (list, read, write, delete)
+- Archive compression/decompression (tar.gz, zip)
+- Streaming upload/download
+- Directory traversal protection
 
-This is in early development. Contributions welcome!
+**Backup System**
+- Compressed backups with SHA256 verification
+- Include/exclude path patterns
+- Backup restore with integrity check
 
-## 📄 License
+**Scheduled Tasks**
+- Cron-based scheduling
+- Console commands, power actions, backups
+- Task chaining with time offsets
+
+**Marketplace**
+- Unified search across providers
+- Umod, Codefling, Lone.Design adapters
+- Dependency resolution
+- Auto-update support
+
+**WHMCS Integration**
+- Server provisioning module
+- Suspend/unsuspend hooks
+- Usage-based billing
+- SSO (Single Sign-On)
+
+**Enterprise Features**
+- Cloudflare Spectrum DDoS protection
+- XDP/eBPF firewall
+- Secrets management
+- Configuration hot reload
+- Graceful degradation
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [QUICKSTART](docs/QUICKSTART.md) | Getting started guide |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | Production deployment |
+| [API](docs/API.md) | gRPC API reference |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | Technical architecture |
+| [ENTERPRISE](docs/ENTERPRISE.md) | Enterprise features |
+| [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Error handling |
+
+## Project Structure
+
+```
+nexus-panel/
+├── crates/
+│   ├── nexus-node/        # Node daemon (container runtime, gRPC server)
+│   ├── nexus-config/      # Native YAML config format
+│   ├── nexus-marketplace/ # Mod marketplace integration
+│   ├── nexus-whmcs/       # WHMCS billing integration
+│   └── egg-importer/      # Pterodactyl egg converter
+├── src/                   # CLI tool
+├── docs/                  # Documentation
+└── examples/              # Example configs
+```
+
+## Contributing
+
+Contributions welcome! Please read the documentation before submitting PRs.
+
+## License
 
 MIT License - see LICENSE file
-
-## 🔗 Resources
-
-- [Pterodactyl Eggs](https://github.com/pterodactyl/panel/wiki/Egg-JSON-Format)
-- [Parker's Egg Repository](https://github.com/parkervcp/eggs)
-- [eBPF/XDP Documentation](https://ebpf.io/)
