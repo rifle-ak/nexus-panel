@@ -13,7 +13,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1"
 
 # gRPC framework
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
 prost-types = "0.13"
 
@@ -40,6 +40,7 @@ prometheus = { version = "0.13", features = ["process"] }
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
+http = "1.0"
 
 # Utilities
 uuid = { version = "1.11", features = ["v4", "serde"] }
@@ -47,7 +48,33 @@ bytes = "1.9"
 futures = "0.3"
 async-trait = "0.1"
 hostname = "0.4"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Enterprise features - Authentication
+jsonwebtoken = "9.3"
+base64 = "0.22"
+sha2 = "0.10"
+hmac = "0.12"
+
+# Enterprise features - Rate limiting
+governor = "0.6"
+
+# Enterprise features - TLS
+rustls = "0.23"
+rustls-pemfile = "2.1"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
+
+# Enterprise features - Configuration hot reload
+notify = { version = "6.1", features = ["serde"] }
+arc-swap = "1.7"
+parking_lot = "0.12"
+
+# Enterprise features - Distributed tracing
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry-otlp = { version = "0.17", features = ["tonic"] }
+tracing-opentelemetry = "0.25"
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 
 [build-dependencies]
 tonic-build = "0.12"

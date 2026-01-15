@@ -45,6 +45,9 @@ pub enum NodeError {
     #[error("Serialization error: {0}")]
     SerdeError(#[from] serde_yaml::Error),
 
+    #[error("Metrics error: {0}")]
+    MetricsError(#[from] prometheus::Error),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

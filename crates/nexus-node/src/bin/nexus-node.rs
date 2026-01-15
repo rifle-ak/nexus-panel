@@ -1,9 +1,14 @@
 use nexus_node::{
     ContainerManager, ContainerdRuntime, HealthChecker, NodeServiceImpl, start_metrics_server,
+    // Enterprise imports
+    AuthConfig, AuditConfig, AuditLogger, AuditEvent, AuditEventType,
+    RateLimitConfig, TlsConfig, TracingConfig, GracefulShutdown,
+    CircuitBreakerConfig, CircuitBreakerRegistry, Validator,
+    auth::layer::AuthLayer, rate_limit::layer::RateLimitLayer,
+    tracing_middleware::layer::TracingLayer,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::signal;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tracing::{error, info, warn};
@@ -11,16 +16,30 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "nexus_node=info,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Initialize tracing with JSON support for production
+    let json_logs = std::env::var("LOG_FORMAT")
+        .map(|f| f.to_lowercase() == "json")
+        .unwrap_or(false);
 
-    info!("Starting Nexus Node v{}", env!("CARGO_PKG_VERSION"));
+    if json_logs {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "nexus_node=info,tower_http=debug".into()),
+            )
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "nexus_node=info,tower_http=debug".into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+
+    info!("Starting Nexus Node v{} (Enterprise Edition)", env!("CARGO_PKG_VERSION"));
 
     // Configuration from environment variables
     let grpc_bind = std::env::var("GRPC_BIND")
@@ -34,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = std::env::var("DATA_DIR")
         .unwrap_or_else(|_| "/var/lib/nexus-node".to_string());
     let node_id = std::env::var("NODE_ID")
-        .unwrap_or_else(|| hostname::get()
+        .unwrap_or_else(|_| hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "node-1".to_string())
@@ -50,6 +69,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(512 * 1024 * 1024); // 512MB default
 
+    // Enterprise feature configurations
+    let auth_config = AuthConfig::from_env();
+    let rate_limit_config = RateLimitConfig::from_env();
+    let tls_config = TlsConfig::from_env().unwrap_or_default();
+    let tracing_config = TracingConfig::from_env();
+    let audit_config = AuditConfig::from_env();
+    let circuit_breaker_config = CircuitBreakerConfig::from_env();
+
     info!("Configuration:");
     info!("  gRPC bind: {}", grpc_bind);
     info!("  Metrics bind: {}", metrics_bind);
@@ -57,6 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  Containerd namespace: {}", containerd_namespace);
     info!("  Data directory: {}", data_dir);
     info!("  Node ID: {}", node_id);
+    info!("Enterprise Features:");
+    info!("  Authentication: {}", if auth_config.enabled { "enabled" } else { "disabled" });
+    info!("  Rate Limiting: {}", if rate_limit_config.enabled { "enabled" } else { "disabled" });
+    info!("  TLS: {}", if tls_config.enabled { "enabled" } else { "disabled" });
+    info!("  Audit Logging: {}", if audit_config.enabled { "enabled" } else { "disabled" });
 
     // Create data directory if it doesn't exist
     std::fs::create_dir_all(&data_dir)?;
@@ -107,6 +139,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         min_memory,
     )));
 
+    // Initialize enterprise components
+    let graceful_shutdown = Arc::new(GracefulShutdown::new());
+    let circuit_breakers = Arc::new(CircuitBreakerRegistry::new(circuit_breaker_config));
+    let validator = Arc::new(Validator::default());
+
+    // Initialize audit logger
+    let audit_logger = if audit_config.enabled {
+        Some(Arc::new(AuditLogger::new(audit_config.clone()).await?))
+    } else {
+        None
+    };
+
+    // Log startup audit event
+    if let Some(ref logger) = audit_logger {
+        logger.log(
+            AuditEvent::new(AuditEventType::NodeStarted, "node_startup")
+                .with_node_id(&node_id)
+                .success()
+        ).await;
+    }
+
     // Create gRPC service
     let node_service = NodeServiceImpl::new(
         manager.clone(),
@@ -141,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 interval.tick().await;
                 let mut checker = health_checker.write().await;
                 let result = checker.check().await;
-                
+
                 // Update metrics based on health status
                 if result.status == nexus_node::HealthStatus::Unhealthy {
                     warn!("Health check failed: {:?}", result.checks);
@@ -162,7 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let containers = manager.list_containers().await;
                 let total = containers.len();
                 let running = containers.iter().filter(|c| c.status.is_running()).count();
-                
+
                 let mut by_state = std::collections::HashMap::new();
                 for container in &containers {
                     let state_str = match container.status {
@@ -184,14 +237,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
-    // Start gRPC server with graceful shutdown
+    // Build gRPC server with enterprise middleware layers
+    // Note: Layers are applied bottom-up, so auth is checked first, then rate limiting, then tracing
+    let shutdown = graceful_shutdown.clone();
     let grpc_server = Server::builder()
+        .layer(TracingLayer::new(tracing_config))
+        .layer(RateLimitLayer::new(rate_limit_config))
+        .layer(AuthLayer::new(auth_config))
         .add_service(node_service)
-        .serve_with_shutdown(grpc_addr, async {
-            signal::ctrl_c()
-                .await
-                .expect("Failed to install signal handler");
-            info!("Shutdown signal received");
+        .serve_with_shutdown(grpc_addr, async move {
+            shutdown.handle_signal().await;
         });
 
     // Wait for shutdown
@@ -210,6 +265,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ = metrics_update_handle => {
             warn!("Metrics update task stopped");
         }
+    }
+
+    // Log shutdown audit event
+    if let Some(ref logger) = audit_logger {
+        logger.log(
+            AuditEvent::new(AuditEventType::NodeStopped, "node_shutdown")
+                .with_node_id(&node_id)
+                .success()
+        ).await;
     }
 
     info!("Nexus Node shutting down");
