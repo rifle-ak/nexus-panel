@@ -238,39 +238,57 @@ RUST_LOG=debug cargo run -- convert --input test.json
 - [x] CLI tool
 - [x] Bulk import from GitHub repos
 
-### Phase 2: Wings Daemon
-- [ ] Container orchestration
-- [ ] XDP firewall integration
-- [ ] Resource management
-- [ ] Health checks
-- [ ] Metrics collection
+### Phase 2: Wings Daemon ✅
+- [x] Container orchestration (Containerd runtime)
+- [x] XDP firewall integration
+- [x] Resource management (CPU, memory, disk limits)
+- [x] Health checks (comprehensive component checks)
+- [x] Metrics collection (Prometheus compatible)
+- [x] Cloudflare Spectrum integration
 
-### Phase 3: Panel API
-- [ ] REST/gRPC API
-- [ ] Authentication & RBAC
-- [ ] Server management
-- [ ] File management
-- [ ] WebSocket real-time updates
+### Phase 3: Panel API ✅
+- [x] gRPC API (12 endpoints)
+- [x] Authentication (API key + JWT)
+- [x] Server management (create, start, stop, restart, delete)
+- [x] Bidirectional console (stdin/stdout/stderr)
+- [x] Log streaming (real-time with tail support)
+- [x] mTLS support
+- [x] Rate limiting
+- [x] Audit logging
+- [x] Circuit breakers
 
-### Phase 4: Marketplace Integration
-- [ ] Pluggable marketplace adapters
-- [ ] Umod, Codefling, Lone.Design adapters
-- [ ] Unified search
+### Phase 4: Marketplace Integration ✅
+- [x] Pluggable marketplace adapters
+- [x] Umod adapter (Rust, ARK, 7DTD, Valheim, etc.)
+- [x] Unified search with filtering
+- [x] Mod details and version history
+- [x] Secure download with checksum verification
+- [ ] Codefling, Lone.Design adapters
 - [ ] Dependency resolution
 - [ ] Auto-updates
 
-### Phase 5: Frontend
+### Phase 5: File & User Management (In Progress)
+- [ ] File browser API (list, read, write, delete)
+- [ ] File upload/download
+- [ ] Archive management (compress/decompress)
+- [ ] Database management
+- [ ] Scheduled tasks/cron jobs
+- [ ] Backup system
+- [ ] Server reinstall
+- [ ] Server suspend/unsuspend
+- [ ] Subuser management
+- [ ] Allocation management
 - [ ] React dashboard
-- [ ] Server console
+- [ ] Server console UI
 - [ ] File editor
 - [ ] Marketplace browser
 - [ ] Monitoring dashboards
 
 ### Phase 6: WHMCS Integration
 - [ ] Provisioning module
-- [ ] Suspend/unsuspend
+- [ ] Suspend/unsuspend hooks
 - [ ] Usage-based billing
-- [ ] Customer portal
+- [ ] Customer portal integration
 
 ## 🤝 Contributing
 

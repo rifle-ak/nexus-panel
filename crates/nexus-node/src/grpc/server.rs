@@ -593,6 +593,184 @@ impl NodeService for NodeServiceImpl {
             checks,
         }))
     }
+
+    // Stub implementations for Phase 5 features
+    // These will be fully implemented in subsequent iterations
+
+    async fn suspend_container(
+        &self,
+        _request: Request<SuspendContainerRequest>,
+    ) -> std::result::Result<Response<SuspendContainerResponse>, Status> {
+        Err(Status::unimplemented("SuspendContainer is not yet implemented"))
+    }
+
+    async fn unsuspend_container(
+        &self,
+        _request: Request<UnsuspendContainerRequest>,
+    ) -> std::result::Result<Response<UnsuspendContainerResponse>, Status> {
+        Err(Status::unimplemented("UnsuspendContainer is not yet implemented"))
+    }
+
+    async fn reinstall_container(
+        &self,
+        _request: Request<ReinstallContainerRequest>,
+    ) -> std::result::Result<Response<ReinstallContainerResponse>, Status> {
+        Err(Status::unimplemented("ReinstallContainer is not yet implemented"))
+    }
+
+    // File management stubs
+    async fn list_files(
+        &self,
+        _request: Request<ListFilesRequest>,
+    ) -> std::result::Result<Response<ListFilesResponse>, Status> {
+        Err(Status::unimplemented("ListFiles is not yet implemented"))
+    }
+
+    async fn read_file(
+        &self,
+        _request: Request<ReadFileRequest>,
+    ) -> std::result::Result<Response<ReadFileResponse>, Status> {
+        Err(Status::unimplemented("ReadFile is not yet implemented"))
+    }
+
+    async fn write_file(
+        &self,
+        _request: Request<WriteFileRequest>,
+    ) -> std::result::Result<Response<WriteFileResponse>, Status> {
+        Err(Status::unimplemented("WriteFile is not yet implemented"))
+    }
+
+    async fn delete_file(
+        &self,
+        _request: Request<DeleteFileRequest>,
+    ) -> std::result::Result<Response<DeleteFileResponse>, Status> {
+        Err(Status::unimplemented("DeleteFile is not yet implemented"))
+    }
+
+    async fn rename_file(
+        &self,
+        _request: Request<RenameFileRequest>,
+    ) -> std::result::Result<Response<RenameFileResponse>, Status> {
+        Err(Status::unimplemented("RenameFile is not yet implemented"))
+    }
+
+    async fn copy_file(
+        &self,
+        _request: Request<CopyFileRequest>,
+    ) -> std::result::Result<Response<CopyFileResponse>, Status> {
+        Err(Status::unimplemented("CopyFile is not yet implemented"))
+    }
+
+    async fn create_directory(
+        &self,
+        _request: Request<CreateDirectoryRequest>,
+    ) -> std::result::Result<Response<CreateDirectoryResponse>, Status> {
+        Err(Status::unimplemented("CreateDirectory is not yet implemented"))
+    }
+
+    async fn compress_files(
+        &self,
+        _request: Request<CompressFilesRequest>,
+    ) -> std::result::Result<Response<CompressFilesResponse>, Status> {
+        Err(Status::unimplemented("CompressFiles is not yet implemented"))
+    }
+
+    async fn decompress_file(
+        &self,
+        _request: Request<DecompressFileRequest>,
+    ) -> std::result::Result<Response<DecompressFileResponse>, Status> {
+        Err(Status::unimplemented("DecompressFile is not yet implemented"))
+    }
+
+    type DownloadFileStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+
+    async fn download_file(
+        &self,
+        _request: Request<DownloadFileRequest>,
+    ) -> std::result::Result<Response<Self::DownloadFileStream>, Status> {
+        Err(Status::unimplemented("DownloadFile is not yet implemented"))
+    }
+
+    async fn upload_file(
+        &self,
+        _request: Request<tonic::Streaming<FileChunk>>,
+    ) -> std::result::Result<Response<UploadFileResponse>, Status> {
+        Err(Status::unimplemented("UploadFile is not yet implemented"))
+    }
+
+    // Backup management stubs
+    async fn create_backup(
+        &self,
+        _request: Request<CreateBackupRequest>,
+    ) -> std::result::Result<Response<CreateBackupResponse>, Status> {
+        Err(Status::unimplemented("CreateBackup is not yet implemented"))
+    }
+
+    async fn list_backups(
+        &self,
+        _request: Request<ListBackupsRequest>,
+    ) -> std::result::Result<Response<ListBackupsResponse>, Status> {
+        Err(Status::unimplemented("ListBackups is not yet implemented"))
+    }
+
+    async fn restore_backup(
+        &self,
+        _request: Request<RestoreBackupRequest>,
+    ) -> std::result::Result<Response<RestoreBackupResponse>, Status> {
+        Err(Status::unimplemented("RestoreBackup is not yet implemented"))
+    }
+
+    async fn delete_backup(
+        &self,
+        _request: Request<DeleteBackupRequest>,
+    ) -> std::result::Result<Response<DeleteBackupResponse>, Status> {
+        Err(Status::unimplemented("DeleteBackup is not yet implemented"))
+    }
+
+    type DownloadBackupStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+
+    async fn download_backup(
+        &self,
+        _request: Request<DownloadBackupRequest>,
+    ) -> std::result::Result<Response<Self::DownloadBackupStream>, Status> {
+        Err(Status::unimplemented("DownloadBackup is not yet implemented"))
+    }
+
+    // Schedule management stubs
+    async fn create_schedule(
+        &self,
+        _request: Request<CreateScheduleRequest>,
+    ) -> std::result::Result<Response<CreateScheduleResponse>, Status> {
+        Err(Status::unimplemented("CreateSchedule is not yet implemented"))
+    }
+
+    async fn list_schedules(
+        &self,
+        _request: Request<ListSchedulesRequest>,
+    ) -> std::result::Result<Response<ListSchedulesResponse>, Status> {
+        Err(Status::unimplemented("ListSchedules is not yet implemented"))
+    }
+
+    async fn update_schedule(
+        &self,
+        _request: Request<UpdateScheduleRequest>,
+    ) -> std::result::Result<Response<UpdateScheduleResponse>, Status> {
+        Err(Status::unimplemented("UpdateSchedule is not yet implemented"))
+    }
+
+    async fn delete_schedule(
+        &self,
+        _request: Request<DeleteScheduleRequest>,
+    ) -> std::result::Result<Response<DeleteScheduleResponse>, Status> {
+        Err(Status::unimplemented("DeleteSchedule is not yet implemented"))
+    }
+
+    async fn trigger_schedule(
+        &self,
+        _request: Request<TriggerScheduleRequest>,
+    ) -> std::result::Result<Response<TriggerScheduleResponse>, Status> {
+        Err(Status::unimplemented("TriggerSchedule is not yet implemented"))
+    }
 }
 
 /// Convert internal ContainerState to protobuf ContainerState

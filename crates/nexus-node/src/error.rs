@@ -53,6 +53,36 @@ pub enum NodeError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Archive error: {0}")]
+    ArchiveError(String),
+
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<zip::result::ZipError> for NodeError {
+    fn from(e: zip::result::ZipError) -> Self {
+        NodeError::ArchiveError(e.to_string())
+    }
+}
+
+impl From<std::path::StripPrefixError> for NodeError {
+    fn from(e: std::path::StripPrefixError) -> Self {
+        NodeError::InvalidInput(e.to_string())
+    }
+}
+
+impl From<walkdir::Error> for NodeError {
+    fn from(e: walkdir::Error) -> Self {
+        NodeError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    }
+}
+
+impl From<tokio::task::JoinError> for NodeError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        NodeError::Internal(format!("Task join error: {}", e))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, NodeError>;
