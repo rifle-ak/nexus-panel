@@ -9,9 +9,11 @@ DDoS protection via Cloudflare Spectrum proxy.
 ### Configuration
 
 ```bash
+export CLOUDFLARE_ENABLED=true
 export CLOUDFLARE_API_TOKEN=your-token
 export CLOUDFLARE_ZONE_ID=your-zone-id
-export SPECTRUM_ENABLED=true
+export CLOUDFLARE_DOMAIN=example.com
+export CLOUDFLARE_SPECTRUM_ENABLED=true
 ```
 
 ### Features
@@ -85,10 +87,12 @@ Mutual TLS for node-to-panel communication.
 
 ```bash
 # Environment variables
-TLS_CERT=/path/to/server.crt
-TLS_KEY=/path/to/server.key
-TLS_CA=/path/to/ca.crt
+TLS_ENABLED=true
+TLS_CERT_PATH=/path/to/server.crt
+TLS_KEY_PATH=/path/to/server.key
+TLS_CA_CERT_PATH=/path/to/ca.crt
 TLS_REQUIRE_CLIENT_CERT=true
+TLS_MIN_VERSION=1.3
 ```
 
 ## Rate Limiting
@@ -98,8 +102,11 @@ Per-client request rate limiting.
 ### Configuration
 
 ```bash
-RATE_LIMIT_REQUESTS_PER_MINUTE=1000
-RATE_LIMIT_BURST=100
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_GLOBAL_RPS=10000
+RATE_LIMIT_BURST_SIZE=1000
+RATE_LIMIT_PER_CLIENT_RPS=100
+RATE_LIMIT_MAX_CONCURRENT=20
 ```
 
 ### Response Headers
@@ -255,14 +262,19 @@ Variables containing these patterns are marked as secrets:
 
 Comprehensive health monitoring.
 
-### Endpoints
+### HTTP Endpoint
 
 ```bash
-# Basic health
+# Simple health (metrics server)
 curl http://localhost:9090/health
+# Returns: "OK" (200) or error status
+```
 
-# Detailed health
-curl http://localhost:9090/health/detailed
+### gRPC Endpoint
+
+```bash
+# Detailed health via gRPC
+grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/HealthCheck
 ```
 
 ### Checks Performed
@@ -270,24 +282,6 @@ curl http://localhost:9090/health/detailed
 - Containerd connectivity
 - Disk space available
 - Memory available
-- gRPC server responsive
-- Metrics server responsive
-
-### Response
-
-```json
-{
-  "status": "healthy",
-  "checks": {
-    "containerd": "ok",
-    "disk": "ok",
-    "memory": "ok",
-    "grpc": "ok"
-  },
-  "version": "0.1.0",
-  "uptime_seconds": 86400
-}
-```
 
 ## Prometheus Metrics
 
@@ -318,14 +312,65 @@ nexus_node_health_check_status
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| **Core** | | |
 | `GRPC_BIND` | gRPC listen address | `127.0.0.1:8080` |
 | `METRICS_BIND` | Metrics listen address | `127.0.0.1:9090` |
-| `CONTAINERD_SOCKET` | Containerd socket | `/run/containerd/containerd.sock` |
+| `CONTAINERD_SOCKET` | Containerd socket path | `/run/containerd/containerd.sock` |
+| `CONTAINERD_NAMESPACE` | Containerd namespace | `nexus-panel` |
 | `DATA_DIR` | Data directory | `/var/lib/nexus-node` |
-| `TLS_CERT` | TLS certificate path | - |
-| `TLS_KEY` | TLS key path | - |
-| `TLS_CA` | CA certificate path | - |
-| `RATE_LIMIT_REQUESTS_PER_MINUTE` | Rate limit | `1000` |
+| `NODE_ID` | Node identifier | hostname or `node-1` |
+| `LOG_FORMAT` | Log format (`text` or `json`) | `text` |
+| `RUST_LOG` | Log level filter | `nexus_node=info` |
+| **Health Checks** | | |
+| `MIN_DISK_SPACE_BYTES` | Min free disk space | `1073741824` (1GB) |
+| `MIN_MEMORY_BYTES` | Min free memory | `536870912` (512MB) |
+| **TLS** | | |
+| `TLS_ENABLED` | Enable TLS | `false` |
+| `TLS_CERT_PATH` | Server certificate path | - |
+| `TLS_KEY_PATH` | Server private key path | - |
+| `TLS_CA_CERT_PATH` | CA cert for client verification (mTLS) | - |
+| `TLS_REQUIRE_CLIENT_CERT` | Require client certs | `false` |
+| `TLS_MIN_VERSION` | Minimum TLS version (`1.2`/`1.3`) | `1.2` |
+| `TLS_RELOAD_INTERVAL` | Cert reload interval (seconds) | `0` (disabled) |
+| **Authentication** | | |
+| `AUTH_ENABLED` | Enable authentication | `false` |
+| `AUTH_API_KEYS` | Comma-separated API keys | - |
+| `AUTH_JWT_SECRET` | JWT HMAC secret | - |
+| `AUTH_JWT_PUBLIC_KEY` | JWT public key (RSA/EC) | - |
+| `AUTH_JWT_ISSUER` | Expected JWT issuer | - |
+| `AUTH_JWT_AUDIENCE` | Expected JWT audience | - |
+| `AUTH_TOKEN_LEEWAY` | JWT clock skew tolerance (seconds) | `60` |
+| `AUTH_BYPASS_METHODS` | Comma-separated methods to skip auth | - |
+| **Rate Limiting** | | |
+| `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` |
+| `RATE_LIMIT_GLOBAL_RPS` | Global requests per second | `10000` |
+| `RATE_LIMIT_BURST_SIZE` | Burst size | `1000` |
+| `RATE_LIMIT_PER_CLIENT_RPS` | Per-client requests per second | `100` |
+| `RATE_LIMIT_MAX_CONCURRENT` | Max concurrent requests per client | `20` |
+| **Audit Logging** | | |
+| `AUDIT_ENABLED` | Enable audit logging | `false` |
+| `AUDIT_LOG_FILE` | Audit log file path | - |
+| `AUDIT_STDOUT` | Log audit events to stdout | `false` |
+| `AUDIT_MIN_SEVERITY` | Min severity (debug/info/warning/error/critical) | `info` |
+| **Tracing** | | |
+| `TRACING_ENABLED` | Enable distributed tracing | `false` |
+| `SERVICE_NAME` | Service name for traces | `nexus-node` |
+| `OTLP_ENDPOINT` | OpenTelemetry collector endpoint | - |
+| `TRACING_SAMPLE_RATE` | Trace sample rate (0.0-1.0) | `1.0` |
+| `TRACING_LOG_HEADERS` | Log request headers in traces | `false` |
+| **Circuit Breaker** | | |
+| `CIRCUIT_BREAKER_ENABLED` | Enable circuit breakers | `false` |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | Failures before opening | `5` |
+| `CIRCUIT_BREAKER_RECOVERY_TIMEOUT` | Recovery timeout (seconds) | `30` |
+| `CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | Successes to close | `3` |
+| **Cloudflare** | | |
+| `CLOUDFLARE_ENABLED` | Enable Cloudflare integration | `false` |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token | - |
-| `SPECTRUM_ENABLED` | Enable Spectrum | `false` |
-| `RUST_LOG` | Log level | `info` |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID | - |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare zone ID | - |
+| `CLOUDFLARE_DOMAIN` | Domain name | - |
+| `CLOUDFLARE_SPECTRUM_ENABLED` | Enable Spectrum proxy | `false` |
+| `CLOUDFLARE_DNS_AUTO_MANAGE` | Auto-manage DNS records | `false` |
+| `CLOUDFLARE_TUNNEL_ENABLED` | Enable Cloudflare Tunnel | `false` |
+| `CLOUDFLARE_TUNNEL_ID` | Tunnel ID | - |
+| `CLOUDFLARE_PROXY_PROTOCOL_VERSION` | Proxy protocol version (1/2) | `2` |

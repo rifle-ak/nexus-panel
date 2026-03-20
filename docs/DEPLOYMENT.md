@@ -80,12 +80,28 @@ MIN_DISK_SPACE_BYTES=10737418240
 MIN_MEMORY_BYTES=1073741824
 
 # TLS (optional)
-TLS_CERT=/etc/nexus-node/server.crt
-TLS_KEY=/etc/nexus-node/server.key
-TLS_CA=/etc/nexus-node/ca.crt
+TLS_ENABLED=true
+TLS_CERT_PATH=/etc/nexus-node/server.crt
+TLS_KEY_PATH=/etc/nexus-node/server.key
+TLS_CA_CERT_PATH=/etc/nexus-node/ca.crt
+TLS_REQUIRE_CLIENT_CERT=true
+TLS_MIN_VERSION=1.3
+
+# Authentication (optional)
+AUTH_ENABLED=true
+AUTH_API_KEYS=key1,key2
+
+# Rate Limiting (enabled by default)
+RATE_LIMIT_GLOBAL_RPS=10000
+RATE_LIMIT_PER_CLIENT_RPS=100
+
+# Audit Logging (optional)
+AUDIT_ENABLED=true
+AUDIT_LOG_FILE=/var/log/nexus-node/audit.log
 
 # Logging
 RUST_LOG=info
+LOG_FORMAT=json
 ```
 
 ## Systemd Service

@@ -11,7 +11,7 @@ use nexus_node::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tonic::transport::Server;
+use tonic::transport::{Server, Identity, Certificate, ServerTlsConfig};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -251,7 +251,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build gRPC server with enterprise middleware layers
     // Note: Layers are applied bottom-up, so auth is checked first, then rate limiting, then tracing
     let shutdown = graceful_shutdown.clone();
-    let grpc_server = Server::builder()
+
+    let mut server_builder = Server::builder();
+
+    // Wire TLS if enabled
+    if tls_config.enabled {
+        let cert_path = tls_config.cert_path.as_ref()
+            .expect("TLS_CERT_PATH required when TLS_ENABLED=true");
+        let key_path = tls_config.key_path.as_ref()
+            .expect("TLS_KEY_PATH required when TLS_ENABLED=true");
+
+        let cert_pem = std::fs::read(cert_path)?;
+        let key_pem = std::fs::read(key_path)?;
+        let identity = Identity::from_pem(cert_pem, key_pem);
+
+        let mut tls = ServerTlsConfig::new().identity(identity);
+
+        if let Some(ca_path) = &tls_config.ca_cert_path {
+            let ca_pem = std::fs::read(ca_path)?;
+            tls = tls.client_ca_root(Certificate::from_pem(ca_pem));
+            info!("TLS enabled with mTLS (client certificate verification)");
+        } else {
+            info!("TLS enabled (server-side only)");
+        }
+
+        server_builder = server_builder.tls_config(tls)?;
+    }
+
+    let grpc_server = server_builder
         .layer(TracingLayer::new(tracing_config))
         .layer(RateLimitLayer::new(rate_limit_config))
         .layer(AuthLayer::new(auth_config))
