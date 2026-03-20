@@ -2,6 +2,7 @@
 name = "egg-importer"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 nexus-config = { path = "../nexus-config" }

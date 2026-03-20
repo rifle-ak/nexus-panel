@@ -2,13 +2,12 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+version = 2
 
 [licenses]
-unlicensed = "deny"
+version = 2
+# Ignore workspace crates (publish = false)
+private = { ignore = true }
 allow = [
     "MIT",
     "Apache-2.0",
@@ -23,7 +22,6 @@ allow = [
     "CC0-1.0",
     "MPL-2.0",
 ]
-copyleft = "warn"
 
 [[licenses.clarify]]
 name = "ring"
