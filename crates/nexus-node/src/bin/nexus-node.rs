@@ -1,5 +1,6 @@
 use nexus_node::{
     ContainerManager, ContainerdRuntime, HealthChecker, NodeServiceImpl, start_metrics_server,
+    BackupManager, ScheduleManager,
     // Enterprise imports
     AuthConfig, AuditConfig, AuditLogger, AuditEvent, AuditEventType,
     RateLimitConfig, TlsConfig, TracingConfig, GracefulShutdown,
@@ -134,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create health checker
     let health_checker = Arc::new(RwLock::new(HealthChecker::new(
         containerd_socket,
-        data_dir,
+        data_dir.clone(),
         min_disk_space,
         min_memory,
     )));
@@ -160,11 +161,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ).await;
     }
 
+    // Initialize backup manager
+    let backup_manager = Arc::new(BackupManager::new(&PathBuf::from(data_dir.clone())));
+    backup_manager.init().await?;
+
+    // Initialize schedule manager
+    let schedule_manager = Arc::new(ScheduleManager::new());
+
     // Create gRPC service
     let node_service = NodeServiceImpl::new(
         manager.clone(),
         node_id.clone(),
         health_checker.clone(),
+        backup_manager.clone(),
+        schedule_manager.clone(),
     ).into_server();
 
     // Parse bind addresses
@@ -224,6 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         nexus_node::ContainerStatus::Stopped => "stopped",
                         nexus_node::ContainerStatus::Paused => "paused",
                         nexus_node::ContainerStatus::Failed => "failed",
+                        nexus_node::ContainerStatus::Suspended => "suspended",
                     };
                     *by_state.entry(state_str).or_insert(0) += 1;
                 }

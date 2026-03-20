@@ -4,7 +4,7 @@ use crate::metrics::Metrics;
 use crate::runtime::{ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits};
 use nexus_config::GameConfig;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -368,6 +368,7 @@ impl ContainerManager {
                 crate::container::state::ContainerStatus::Stopped => "stopped",
                 crate::container::state::ContainerStatus::Paused => "paused",
                 crate::container::state::ContainerStatus::Failed => "failed",
+                crate::container::state::ContainerStatus::Suspended => "suspended",
             };
             *by_state.entry(state_str).or_insert(0) += 1;
         }
@@ -412,6 +413,151 @@ impl ContainerManager {
 
         // Attach to container console
         self.runtime.attach_bidirectional(container_id).await
+    }
+
+    /// Get the data directory path
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Suspend a container (stop and mark as suspended for billing)
+    pub async fn suspend_container(&self, container_id: &str) -> Result<()> {
+        let start = Instant::now();
+        info!("Suspending container: {}", container_id);
+
+        // Get current state
+        let mut state = {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| {
+                    self.metrics.record_container_operation("suspend", "not_found", start.elapsed());
+                    NodeError::ContainerNotFound(container_id.to_string())
+                })?
+                .clone()
+        };
+
+        // Stop if running
+        if state.status.is_running() {
+            self.runtime.stop(container_id, 30).await
+                .map_err(|e| {
+                    self.metrics.record_container_operation("suspend", "error", start.elapsed());
+                    NodeError::StopFailed {
+                        container_id: container_id.to_string(),
+                        source: e.into(),
+                    }
+                })?;
+        }
+
+        state.mark_suspended();
+
+        {
+            let mut states = self.states.write().await;
+            states.insert(container_id.to_string(), state);
+        }
+
+        self.metrics.record_container_operation("suspend", "success", start.elapsed());
+        self.update_container_count_metrics().await;
+        info!("Container {} suspended", container_id);
+
+        Ok(())
+    }
+
+    /// Unsuspend a container
+    pub async fn unsuspend_container(&self, container_id: &str) -> Result<()> {
+        let start = Instant::now();
+        info!("Unsuspending container: {}", container_id);
+
+        let mut state = {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| {
+                    self.metrics.record_container_operation("unsuspend", "not_found", start.elapsed());
+                    NodeError::ContainerNotFound(container_id.to_string())
+                })?
+                .clone()
+        };
+
+        if !state.status.is_suspended() {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not suspended",
+                container_id
+            )));
+        }
+
+        state.mark_unsuspended();
+
+        {
+            let mut states = self.states.write().await;
+            states.insert(container_id.to_string(), state);
+        }
+
+        self.metrics.record_container_operation("unsuspend", "success", start.elapsed());
+        self.update_container_count_metrics().await;
+        info!("Container {} unsuspended", container_id);
+
+        Ok(())
+    }
+
+    /// Reinstall a container (wipe data, recreate)
+    pub async fn reinstall_container(&self, container_id: &str, preserve_data: bool) -> Result<()> {
+        let start = Instant::now();
+        info!("Reinstalling container: {} (preserve_data: {})", container_id, preserve_data);
+
+        // Get the current state to get image info
+        let state = {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| {
+                    self.metrics.record_container_operation("reinstall", "not_found", start.elapsed());
+                    NodeError::ContainerNotFound(container_id.to_string())
+                })?
+                .clone()
+        };
+
+        // Stop if running
+        if state.status.is_running() {
+            self.stop_container(container_id, Some(10)).await?;
+        }
+
+        // Delete the container from runtime
+        let _ = self.runtime.delete(container_id).await;
+
+        // Handle data directory
+        let server_dir = self.data_dir.join(container_id);
+        if !preserve_data && server_dir.exists() {
+            std::fs::remove_dir_all(&server_dir).map_err(|e| NodeError::Internal(
+                format!("Failed to remove server directory: {}", e)
+            ))?;
+        }
+
+        // Recreate the server directory
+        std::fs::create_dir_all(&server_dir).map_err(|e| NodeError::Internal(
+            format!("Failed to create server directory: {}", e)
+        ))?;
+
+        // Re-pull the image
+        self.runtime.pull_image(&state.image).await?;
+
+        // Update state to Created
+        let new_state = ContainerState::new(
+            container_id.to_string(),
+            state.name.clone(),
+            state.image.clone(),
+        );
+
+        {
+            let mut states = self.states.write().await;
+            states.insert(container_id.to_string(), new_state);
+        }
+
+        self.metrics.record_container_operation("reinstall", "success", start.elapsed());
+        self.update_container_count_metrics().await;
+        info!("Container {} reinstalled", container_id);
+
+        Ok(())
     }
 
     /// Send a command to container stdin (one-shot)
