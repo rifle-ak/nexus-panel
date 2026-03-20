@@ -103,9 +103,10 @@ impl Default for MemorySecretsManager {
 impl SecretsManager for MemorySecretsManager {
     async fn get_secret(&self, key: &str) -> Result<String> {
         let secrets = self.secrets.read().await;
-        secrets.get(key).cloned().ok_or_else(|| {
-            NodeError::Internal(format!("Secret not found: {}", key))
-        })
+        secrets
+            .get(key)
+            .cloned()
+            .ok_or_else(|| NodeError::Internal(format!("Secret not found: {}", key)))
     }
 
     async fn set_secret(&self, key: &str, value: &str) -> Result<()> {
@@ -193,10 +194,7 @@ mod tests {
         let resolver = SecretResolver::new(manager);
 
         // Resolve a secret reference
-        let value = resolver
-            .resolve("secret:database.password")
-            .await
-            .unwrap();
+        let value = resolver.resolve("secret:database.password").await.unwrap();
         assert_eq!(value, "secret123");
 
         // Non-secret reference returns as-is
@@ -204,5 +202,3 @@ mod tests {
         assert_eq!(value, "plain-text");
     }
 }
-
-

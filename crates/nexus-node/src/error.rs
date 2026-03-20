@@ -75,7 +75,7 @@ impl From<std::path::StripPrefixError> for NodeError {
 
 impl From<walkdir::Error> for NodeError {
     fn from(e: walkdir::Error) -> Self {
-        NodeError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        NodeError::IoError(std::io::Error::other(e))
     }
 }
 

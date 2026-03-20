@@ -1,36 +1,20 @@
 # Clippy configuration for Nexus Panel
+#
+# Lint levels are configured via CLI flags in CI (cargo clippy -- -D warnings)
+# and per-crate #![allow/warn/deny] attributes. This file only contains
+# clippy configuration knobs (thresholds, allowed patterns, etc).
 
-# Deny all warnings in CI
-# Allow some pedantic lints that are too strict
+# Allow common patterns that are too strict under pedantic
+msrv = "1.75.0"
 
-# Allow some common patterns
-allow = [
-    "module_name_repetitions",  # Sometimes module names are repeated in types
-    "too_many_lines",          # Some files are legitimately long
-    "too_many_arguments",       # Some functions need many args
-    "type_complexity",         # Some types are complex by nature
-    "missing_errors_doc",      # Not all errors need docs
-    "must_use_candidate",     # Some functions return Result but don't need must_use
-]
+# Complexity thresholds
+cognitive-complexity-threshold = 30
 
-# Warn about common issues
-warn = [
-    "clippy::all",
-    "clippy::pedantic",
-    "clippy::nursery",
-    "clippy::cargo",
-]
+# These types are allowed to be complex
+type-complexity-threshold = 350
 
-# Deny these specific issues
-deny = [
-    "clippy::unwrap_used",           # Prefer expect or proper error handling
-    "clippy::expect_used",           # Prefer proper error handling
-    "clippy::panic",                 # No panics in production code
-    "clippy::todo",                  # No TODOs in production code
-    "clippy::unimplemented",         # No unimplemented in production code
-    "clippy::print_stdout",          # Use tracing instead
-    "clippy::print_stderr",          # Use tracing instead
-    "clippy::dbg_macro",             # No dbg! in production
-]
-
-
+# Allow these in tests
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true

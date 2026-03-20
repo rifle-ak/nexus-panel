@@ -22,9 +22,7 @@ where
                 // First parse to Value (handles duplicate keys by keeping last)
                 // then convert to target type
                 match serde_json::from_str::<Value>(&s) {
-                    Ok(inner_value) => {
-                        serde_json::from_value(inner_value).map_err(Error::custom)
-                    }
+                    Ok(inner_value) => serde_json::from_value(inner_value).map_err(Error::custom),
                     Err(_) => {
                         // If still fails, return default
                         Ok(T::default())
@@ -56,10 +54,7 @@ where
             }
         }
         Value::Array(arr) => {
-            Ok(arr
-                .into_iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect())
+            Ok(arr.into_iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         }
         Value::Null => Ok(Vec::new()),
         _ => Ok(Vec::new()),
@@ -149,13 +144,22 @@ pub struct Meta {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    #[serde(deserialize_with = "deserialize_json_string_or_object", default = "default_files")]
+    #[serde(
+        deserialize_with = "deserialize_json_string_or_object",
+        default = "default_files"
+    )]
     pub files: HashMap<String, FileConfig>,
-    #[serde(deserialize_with = "deserialize_json_string_or_object", default = "default_startup_config")]
+    #[serde(
+        deserialize_with = "deserialize_json_string_or_object",
+        default = "default_startup_config"
+    )]
     pub startup: StartupConfig,
     #[serde(default)]
     pub stop: String,
-    #[serde(deserialize_with = "deserialize_json_string_or_object", default = "default_logs_config")]
+    #[serde(
+        deserialize_with = "deserialize_json_string_or_object",
+        default = "default_logs_config"
+    )]
     pub logs: LogsConfig,
     #[serde(default)]
     pub file_denylist: Vec<String>,

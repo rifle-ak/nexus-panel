@@ -88,9 +88,9 @@ pub struct FreeTierLimits {
 impl Default for FreeTierLimits {
     fn default() -> Self {
         Self {
-            ram_bytes: 1024 * 1024 * 1024,       // 1 GB
-            cpu_percent: 100.0,                   // 1 core
-            disk_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+            ram_bytes: 1024 * 1024 * 1024,             // 1 GB
+            cpu_percent: 100.0,                        // 1 core
+            disk_bytes: 10 * 1024 * 1024 * 1024,       // 10 GB
             bandwidth_bytes: 100 * 1024 * 1024 * 1024, // 100 GB
             slots: 10,
         }
@@ -152,10 +152,7 @@ impl BillingManager {
         let service_id = record.service_id;
 
         let mut records = self.usage_records.write().await;
-        records
-            .entry(service_id)
-            .or_insert_with(Vec::new)
-            .push(record);
+        records.entry(service_id).or_insert_with(Vec::new).push(record);
 
         debug!("Recorded usage for service {}", service_id);
         Ok(())
@@ -189,11 +186,9 @@ impl BillingManager {
         let sample_count = filtered.len() as u32;
 
         // Calculate averages and peaks
-        let avg_cpu: f64 = filtered.iter().map(|r| r.cpu_percent).sum::<f64>() / filtered.len() as f64;
-        let peak_cpu = filtered
-            .iter()
-            .map(|r| r.cpu_percent)
-            .fold(f64::MIN, f64::max);
+        let avg_cpu: f64 =
+            filtered.iter().map(|r| r.cpu_percent).sum::<f64>() / filtered.len() as f64;
+        let peak_cpu = filtered.iter().map(|r| r.cpu_percent).fold(f64::MIN, f64::max);
 
         let avg_memory: u64 =
             filtered.iter().map(|r| r.memory_bytes).sum::<u64>() / filtered.len() as u64;
@@ -201,16 +196,10 @@ impl BillingManager {
 
         let disk_bytes = filtered.last().map(|r| r.disk_bytes).unwrap_or(0);
 
-        let total_bandwidth: u64 = filtered
-            .iter()
-            .map(|r| r.network_in_bytes + r.network_out_bytes)
-            .sum();
+        let total_bandwidth: u64 =
+            filtered.iter().map(|r| r.network_in_bytes + r.network_out_bytes).sum();
 
-        let peak_connections = filtered
-            .iter()
-            .map(|r| r.active_connections)
-            .max()
-            .unwrap_or(0);
+        let peak_connections = filtered.iter().map(|r| r.active_connections).max().unwrap_or(0);
 
         Ok(UsageSummary {
             service_id,
@@ -235,8 +224,10 @@ impl BillingManager {
 
         // RAM overage
         if summary.peak_memory_bytes > self.rates.free_tier.ram_bytes {
-            let overage_gb =
-                (summary.peak_memory_bytes - self.rates.free_tier.ram_bytes) as f64 / 1024.0 / 1024.0 / 1024.0;
+            let overage_gb = (summary.peak_memory_bytes - self.rates.free_tier.ram_bytes) as f64
+                / 1024.0
+                / 1024.0
+                / 1024.0;
             let charge = overage_gb * self.rates.ram_per_gb_hour * hours;
             if charge > 0.01 {
                 charges.push(BillingCharge {
@@ -300,10 +291,8 @@ impl BillingManager {
         }
 
         // Convert charges to invoice items
-        let items: Vec<InvoiceItem> = charges
-            .iter()
-            .map(|c| InvoiceItem::new(&c.description, c.amount))
-            .collect();
+        let items: Vec<InvoiceItem> =
+            charges.iter().map(|c| InvoiceItem::new(&c.description, c.amount)).collect();
 
         let total: f64 = charges.iter().map(|c| c.amount).sum();
         info!(
@@ -348,13 +337,19 @@ impl BillingManager {
                 Ok(Some(invoice_id)) => {
                     report.services_processed += 1;
                     report.invoices_generated += 1;
-                    info!("Generated invoice {} for service {}", invoice_id, service_id);
+                    info!(
+                        "Generated invoice {} for service {}",
+                        invoice_id, service_id
+                    );
                 }
                 Ok(None) => {
                     report.services_processed += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to process billing for service {}: {}", service_id, e);
+                    warn!(
+                        "Failed to process billing for service {}: {}",
+                        service_id, e
+                    );
                     report.errors.push(format!("Service {}: {}", service_id, e));
                 }
             }
@@ -428,7 +423,7 @@ mod tests {
             period_end: Utc::now(),
             avg_cpu_percent: 50.0,
             peak_cpu_percent: 80.0,
-            avg_memory_bytes: 512 * 1024 * 1024, // 512 MB
+            avg_memory_bytes: 512 * 1024 * 1024,  // 512 MB
             peak_memory_bytes: 800 * 1024 * 1024, // 800 MB
             disk_bytes: 5 * 1024 * 1024 * 1024,
             total_bandwidth_bytes: 10 * 1024 * 1024 * 1024,

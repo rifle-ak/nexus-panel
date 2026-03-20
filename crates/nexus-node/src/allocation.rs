@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 /// Port allocation information
@@ -326,13 +326,9 @@ impl AllocationManager {
     /// Get an allocation by ID
     pub async fn get_allocation(&self, allocation_id: &str) -> Result<Allocation> {
         let allocations = self.allocations.read().await;
-        allocations
-            .get(allocation_id)
-            .cloned()
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Allocation {} not found",
-                allocation_id
-            )))
+        allocations.get(allocation_id).cloned().ok_or_else(|| {
+            NodeError::InvalidInput(format!("Allocation {} not found", allocation_id))
+        })
     }
 
     /// List all allocations for a container
@@ -383,21 +379,13 @@ impl AllocationManager {
     /// List all unassigned allocations
     pub async fn list_unassigned_allocations(&self) -> Vec<Allocation> {
         let allocations = self.allocations.read().await;
-        allocations
-            .values()
-            .filter(|a| a.container_id.is_none())
-            .cloned()
-            .collect()
+        allocations.values().filter(|a| a.container_id.is_none()).cloned().collect()
     }
 
     /// List all allocations for an IP
     pub async fn list_ip_allocations(&self, ip: IpAddr) -> Vec<Allocation> {
         let allocations = self.allocations.read().await;
-        allocations
-            .values()
-            .filter(|a| a.ip == ip)
-            .cloned()
-            .collect()
+        allocations.values().filter(|a| a.ip == ip).cloned().collect()
     }
 
     /// Get allocation statistics
@@ -418,10 +406,7 @@ impl AllocationManager {
             }
         }
 
-        let assigned = allocations
-            .values()
-            .filter(|a| a.container_id.is_some())
-            .count() as u32;
+        let assigned = allocations.values().filter(|a| a.container_id.is_some()).count() as u32;
 
         AllocationStats {
             total_pools: pools.len() as u32,
@@ -597,10 +582,7 @@ mod tests {
         let alloc = manager.create_allocation(ip, None, None, None).await.unwrap();
 
         // Assign
-        let assigned = manager
-            .assign_allocation(&alloc.id, "container-1", true)
-            .await
-            .unwrap();
+        let assigned = manager.assign_allocation(&alloc.id, "container-1", true).await.unwrap();
         assert_eq!(assigned.container_id, Some("container-1".to_string()));
         assert!(assigned.is_primary);
 

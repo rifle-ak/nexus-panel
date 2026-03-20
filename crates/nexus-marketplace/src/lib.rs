@@ -4,15 +4,14 @@
 //! mods from various marketplace providers like Umod, CurseForge, Steam Workshop, etc.
 
 pub mod adapters;
+pub mod cache;
 pub mod error;
 pub mod models;
-pub mod cache;
 
 pub use adapters::MarketplaceAdapter;
 pub use error::{MarketplaceError, Result};
 pub use models::*;
 
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -73,9 +72,10 @@ impl MarketplaceManager {
 
     /// Search for mods from a specific provider
     pub async fn search(&self, provider: &str, query: &SearchQuery) -> Result<Vec<ModInfo>> {
-        let adapter = self.adapters.get(provider).ok_or_else(|| {
-            MarketplaceError::UnknownProvider(provider.to_string())
-        })?;
+        let adapter = self
+            .adapters
+            .get(provider)
+            .ok_or_else(|| MarketplaceError::UnknownProvider(provider.to_string()))?;
 
         adapter.search(query).await
     }
@@ -91,9 +91,10 @@ impl MarketplaceManager {
             }
         }
 
-        let adapter = self.adapters.get(provider).ok_or_else(|| {
-            MarketplaceError::UnknownProvider(provider.to_string())
-        })?;
+        let adapter = self
+            .adapters
+            .get(provider)
+            .ok_or_else(|| MarketplaceError::UnknownProvider(provider.to_string()))?;
 
         let details = adapter.get_mod_details(mod_id).await?;
 
@@ -114,9 +115,10 @@ impl MarketplaceManager {
         version: Option<&str>,
         target_dir: &Path,
     ) -> Result<DownloadResult> {
-        let adapter = self.adapters.get(provider).ok_or_else(|| {
-            MarketplaceError::UnknownProvider(provider.to_string())
-        })?;
+        let adapter = self
+            .adapters
+            .get(provider)
+            .ok_or_else(|| MarketplaceError::UnknownProvider(provider.to_string()))?;
 
         let details = self.get_mod(provider, mod_id).await?;
 
@@ -127,18 +129,14 @@ impl MarketplaceManager {
             details.versions.first() // Latest version
         };
 
-        let version_info = version_info.ok_or_else(|| {
-            MarketplaceError::VersionNotFound {
-                mod_id: mod_id.to_string(),
-                version: version.unwrap_or("latest").to_string(),
-            }
+        let version_info = version_info.ok_or_else(|| MarketplaceError::VersionNotFound {
+            mod_id: mod_id.to_string(),
+            version: version.unwrap_or("latest").to_string(),
         })?;
 
         info!(
             "Downloading mod {} version {} from {}",
-            details.info.name,
-            version_info.version,
-            provider
+            details.info.name, version_info.version, provider
         );
 
         adapter.download(mod_id, &version_info.version, target_dir).await
@@ -220,9 +218,8 @@ impl MarketplaceManager {
 
         for dep in &details.dependencies {
             // Check if dependency is already installed
-            let is_installed = installed.iter().any(|m| {
-                m.provider == provider && m.mod_id == dep.mod_id
-            });
+            let is_installed =
+                installed.iter().any(|m| m.provider == provider && m.mod_id == dep.mod_id);
 
             let needs_update = if is_installed {
                 // Check if installed version meets minimum requirement
@@ -334,9 +331,10 @@ impl MarketplaceManager {
 
     /// Get categories for a game from a specific provider
     pub async fn get_categories(&self, provider: &str, game: &str) -> Result<Vec<Category>> {
-        let adapter = self.adapters.get(provider).ok_or_else(|| {
-            MarketplaceError::UnknownProvider(provider.to_string())
-        })?;
+        let adapter = self
+            .adapters
+            .get(provider)
+            .ok_or_else(|| MarketplaceError::UnknownProvider(provider.to_string()))?;
 
         adapter.get_categories(game).await
     }
@@ -440,10 +438,12 @@ pub struct AutoUpdateSkipped {
 fn version_compare(a: &str, b: &str) -> i32 {
     let parse_parts = |v: &str| -> Vec<u32> {
         v.split('.')
-            .filter_map(|p| p.trim_start_matches(|c: char| !c.is_ascii_digit())
-                .split(|c: char| !c.is_ascii_digit())
-                .next()
-                .and_then(|s| s.parse().ok()))
+            .filter_map(|p| {
+                p.trim_start_matches(|c: char| !c.is_ascii_digit())
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .and_then(|s| s.parse().ok())
+            })
             .collect()
     };
 

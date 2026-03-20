@@ -16,8 +16,8 @@ pub mod sso;
 
 pub use api::WhmcsApi;
 pub use billing::{BillingManager, UsageRecord};
-pub use error::{WhmcsError, Result};
-pub use hooks::{WebhookHandler, WebhookEvent};
+pub use error::{Result, WhmcsError};
+pub use hooks::{WebhookEvent, WebhookHandler};
 pub use provisioning::{ProvisioningModule, ServerConfig};
 pub use sso::SsoManager;
 
@@ -180,7 +180,10 @@ mod tests {
     #[test]
     fn test_service_status_conversion() {
         assert_eq!(ServiceStatus::from_whmcs("Active"), ServiceStatus::Active);
-        assert_eq!(ServiceStatus::from_whmcs("SUSPENDED"), ServiceStatus::Suspended);
+        assert_eq!(
+            ServiceStatus::from_whmcs("SUSPENDED"),
+            ServiceStatus::Suspended
+        );
         assert_eq!(ServiceStatus::Active.to_whmcs(), "Active");
     }
 

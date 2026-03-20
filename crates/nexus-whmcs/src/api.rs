@@ -10,9 +10,9 @@ use crate::error::{Result, WhmcsError};
 use crate::{ClientInfo, ServiceInfo, ServiceStatus, WhmcsConfig};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// WHMCS API client
 pub struct WhmcsApi {
@@ -51,12 +51,7 @@ impl WhmcsApi {
 
         debug!("WHMCS API request: action={}", action);
 
-        let response = self
-            .client
-            .post(&self.config.api_url)
-            .form(&form_data)
-            .send()
-            .await?;
+        let response = self.client.post(&self.config.api_url).form(&form_data).send().await?;
 
         let status = response.status();
         let body: serde_json::Value = response.json().await?;
@@ -94,31 +89,15 @@ impl WhmcsApi {
                 .and_then(|v| v.as_u64())
                 .or_else(|| response.get("id").and_then(|v| v.as_u64()))
                 .unwrap_or(client_id),
-            firstname: response
-                .get("firstname")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            lastname: response
-                .get("lastname")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            email: response
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            firstname: response.get("firstname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            lastname: response.get("lastname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            email: response.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             company: response
                 .get("companyname")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string()),
-            status: response
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Active")
-                .to_string(),
+            status: response.get("status").and_then(|v| v.as_str()).unwrap_or("Active").to_string(),
         };
 
         Ok(client)
@@ -141,9 +120,7 @@ impl WhmcsApi {
         let service_data = products
             .iter()
             .find(|p| {
-                p.get("id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
+                p.get("id").and_then(|v| v.as_str()).and_then(|s| s.parse::<u64>().ok())
                     == Some(service_id)
             })
             .ok_or_else(|| WhmcsError::ServiceNotFound(service_id.to_string()))?;
@@ -199,10 +176,7 @@ impl WhmcsApi {
             .or_else(|| data.get("pid").and_then(|v| v.as_u64()))
             .unwrap_or(0);
 
-        let status_str = data
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Pending");
+        let status_str = data.get("status").and_then(|v| v.as_str()).unwrap_or("Pending");
 
         // Parse custom fields
         let mut custom_fields = HashMap::new();
@@ -224,31 +198,12 @@ impl WhmcsApi {
             client_id,
             product_id,
             server_id: custom_fields.get("server_id").cloned(),
-            domain: data
-                .get("domain")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            username: data
-                .get("username")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            password: data
-                .get("password")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+            domain: data.get("domain").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            username: data.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            password: data.get("password").and_then(|v| v.as_str()).map(|s| s.to_string()),
             status: ServiceStatus::from_whmcs(status_str),
-            regdate: data
-                .get("regdate")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            nextduedate: data
-                .get("nextduedate")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            regdate: data.get("regdate").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            nextduedate: data.get("nextduedate").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             billingcycle: data
                 .get("billingcycle")
                 .and_then(|v| v.as_str())
@@ -282,7 +237,7 @@ impl WhmcsApi {
         value: &str,
     ) -> Result<()> {
         // First, get the service to find the custom field ID
-        let service = self.get_service(service_id).await?;
+        let _service = self.get_service(service_id).await?;
 
         // For now, we'll use a direct update approach
         let mut params = HashMap::new();
@@ -334,7 +289,10 @@ impl WhmcsApi {
         for (i, item) in items.iter().enumerate() {
             params.insert(format!("itemdescription{}", i), item.description.clone());
             params.insert(format!("itemamount{}", i), item.amount.to_string());
-            params.insert(format!("itemtaxed{}", i), if item.taxed { "1" } else { "0" }.to_string());
+            params.insert(
+                format!("itemtaxed{}", i),
+                if item.taxed { "1" } else { "0" }.to_string(),
+            );
         }
 
         let response = self.api_request("CreateInvoice", params).await?;
@@ -343,10 +301,7 @@ impl WhmcsApi {
             .get("invoiceid")
             .and_then(|v| v.as_u64())
             .or_else(|| {
-                response
-                    .get("invoiceid")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
+                response.get("invoiceid").and_then(|v| v.as_str()).and_then(|s| s.parse().ok())
             })
             .ok_or_else(|| WhmcsError::BillingError("Failed to get invoice ID".to_string()))?;
 

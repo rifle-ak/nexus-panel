@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Maximum file size for direct read operations (10MB)
 const MAX_DIRECT_READ_SIZE: u64 = 10 * 1024 * 1024;
@@ -39,7 +39,7 @@ pub struct FileManager {
     container_id: String,
 
     /// Base data directory
-    data_dir: PathBuf,
+    _data_dir: PathBuf,
 
     /// Container-specific directory
     server_dir: PathBuf,
@@ -51,7 +51,7 @@ impl FileManager {
         let server_dir = data_dir.join(container_id);
         Self {
             container_id: container_id.to_string(),
-            data_dir: data_dir.to_path_buf(),
+            _data_dir: data_dir.to_path_buf(),
             server_dir,
         }
     }
@@ -112,9 +112,7 @@ impl FileManager {
                 .unwrap_or_else(|_| name.clone());
 
             let mime_type = if metadata.is_file() {
-                mime_guess::from_path(&name)
-                    .first_or_octet_stream()
-                    .to_string()
+                mime_guess::from_path(&name).first_or_octet_stream().to_string()
             } else {
                 "inode/directory".to_string()
             };
@@ -127,10 +125,7 @@ impl FileManager {
                 .unwrap_or(0);
 
             let symlink_target = if file_type.is_symlink() {
-                fs::read_link(entry.path())
-                    .await
-                    .ok()
-                    .map(|p| p.display().to_string())
+                fs::read_link(entry.path()).await.ok().map(|p| p.display().to_string())
             } else {
                 None
             };
@@ -148,19 +143,22 @@ impl FileManager {
         }
 
         // Sort: directories first, then by name
-        files.sort_by(|a, b| {
-            match (a.is_directory, b.is_directory) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
+        files.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
         Ok(files)
     }
 
     /// Read file contents
-    pub async fn read_file(&self, path: &str, offset: Option<u64>, length: Option<u64>) -> Result<(Vec<u8>, u64, String)> {
+    pub async fn read_file(
+        &self,
+        path: &str,
+        offset: Option<u64>,
+        length: Option<u64>,
+    ) -> Result<(Vec<u8>, u64, String)> {
         let file_path = self.sanitize_path(path)?;
 
         if !file_path.exists() {
@@ -189,9 +187,7 @@ impl FileManager {
             )));
         }
 
-        let mime_type = mime_guess::from_path(&file_path)
-            .first_or_octet_stream()
-            .to_string();
+        let mime_type = mime_guess::from_path(&file_path).first_or_octet_stream().to_string();
 
         let mut file = fs::File::open(&file_path).await?;
 
@@ -256,11 +252,7 @@ impl FileManager {
                 fs::remove_file(&file_path).await?;
             }
 
-            info!(
-                "Deleted {} in container {}",
-                path,
-                self.container_id
-            );
+            info!("Deleted {} in container {}", path, self.container_id);
             deleted += 1;
         }
 
@@ -283,9 +275,7 @@ impl FileManager {
 
         info!(
             "Renamed {} to {} in container {}",
-            old_path,
-            new_path,
-            self.container_id
+            old_path, new_path, self.container_id
         );
 
         Ok(())
@@ -318,9 +308,7 @@ impl FileManager {
 
         info!(
             "Copied {} to {} in container {}",
-            source,
-            dest,
-            self.container_id
+            source, dest, self.container_id
         );
 
         Ok(())
@@ -338,15 +326,19 @@ impl FileManager {
 
         info!(
             "Created directory {} in container {}",
-            path,
-            self.container_id
+            path, self.container_id
         );
 
         Ok(())
     }
 
     /// Compress files into an archive
-    pub async fn compress(&self, paths: &[String], output: &str, format: &str) -> Result<(String, u64)> {
+    pub async fn compress(
+        &self,
+        paths: &[String],
+        output: &str,
+        format: &str,
+    ) -> Result<(String, u64)> {
         let output_path = self.sanitize_path(output)?;
 
         // Collect source paths
@@ -385,7 +377,12 @@ impl FileManager {
     }
 
     /// Decompress an archive
-    pub async fn decompress(&self, archive: &str, output_dir: &str, overwrite: bool) -> Result<u32> {
+    pub async fn decompress(
+        &self,
+        archive: &str,
+        output_dir: &str,
+        overwrite: bool,
+    ) -> Result<u32> {
         let archive_path = self.sanitize_path(archive)?;
         let output_path = self.sanitize_path(output_dir)?;
 
@@ -406,17 +403,14 @@ impl FileManager {
         } else if archive_str.ends_with(".zip") {
             extract_zip(&archive_path, &output_path, overwrite).await?
         } else {
-            return Err(NodeError::InvalidInput(format!(
-                "Unsupported archive format. Use .tar.gz, .tgz, or .zip"
-            )));
+            return Err(NodeError::InvalidInput(
+                "Unsupported archive format. Use .tar.gz, .tgz, or .zip".to_string(),
+            ));
         };
 
         info!(
             "Extracted {} files from {} to {} in container {}",
-            count,
-            archive,
-            output_dir,
-            self.container_id
+            count, archive, output_dir, self.container_id
         );
 
         Ok(count)
@@ -490,7 +484,6 @@ async fn create_tar_gz(sources: &[PathBuf], output: &Path, base_dir: &Path) -> R
 
 /// Create a zip archive
 async fn create_zip(sources: &[PathBuf], output: &Path, base_dir: &Path) -> Result<()> {
-    use std::io::Write;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
@@ -517,7 +510,7 @@ fn add_to_zip<W: std::io::Write + std::io::Seek>(
     let rel_str = rel_path.to_string_lossy();
 
     if path.is_dir() {
-        zip.add_directory(&format!("{}/", rel_str), options)?;
+        zip.add_directory(format!("{}/", rel_str), options)?;
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             add_to_zip(zip, &entry.path(), base_dir, options)?;

@@ -29,10 +29,7 @@ impl MetadataCache {
 
     /// Create a cache with custom TTL
     pub fn with_ttl(ttl: Duration) -> Self {
-        Self {
-            ttl,
-            ..Self::new()
-        }
+        Self { ttl, ..Self::new() }
     }
 
     /// Get a cached entry if it exists and hasn't expired

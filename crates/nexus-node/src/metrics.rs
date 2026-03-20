@@ -3,11 +3,10 @@
 //! This module provides comprehensive metrics collection for monitoring
 //! container operations, resource usage, and system health.
 
-use crate::error::{NodeError, Result};
+use crate::error::Result;
 use prometheus::{
     Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
 };
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Metrics collection for Nexus Node
@@ -226,9 +225,7 @@ impl Metrics {
 
     /// Record a container operation
     pub fn record_container_operation(&self, operation: &str, status: &str, duration: Duration) {
-        self.container_operations_total
-            .with_label_values(&[operation, status])
-            .inc();
+        self.container_operations_total.with_label_values(&[operation, status]).inc();
         self.container_operation_duration
             .with_label_values(&[operation])
             .observe(duration.as_secs_f64());
@@ -236,16 +233,19 @@ impl Metrics {
 
     /// Record a gRPC request
     pub fn record_grpc_request(&self, method: &str, status: &str, duration: Duration) {
-        self.grpc_requests_total
-            .with_label_values(&[method, status])
-            .inc();
+        self.grpc_requests_total.with_label_values(&[method, status]).inc();
         self.grpc_request_duration
             .with_label_values(&[method])
             .observe(duration.as_secs_f64());
     }
 
     /// Update container count metrics
-    pub fn update_container_counts(&self, total: usize, running: usize, by_state: &[(&str, usize)]) {
+    pub fn update_container_counts(
+        &self,
+        total: usize,
+        running: usize,
+        by_state: &[(&str, usize)],
+    ) {
         self.containers_total.set(total as f64);
         self.containers_running.set(running as f64);
 
@@ -256,9 +256,7 @@ impl Metrics {
 
         // Set current state counts
         for (state, count) in by_state {
-            self.containers_by_state
-                .with_label_values(&[state])
-                .set(*count as f64);
+            self.containers_by_state.with_label_values(&[state]).set(*count as f64);
         }
     }
 
@@ -338,10 +336,7 @@ mod tests {
         let metrics = Metrics::new().unwrap();
         metrics.record_grpc_request("CreateContainer", "ok", Duration::from_millis(100));
         assert_eq!(
-            metrics
-                .grpc_requests_total
-                .with_label_values(&["CreateContainer", "ok"])
-                .get(),
+            metrics.grpc_requests_total.with_label_values(&["CreateContainer", "ok"]).get(),
             1.0
         );
     }
@@ -349,21 +344,12 @@ mod tests {
     #[test]
     fn test_container_counts_update() {
         let metrics = Metrics::new().unwrap();
-        metrics.update_container_counts(
-            10,
-            5,
-            &[("running", 5), ("stopped", 3), ("created", 2)],
-        );
+        metrics.update_container_counts(10, 5, &[("running", 5), ("stopped", 3), ("created", 2)]);
         assert_eq!(metrics.containers_total.get(), 10.0);
         assert_eq!(metrics.containers_running.get(), 5.0);
         assert_eq!(
-            metrics
-                .containers_by_state
-                .with_label_values(&["running"])
-                .get(),
+            metrics.containers_by_state.with_label_values(&["running"]).get(),
             5.0
         );
     }
 }
-
-

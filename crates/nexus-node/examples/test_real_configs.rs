@@ -3,17 +3,14 @@
 //! This tests the complete flow from loading a Nexus YAML config
 //! to creating a container from it.
 
-use nexus_node::{ContainerManager, load_config};
+use nexus_node::{load_config, ContainerManager};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_level(true)
-        .init();
+    tracing_subscriber::fmt().with_target(false).with_level(true).init();
 
     println!("=================================================");
     println!("Nexus Node - Real Config Integration Test");

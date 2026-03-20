@@ -1,5 +1,5 @@
-use crate::error::{NodeError, Result};
 use crate::container::state::ContainerState;
+use crate::error::{NodeError, Result};
 use crate::metrics::Metrics;
 use crate::runtime::{ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits};
 use nexus_config::GameConfig;
@@ -102,12 +102,10 @@ impl ContainerManager {
         let image_pull_start = Instant::now();
         match self.runtime.pull_image(&config.container.image).await {
             Ok(_) => {
-                self.metrics
-                    .record_image_pull(image_pull_start.elapsed(), true);
+                self.metrics.record_image_pull(image_pull_start.elapsed(), true);
             }
             Err(e) => {
-                self.metrics
-                    .record_image_pull(image_pull_start.elapsed(), false);
+                self.metrics.record_image_pull(image_pull_start.elapsed(), false);
                 self.metrics.record_container_operation("create", "error", start.elapsed());
                 return Err(e);
             }
@@ -117,14 +115,13 @@ impl ContainerManager {
         let spec = Self::config_to_spec(config, &server_dir)?;
 
         // Create container via runtime
-        let _container_info = self.runtime.create(&container_id, spec).await
-            .map_err(|e| {
-                self.metrics.record_container_operation("create", "error", start.elapsed());
-                NodeError::StartFailed {
-                    container_id: container_id.clone(),
-                    source: e.into(),
-                }
-            })?;
+        let _container_info = self.runtime.create(&container_id, spec).await.map_err(|e| {
+            self.metrics.record_container_operation("create", "error", start.elapsed());
+            NodeError::StartFailed {
+                container_id: container_id.clone(),
+                source: e.into(),
+            }
+        })?;
 
         // Create state
         let state = ContainerState::new(
@@ -171,19 +168,19 @@ impl ContainerManager {
         // Check if already running
         if state.status.is_running() {
             warn!("Container {} is already running", container_id);
-            self.metrics.record_container_operation("start", "already_running", start.elapsed());
+            self.metrics
+                .record_container_operation("start", "already_running", start.elapsed());
             return Ok(());
         }
 
         // Start container via runtime
-        let pid = self.runtime.start(container_id).await
-            .map_err(|e| {
-                self.metrics.record_container_operation("start", "error", start.elapsed());
-                NodeError::StartFailed {
-                    container_id: container_id.to_string(),
-                    source: e.into(),
-                }
-            })?;
+        let pid = self.runtime.start(container_id).await.map_err(|e| {
+            self.metrics.record_container_operation("start", "error", start.elapsed());
+            NodeError::StartFailed {
+                container_id: container_id.to_string(),
+                source: e.into(),
+            }
+        })?;
 
         state.mark_started(pid);
 
@@ -206,7 +203,10 @@ impl ContainerManager {
     pub async fn stop_container(&self, container_id: &str, timeout: Option<u32>) -> Result<()> {
         let start = Instant::now();
         let timeout = timeout.unwrap_or(30);
-        info!("Stopping container: {} (timeout: {}s)", container_id, timeout);
+        info!(
+            "Stopping container: {} (timeout: {}s)",
+            container_id, timeout
+        );
 
         // Get current state
         let mut state = {
@@ -223,19 +223,19 @@ impl ContainerManager {
         // Check if already stopped
         if state.status.is_stopped() {
             warn!("Container {} is already stopped", container_id);
-            self.metrics.record_container_operation("stop", "already_stopped", start.elapsed());
+            self.metrics
+                .record_container_operation("stop", "already_stopped", start.elapsed());
             return Ok(());
         }
 
         // Stop container via runtime (handles graceful shutdown)
-        let exit_code = self.runtime.stop(container_id, timeout).await
-            .map_err(|e| {
-                self.metrics.record_container_operation("stop", "error", start.elapsed());
-                NodeError::StopFailed {
-                    container_id: container_id.to_string(),
-                    source: e.into(),
-                }
-            })?;
+        let exit_code = self.runtime.stop(container_id, timeout).await.map_err(|e| {
+            self.metrics.record_container_operation("stop", "error", start.elapsed());
+            NodeError::StopFailed {
+                container_id: container_id.to_string(),
+                source: e.into(),
+            }
+        })?;
 
         state.mark_stopped(exit_code);
 
@@ -268,10 +268,7 @@ impl ContainerManager {
             if let Some(state) = states.get_mut(container_id) {
                 state.mark_restarted();
                 // Record restart metric
-                self.metrics.record_container_restart(
-                    &state.id,
-                    &state.name,
-                );
+                self.metrics.record_container_restart(&state.id, &state.name);
             }
         }
 
@@ -298,10 +295,15 @@ impl ContainerManager {
 
         // If container is running and not force, return error
         if state.status.is_running() && !force {
-            self.metrics.record_container_operation("delete", "running_not_forced", start.elapsed());
-            return Err(NodeError::Internal(
-                format!("Container {} is still running. Use force=true to stop and delete", container_id)
-            ));
+            self.metrics.record_container_operation(
+                "delete",
+                "running_not_forced",
+                start.elapsed(),
+            );
+            return Err(NodeError::Internal(format!(
+                "Container {} is still running. Use force=true to stop and delete",
+                container_id
+            )));
         }
 
         // Stop if running
@@ -310,18 +312,17 @@ impl ContainerManager {
         }
 
         // Delete container via runtime
-        self.runtime.delete(container_id).await
-            .map_err(|e| {
-                self.metrics.record_container_operation("delete", "error", start.elapsed());
-                e
-            })?;
+        self.runtime.delete(container_id).await.map_err(|e| {
+            self.metrics.record_container_operation("delete", "error", start.elapsed());
+            e
+        })?;
 
         // Delete server data directory
         let server_dir = self.data_dir.join(container_id);
         if server_dir.exists() {
-            std::fs::remove_dir_all(&server_dir).map_err(|e| NodeError::Internal(
-                format!("Failed to remove server directory: {}", e)
-            ))?;
+            std::fs::remove_dir_all(&server_dir).map_err(|e| {
+                NodeError::Internal(format!("Failed to remove server directory: {}", e))
+            })?;
         }
 
         // Remove from state
@@ -359,7 +360,7 @@ impl ContainerManager {
         let containers = self.list_containers().await;
         let total = containers.len();
         let running = containers.iter().filter(|c| c.status.is_running()).count();
-        
+
         let mut by_state = std::collections::HashMap::new();
         for container in &containers {
             let state_str = match container.status {
@@ -373,15 +374,16 @@ impl ContainerManager {
             *by_state.entry(state_str).or_insert(0) += 1;
         }
 
-        let by_state_vec: Vec<(&str, usize)> = by_state.iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let by_state_vec: Vec<(&str, usize)> = by_state.iter().map(|(k, v)| (*k, *v)).collect();
 
         self.metrics.update_container_counts(total, running, &by_state_vec);
     }
 
     /// Attach to container console for log streaming (read-only)
-    pub async fn attach_console(&self, container_id: &str) -> Result<Box<dyn crate::runtime::ConsoleStream>> {
+    pub async fn attach_console(
+        &self,
+        container_id: &str,
+    ) -> Result<Box<dyn crate::runtime::ConsoleStream>> {
         // Verify container exists
         {
             let states = self.states.read().await;
@@ -395,7 +397,10 @@ impl ContainerManager {
     }
 
     /// Attach to container console (bidirectional - stdin/stdout/stderr)
-    pub async fn attach_bidirectional(&self, container_id: &str) -> Result<Box<dyn crate::runtime::BidirectionalConsole>> {
+    pub async fn attach_bidirectional(
+        &self,
+        container_id: &str,
+    ) -> Result<Box<dyn crate::runtime::BidirectionalConsole>> {
         // Verify container exists and is running
         {
             let states = self.states.read().await;
@@ -431,7 +436,11 @@ impl ContainerManager {
             states
                 .get(container_id)
                 .ok_or_else(|| {
-                    self.metrics.record_container_operation("suspend", "not_found", start.elapsed());
+                    self.metrics.record_container_operation(
+                        "suspend",
+                        "not_found",
+                        start.elapsed(),
+                    );
                     NodeError::ContainerNotFound(container_id.to_string())
                 })?
                 .clone()
@@ -439,14 +448,13 @@ impl ContainerManager {
 
         // Stop if running
         if state.status.is_running() {
-            self.runtime.stop(container_id, 30).await
-                .map_err(|e| {
-                    self.metrics.record_container_operation("suspend", "error", start.elapsed());
-                    NodeError::StopFailed {
-                        container_id: container_id.to_string(),
-                        source: e.into(),
-                    }
-                })?;
+            self.runtime.stop(container_id, 30).await.map_err(|e| {
+                self.metrics.record_container_operation("suspend", "error", start.elapsed());
+                NodeError::StopFailed {
+                    container_id: container_id.to_string(),
+                    source: e.into(),
+                }
+            })?;
         }
 
         state.mark_suspended();
@@ -473,7 +481,11 @@ impl ContainerManager {
             states
                 .get(container_id)
                 .ok_or_else(|| {
-                    self.metrics.record_container_operation("unsuspend", "not_found", start.elapsed());
+                    self.metrics.record_container_operation(
+                        "unsuspend",
+                        "not_found",
+                        start.elapsed(),
+                    );
                     NodeError::ContainerNotFound(container_id.to_string())
                 })?
                 .clone()
@@ -503,7 +515,10 @@ impl ContainerManager {
     /// Reinstall a container (wipe data, recreate)
     pub async fn reinstall_container(&self, container_id: &str, preserve_data: bool) -> Result<()> {
         let start = Instant::now();
-        info!("Reinstalling container: {} (preserve_data: {})", container_id, preserve_data);
+        info!(
+            "Reinstalling container: {} (preserve_data: {})",
+            container_id, preserve_data
+        );
 
         // Get the current state to get image info
         let state = {
@@ -511,7 +526,11 @@ impl ContainerManager {
             states
                 .get(container_id)
                 .ok_or_else(|| {
-                    self.metrics.record_container_operation("reinstall", "not_found", start.elapsed());
+                    self.metrics.record_container_operation(
+                        "reinstall",
+                        "not_found",
+                        start.elapsed(),
+                    );
                     NodeError::ContainerNotFound(container_id.to_string())
                 })?
                 .clone()
@@ -528,15 +547,15 @@ impl ContainerManager {
         // Handle data directory
         let server_dir = self.data_dir.join(container_id);
         if !preserve_data && server_dir.exists() {
-            std::fs::remove_dir_all(&server_dir).map_err(|e| NodeError::Internal(
-                format!("Failed to remove server directory: {}", e)
-            ))?;
+            std::fs::remove_dir_all(&server_dir).map_err(|e| {
+                NodeError::Internal(format!("Failed to remove server directory: {}", e))
+            })?;
         }
 
         // Recreate the server directory
-        std::fs::create_dir_all(&server_dir).map_err(|e| NodeError::Internal(
-            format!("Failed to create server directory: {}", e)
-        ))?;
+        std::fs::create_dir_all(&server_dir).map_err(|e| {
+            NodeError::Internal(format!("Failed to create server directory: {}", e))
+        })?;
 
         // Re-pull the image
         self.runtime.pull_image(&state.image).await?;
@@ -635,8 +654,8 @@ impl ContainerManager {
 
         Ok(ContainerSpec {
             image: config.container.image.clone(),
-            command: vec![],  // Base command is empty, args contain everything
-            args: command,    // Full command + args go here
+            command: vec![], // Base command is empty, args contain everything
+            args: command,   // Full command + args go here
             env,
             working_dir: config.startup.working_dir.clone(),
             mounts,
@@ -655,14 +674,14 @@ fn parse_size(size_str: &str) -> Result<u64> {
     let size_str = size_str.trim();
 
     if size_str.ends_with("Gi") {
-        let num: u64 = size_str.trim_end_matches("Gi").parse()
-            .map_err(|_| NodeError::InvalidConfig {
+        let num: u64 =
+            size_str.trim_end_matches("Gi").parse().map_err(|_| NodeError::InvalidConfig {
                 reason: format!("Invalid size: {}", size_str),
             })?;
         Ok(num * 1024 * 1024 * 1024)
     } else if size_str.ends_with("Mi") {
-        let num: u64 = size_str.trim_end_matches("Mi").parse()
-            .map_err(|_| NodeError::InvalidConfig {
+        let num: u64 =
+            size_str.trim_end_matches("Mi").parse().map_err(|_| NodeError::InvalidConfig {
                 reason: format!("Invalid size: {}", size_str),
             })?;
         Ok(num * 1024 * 1024)
@@ -681,7 +700,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_config() -> GameConfig {
-        GameConfig::from_yaml(r#"
+        GameConfig::from_yaml(
+            r#"
 metadata:
   id: test-server
   name: Test Server
@@ -731,7 +751,9 @@ security:
     add: []
     drop: []
   firewall_rules: []
-"#).unwrap()
+"#,
+        )
+        .unwrap()
     }
 
     #[tokio::test]

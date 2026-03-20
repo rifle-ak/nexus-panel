@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 /// Available permissions for subusers
@@ -83,31 +83,64 @@ impl Permission {
     pub fn all() -> HashSet<Permission> {
         use Permission::*;
         [
-            PowerStart, PowerStop, PowerRestart, PowerKill,
-            ConsoleRead, ConsoleWrite,
-            FileRead, FileWrite, FileDelete, FileArchive, FileSftp,
-            BackupCreate, BackupRead, BackupDelete, BackupRestore, BackupDownload,
-            DatabaseCreate, DatabaseRead, DatabaseUpdate, DatabaseDelete,
-            ScheduleCreate, ScheduleRead, ScheduleUpdate, ScheduleDelete,
-            SettingsRead, SettingsRename, SettingsReinstall,
-            UserCreate, UserRead, UserUpdate, UserDelete,
-            AllocationRead, AllocationCreate, AllocationUpdate, AllocationDelete,
-            ActivityRead, WebsocketConnect,
-        ].into_iter().collect()
+            PowerStart,
+            PowerStop,
+            PowerRestart,
+            PowerKill,
+            ConsoleRead,
+            ConsoleWrite,
+            FileRead,
+            FileWrite,
+            FileDelete,
+            FileArchive,
+            FileSftp,
+            BackupCreate,
+            BackupRead,
+            BackupDelete,
+            BackupRestore,
+            BackupDownload,
+            DatabaseCreate,
+            DatabaseRead,
+            DatabaseUpdate,
+            DatabaseDelete,
+            ScheduleCreate,
+            ScheduleRead,
+            ScheduleUpdate,
+            ScheduleDelete,
+            SettingsRead,
+            SettingsRename,
+            SettingsReinstall,
+            UserCreate,
+            UserRead,
+            UserUpdate,
+            UserDelete,
+            AllocationRead,
+            AllocationCreate,
+            AllocationUpdate,
+            AllocationDelete,
+            ActivityRead,
+            WebsocketConnect,
+        ]
+        .into_iter()
+        .collect()
     }
 
     /// Get default permissions for a new subuser
     pub fn default_permissions() -> HashSet<Permission> {
         use Permission::*;
         [
-            ConsoleRead, ConsoleWrite,
-            FileRead, FileWrite,
+            ConsoleRead,
+            ConsoleWrite,
+            FileRead,
+            FileWrite,
             BackupRead,
             ScheduleRead,
             SettingsRead,
             ActivityRead,
             WebsocketConnect,
-        ].into_iter().collect()
+        ]
+        .into_iter()
+        .collect()
     }
 
     /// Get read-only permissions
@@ -123,23 +156,45 @@ impl Permission {
             UserRead,
             AllocationRead,
             ActivityRead,
-        ].into_iter().collect()
+        ]
+        .into_iter()
+        .collect()
     }
 
     /// Get operator permissions (most operations except admin)
     pub fn operator() -> HashSet<Permission> {
         use Permission::*;
         [
-            PowerStart, PowerStop, PowerRestart,
-            ConsoleRead, ConsoleWrite,
-            FileRead, FileWrite, FileDelete, FileArchive, FileSftp,
-            BackupCreate, BackupRead, BackupDelete, BackupRestore, BackupDownload,
-            DatabaseCreate, DatabaseRead, DatabaseUpdate, DatabaseDelete,
-            ScheduleCreate, ScheduleRead, ScheduleUpdate, ScheduleDelete,
+            PowerStart,
+            PowerStop,
+            PowerRestart,
+            ConsoleRead,
+            ConsoleWrite,
+            FileRead,
+            FileWrite,
+            FileDelete,
+            FileArchive,
+            FileSftp,
+            BackupCreate,
+            BackupRead,
+            BackupDelete,
+            BackupRestore,
+            BackupDownload,
+            DatabaseCreate,
+            DatabaseRead,
+            DatabaseUpdate,
+            DatabaseDelete,
+            ScheduleCreate,
+            ScheduleRead,
+            ScheduleUpdate,
+            ScheduleDelete,
             SettingsRead,
             AllocationRead,
-            ActivityRead, WebsocketConnect,
-        ].into_iter().collect()
+            ActivityRead,
+            WebsocketConnect,
+        ]
+        .into_iter()
+        .collect()
     }
 
     /// Convert permission to string
@@ -187,7 +242,7 @@ impl Permission {
     }
 
     /// Parse permission from string
-    pub fn from_str(s: &str) -> Option<Permission> {
+    pub fn parse_permission(s: &str) -> Option<Permission> {
         use Permission::*;
         match s {
             "power.start" => Some(PowerStart),
@@ -335,9 +390,8 @@ impl SubuserManager {
         // Store subuser
         {
             let mut subusers = self.subusers.write().await;
-            let container_subusers = subusers
-                .entry(container_id.to_string())
-                .or_insert_with(HashMap::new);
+            let container_subusers =
+                subusers.entry(container_id.to_string()).or_insert_with(HashMap::new);
             container_subusers.insert(subuser_id.clone(), subuser.clone());
         }
 
@@ -366,10 +420,12 @@ impl SubuserManager {
             .get(container_id)
             .and_then(|cs| cs.get(subuser_id))
             .cloned()
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Subuser {} not found for container {}",
-                subuser_id, container_id
-            )))
+            .ok_or_else(|| {
+                NodeError::InvalidInput(format!(
+                    "Subuser {} not found for container {}",
+                    subuser_id, container_id
+                ))
+            })
     }
 
     /// List all subusers for a container
@@ -414,19 +470,13 @@ impl SubuserManager {
     ) -> Result<Subuser> {
         let mut subusers = self.subusers.write().await;
 
-        let container_subusers = subusers
-            .get_mut(container_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "No subusers found for container {}",
-                container_id
-            )))?;
+        let container_subusers = subusers.get_mut(container_id).ok_or_else(|| {
+            NodeError::InvalidInput(format!("No subusers found for container {}", container_id))
+        })?;
 
         let subuser = container_subusers
             .get_mut(subuser_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Subuser {} not found",
-                subuser_id
-            )))?;
+            .ok_or_else(|| NodeError::InvalidInput(format!("Subuser {} not found", subuser_id)))?;
 
         subuser.permissions = permissions;
         subuser.updated_at = Utc::now();
@@ -505,11 +555,7 @@ impl SubuserManager {
     }
 
     /// Get subuser by user_id and container_id
-    pub async fn get_subuser_by_user(
-        &self,
-        container_id: &str,
-        user_id: &str,
-    ) -> Option<Subuser> {
+    pub async fn get_subuser_by_user(&self, container_id: &str, user_id: &str) -> Option<Subuser> {
         let subusers = self.subusers.read().await;
 
         if let Some(container_subusers) = subusers.get(container_id) {
@@ -532,24 +578,18 @@ impl SubuserManager {
     ) -> Result<()> {
         let mut subusers = self.subusers.write().await;
 
-        let container_subusers = subusers
-            .get_mut(container_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "No subusers found for container {}",
-                container_id
-            )))?;
+        let container_subusers = subusers.get_mut(container_id).ok_or_else(|| {
+            NodeError::InvalidInput(format!("No subusers found for container {}", container_id))
+        })?;
 
         let subuser = container_subusers
             .get_mut(subuser_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Subuser {} not found",
-                subuser_id
-            )))?;
+            .ok_or_else(|| NodeError::InvalidInput(format!("Subuser {} not found", subuser_id)))?;
 
         // Check if subuser has SFTP permission
         if !subuser.has_permission(Permission::FileSftp) {
             return Err(NodeError::InvalidInput(
-                "Subuser does not have SFTP permission".to_string()
+                "Subuser does not have SFTP permission".to_string(),
             ));
         }
 
@@ -576,7 +616,9 @@ impl SubuserManager {
         if let Some(container_subusers) = subusers.get(container_id) {
             for subuser in container_subusers.values() {
                 // Username could be subuser_id, user_id, or email
-                if (subuser.id == username || subuser.user_id == username || subuser.email == username)
+                if (subuser.id == username
+                    || subuser.user_id == username
+                    || subuser.email == username)
                     && subuser.has_permission(Permission::FileSftp)
                     && subuser.verify_sftp_password(password)
                 {
@@ -613,8 +655,11 @@ mod tests {
 
     #[test]
     fn test_permission_from_str() {
-        assert_eq!(Permission::from_str("power.start"), Some(Permission::PowerStart));
-        assert_eq!(Permission::from_str("invalid"), None);
+        assert_eq!(
+            Permission::parse_permission("power.start"),
+            Some(Permission::PowerStart)
+        );
+        assert_eq!(Permission::parse_permission("invalid"), None);
     }
 
     #[tokio::test]
@@ -637,10 +682,7 @@ mod tests {
         assert_eq!(subuser.permissions, permissions);
 
         // Get subuser
-        let retrieved = manager
-            .get_subuser("container-1", &subuser.id)
-            .await
-            .unwrap();
+        let retrieved = manager.get_subuser("container-1", &subuser.id).await.unwrap();
         assert_eq!(retrieved.id, subuser.id);
     }
 
@@ -716,15 +758,12 @@ mod tests {
             .unwrap();
 
         // Verify
-        let verified = manager
-            .verify_sftp_credentials("container-1", &subuser.id, "secret123")
-            .await;
+        let verified =
+            manager.verify_sftp_credentials("container-1", &subuser.id, "secret123").await;
         assert!(verified.is_some());
 
         // Wrong password
-        let wrong = manager
-            .verify_sftp_credentials("container-1", &subuser.id, "wrongpass")
-            .await;
+        let wrong = manager.verify_sftp_credentials("container-1", &subuser.id, "wrongpass").await;
         assert!(wrong.is_none());
     }
 }

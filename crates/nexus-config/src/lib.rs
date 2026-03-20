@@ -7,10 +7,10 @@ use std::collections::HashMap;
 static MEMORY_FORMAT_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\d+(\.\d+)?(Mi|Gi|Ti)$").expect("Invalid memory format regex"));
 
-pub mod errors;
 pub mod diagnostics;
-pub use errors::NexusPanelError;
+pub mod errors;
 pub use diagnostics::Diagnostics;
+pub use errors::NexusPanelError;
 
 /// Blueprint - Native game server configuration format
 /// Superior alternative to Pterodactyl eggs with performance optimizations,
@@ -231,19 +231,10 @@ pub struct Variable {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ValidationRule {
-    Port {
-        range: (u16, u16),
-    },
-    Regex {
-        pattern: String,
-    },
-    Enum {
-        values: Vec<String>,
-    },
-    Numeric {
-        min: Option<i64>,
-        max: Option<i64>,
-    },
+    Port { range: (u16, u16) },
+    Regex { pattern: String },
+    Enum { values: Vec<String> },
+    Numeric { min: Option<i64>, max: Option<i64> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,18 +380,9 @@ pub enum HealthCheck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReadyCheck {
-    LogPattern {
-        pattern: String,
-        timeout: String,
-    },
-    Port {
-        port: String,
-        timeout: String,
-    },
-    File {
-        path: String,
-        timeout: String,
-    },
+    LogPattern { pattern: String, timeout: String },
+    Port { port: String, timeout: String },
+    File { path: String, timeout: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1008,7 +990,11 @@ mod tests {
                 image_pull_secret: None,
             },
             resources: Resources {
-                cpu: CpuResources { min: 1000, max: 2000, shares: 1024 },
+                cpu: CpuResources {
+                    min: 1000,
+                    max: 2000,
+                    shares: 1024,
+                },
                 memory: MemoryResources {
                     min: "2Gi".to_string(),
                     max: "4Gi".to_string(),
@@ -1030,9 +1016,16 @@ mod tests {
                 startup_timeout: None,
             },
             variables: vec![],
-            networking: Networking { ports: vec![], dns: vec![], ipv6: false },
+            networking: Networking {
+                ports: vec![],
+                dns: vec![],
+                ipv6: false,
+            },
             security: Security {
-                capabilities: Capabilities { drop: vec!["ALL".to_string()], add: vec![] },
+                capabilities: Capabilities {
+                    drop: vec!["ALL".to_string()],
+                    add: vec![],
+                },
                 read_only_root: false,
                 no_new_privileges: true,
                 seccomp_profile: "runtime/default".to_string(),

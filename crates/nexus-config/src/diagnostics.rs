@@ -91,13 +91,29 @@ impl Diagnostics {
     fn check_required_commands() -> DiagnosticResult {
         let mut checks = Vec::new();
         let required = vec![
-            ("git", "Git version control", "apt-get install git (Ubuntu) or brew install git (macOS)"),
-            ("curl", "HTTP client for downloads", "apt-get install curl (Ubuntu) or brew install curl (macOS)"),
+            (
+                "git",
+                "Git version control",
+                "apt-get install git (Ubuntu) or brew install git (macOS)",
+            ),
+            (
+                "curl",
+                "HTTP client for downloads",
+                "apt-get install curl (Ubuntu) or brew install curl (macOS)",
+            ),
         ];
 
         let optional = vec![
-            ("docker", "Docker container runtime", "See https://docs.docker.com/engine/install/"),
-            ("jq", "JSON processor for validation", "apt-get install jq (Ubuntu) or brew install jq (macOS)"),
+            (
+                "docker",
+                "Docker container runtime",
+                "See https://docs.docker.com/engine/install/",
+            ),
+            (
+                "jq",
+                "JSON processor for validation",
+                "apt-get install jq (Ubuntu) or brew install jq (macOS)",
+            ),
             ("yamllint", "YAML validator", "pip install yamllint"),
         ];
 
@@ -131,14 +147,10 @@ impl Diagnostics {
             Ok(output) if output.status.success() => {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 // Get version if possible
-                let version = Command::new(cmd)
-                    .arg("--version")
-                    .output()
-                    .ok()
-                    .and_then(|v| {
-                        let version_str = String::from_utf8_lossy(&v.stdout);
-                        version_str.lines().next().map(|s| s.to_string())
-                    });
+                let version = Command::new(cmd).arg("--version").output().ok().and_then(|v| {
+                    let version_str = String::from_utf8_lossy(&v.stdout);
+                    version_str.lines().next().map(|s| s.to_string())
+                });
 
                 Check {
                     name: format!("{} ({})", cmd, desc),
@@ -151,7 +163,7 @@ impl Diagnostics {
             _ => Check {
                 name: format!("{} ({})", cmd, desc),
                 status: if required { Status::Fail } else { Status::Warn },
-                message: format!("✗ Not found"),
+                message: "✗ Not found".to_string(),
                 solution: Some(format!("Install {}: {}", cmd, install)),
                 details: None,
             },
@@ -252,7 +264,11 @@ impl Diagnostics {
         }
         checks.push(Check {
             name: "Write Permissions".to_string(),
-            status: if can_write { Status::Pass } else { Status::Fail },
+            status: if can_write {
+                Status::Pass
+            } else {
+                Status::Fail
+            },
             message: if can_write {
                 "✓ Can write to current directory".to_string()
             } else {
@@ -302,19 +318,13 @@ impl Diagnostics {
         let mut checks = Vec::new();
 
         // Check DNS resolution
-        let dns_check = Command::new("ping")
-            .args(["-c", "1", "-W", "2", "1.1.1.1"])
-            .output();
+        let dns_check = Command::new("ping").args(["-c", "1", "-W", "2", "1.1.1.1"]).output();
 
         let dns_ok = dns_check.as_ref().map(|o| o.status.success()).unwrap_or(false);
 
         checks.push(Check {
             name: "Network Connectivity".to_string(),
-            status: if dns_ok {
-                Status::Pass
-            } else {
-                Status::Warn
-            },
+            status: if dns_ok { Status::Pass } else { Status::Warn },
             message: if dns_ok {
                 "✓ Network is accessible".to_string()
             } else {
@@ -326,7 +336,15 @@ impl Diagnostics {
 
         // Check GitHub access
         let github_check = Command::new("curl")
-            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-I", "https://github.com"])
+            .args([
+                "-s",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-I",
+                "https://github.com",
+            ])
             .output();
 
         if let Ok(output) = github_check {
@@ -405,7 +423,9 @@ impl Diagnostics {
                     name: "Docker".to_string(),
                     status: Status::Info,
                     message: "Not installed (optional for development)".to_string(),
-                    solution: Some("Install Docker: https://docs.docker.com/engine/install/".to_string()),
+                    solution: Some(
+                        "Install Docker: https://docs.docker.com/engine/install/".to_string(),
+                    ),
                     details: None,
                 });
             }
@@ -443,7 +463,10 @@ impl Diagnostics {
                     Status::Info => "ℹ",
                 };
 
-                println!("{}{} {}: {}", indent, status_icon, check.name, check.message);
+                println!(
+                    "{}{} {}: {}",
+                    indent, status_icon, check.name, check.message
+                );
 
                 if let Some(solution) = &check.solution {
                     println!("{}  💡 {}", indent, solution);

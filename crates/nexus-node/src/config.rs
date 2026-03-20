@@ -52,7 +52,7 @@ fn validate_config(config: &GameConfig) -> Result<()> {
             if let Ok(port_num) = port.internal.parse::<u16>() {
                 if port_num == 0 {
                     return Err(NodeError::InvalidConfig {
-                        reason: format!("Invalid port binding: internal port cannot be 0"),
+                        reason: "Invalid port binding: internal port cannot be 0".to_string(),
                     });
                 }
             }
@@ -65,8 +65,8 @@ fn validate_config(config: &GameConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_load_valid_config() {

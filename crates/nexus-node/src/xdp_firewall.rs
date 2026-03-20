@@ -64,13 +64,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// XDP Firewall errors
 #[derive(Error, Debug)]
@@ -293,11 +293,11 @@ impl FirewallAction {
     /// Convert to XDP return code
     pub fn to_xdp_code(&self) -> u32 {
         match self {
-            Self::Pass => 2,    // XDP_PASS
-            Self::Drop => 1,    // XDP_DROP
-            Self::Abort => 0,   // XDP_ABORTED
+            Self::Pass => 2,     // XDP_PASS
+            Self::Drop => 1,     // XDP_DROP
+            Self::Abort => 0,    // XDP_ABORTED
             Self::Redirect => 4, // XDP_REDIRECT
-            Self::Tx => 3,      // XDP_TX
+            Self::Tx => 3,       // XDP_TX
         }
     }
 }
@@ -383,14 +383,11 @@ impl FirewallRule {
     }
 
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
         match self {
             Self::IpRule { expires_at, .. } | Self::CidrRule { expires_at, .. } => {
-                expires_at.map_or(false, |exp| now > exp)
+                expires_at.is_some_and(|exp| now > exp)
             }
             _ => false,
         }
@@ -614,8 +611,7 @@ impl XdpFirewall {
         // 3. Initialize BPF maps with rules
         // 4. Start the stats collection task
 
-        self.running
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
         *self.start_time.write().await = Some(Instant::now());
 
         info!("XDP firewall started successfully");
@@ -635,8 +631,7 @@ impl XdpFirewall {
         // 2. Clean up BPF maps
         // 3. Stop stats collection
 
-        self.running
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
         *self.start_time.write().await = None;
 
         info!("XDP firewall stopped");
@@ -696,10 +691,7 @@ impl XdpFirewall {
         drop(rules);
 
         // Also cleanup expired blocked IPs
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
         let mut blocked = self.blocked_ips.write().await;
         blocked.retain(|_, info| info.expires_at.map_or(true, |exp| now <= exp));
@@ -714,10 +706,7 @@ impl XdpFirewall {
         duration: Option<Duration>,
         reason: &str,
     ) -> Result<(), XdpError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
         let expires_at = duration.map(|d| now + d.as_secs());
 
@@ -757,10 +746,7 @@ impl XdpFirewall {
     pub async fn is_blocked(&self, ip: &IpAddr) -> bool {
         let blocked = self.blocked_ips.read().await;
         if let Some(info) = blocked.get(ip) {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             info.expires_at.map_or(true, |exp| now <= exp)
         } else {
             false
@@ -807,9 +793,13 @@ impl XdpFirewall {
         query_port: Option<u16>,
         rcon_port: Option<u16>,
     ) -> Result<String, XdpError> {
-        let (pps_limit, syn_limit) = game_type.recommended_rate_limits();
+        let (pps_limit, _syn_limit) = game_type.recommended_rate_limits();
 
-        let rule_id = format!("game_{}_{}", format!("{:?}", game_type).to_lowercase(), port);
+        let rule_id = format!(
+            "game_{}_{}",
+            format!("{:?}", game_type).to_lowercase(),
+            port
+        );
 
         let rule = FirewallRule::GameServerRule {
             id: rule_id.clone(),
@@ -897,8 +887,7 @@ impl XdpFirewall {
     pub async fn export_rules(&self) -> Result<String, XdpError> {
         let rules = self.rules.read().await;
         let rules_vec: Vec<_> = rules.values().collect();
-        serde_json::to_string_pretty(&rules_vec)
-            .map_err(|e| XdpError::ConfigError(e.to_string()))
+        serde_json::to_string_pretty(&rules_vec).map_err(|e| XdpError::ConfigError(e.to_string()))
     }
 
     /// Import rules from JSON
@@ -923,13 +912,9 @@ pub fn parse_cidr(cidr: &str) -> Result<(IpAddr, u8), XdpError> {
         return Err(XdpError::InvalidCidr(cidr.to_string()));
     }
 
-    let ip: IpAddr = parts[0]
-        .parse()
-        .map_err(|_| XdpError::InvalidCidr(cidr.to_string()))?;
+    let ip: IpAddr = parts[0].parse().map_err(|_| XdpError::InvalidCidr(cidr.to_string()))?;
 
-    let prefix: u8 = parts[1]
-        .parse()
-        .map_err(|_| XdpError::InvalidCidr(cidr.to_string()))?;
+    let prefix: u8 = parts[1].parse().map_err(|_| XdpError::InvalidCidr(cidr.to_string()))?;
 
     let max_prefix = if ip.is_ipv4() { 32 } else { 128 };
     if prefix > max_prefix {
@@ -995,10 +980,7 @@ mod tests {
         let firewall = XdpFirewall::new(config).unwrap();
 
         let ip: IpAddr = "192.168.1.100".parse().unwrap();
-        firewall
-            .block_ip(ip, Some(Duration::from_secs(3600)), "test")
-            .await
-            .unwrap();
+        firewall.block_ip(ip, Some(Duration::from_secs(3600)), "test").await.unwrap();
 
         assert!(firewall.is_blocked(&ip).await);
 

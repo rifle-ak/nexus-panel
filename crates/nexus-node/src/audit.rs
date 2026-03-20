@@ -31,7 +31,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 /// Audit event types
@@ -553,13 +553,10 @@ impl AuditLogger {
         config: Arc<AuditConfig>,
         _last_checksum: Arc<parking_lot::RwLock<Option<String>>>,
     ) {
-        let mut file = config.file_output.as_ref().and_then(|path| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .ok()
-        });
+        let mut file = config
+            .file_output
+            .as_ref()
+            .and_then(|path| std::fs::OpenOptions::new().create(true).append(true).open(path).ok());
 
         while let Some(event) = receiver.recv().await {
             // Serialize event

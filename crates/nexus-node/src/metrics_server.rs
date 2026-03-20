@@ -48,7 +48,8 @@ async fn metrics_handler(State(metrics): State<Arc<Metrics>>) -> impl IntoRespon
             StatusCode::INTERNAL_SERVER_ERROR,
             [(header::CONTENT_TYPE, "text/plain")],
             "Failed to encode metrics".to_string(),
-        ).into_response();
+        )
+            .into_response();
     }
 
     (
@@ -63,4 +64,3 @@ async fn metrics_handler(State(metrics): State<Arc<Metrics>>) -> impl IntoRespon
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
-

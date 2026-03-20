@@ -38,6 +38,7 @@
 //! - **Hot Reload**: Configuration updates without restart
 
 // Core modules
+pub mod backup;
 pub mod config;
 pub mod container;
 pub mod error;
@@ -47,9 +48,8 @@ pub mod health;
 pub mod metrics;
 pub mod metrics_server;
 pub mod runtime;
-pub mod secrets;
-pub mod backup;
 pub mod schedule;
+pub mod secrets;
 
 // Management modules
 pub mod allocation;
@@ -70,22 +70,18 @@ pub mod validation;
 pub mod xdp_firewall;
 
 // Core re-exports
+pub use backup::{BackupInfo, BackupManager, BackupStatus};
 pub use config::load_config;
 pub use container::{ContainerManager, ContainerState, ContainerStatus};
 pub use error::{NodeError, Result};
+pub use files::FileManager;
 pub use grpc::server::NodeServiceImpl;
-pub use health::{HealthChecker, HealthCheckResult, HealthStatus};
+pub use health::{HealthCheckResult, HealthChecker, HealthStatus};
 pub use metrics::Metrics;
 pub use metrics_server::start_metrics_server;
-pub use runtime::{
-    ContainerRuntime,
-    containerd::ContainerdRuntime,
-    mock::MockRuntime,
-};
-pub use secrets::{SecretsManager, SecretResolver, EnvSecretsManager, MemorySecretsManager};
-pub use files::FileManager;
-pub use backup::{BackupManager, BackupInfo, BackupStatus};
-pub use schedule::{ScheduleManager, ScheduleInfo, ScheduleTask, ScheduleTaskType};
+pub use runtime::{containerd::ContainerdRuntime, mock::MockRuntime, ContainerRuntime};
+pub use schedule::{ScheduleInfo, ScheduleManager, ScheduleTask, ScheduleTaskType};
+pub use secrets::{EnvSecretsManager, MemorySecretsManager, SecretResolver, SecretsManager};
 
 // Management re-exports
 pub use allocation::{Allocation, AllocationManager, AllocationPool, PortRange};
@@ -95,7 +91,9 @@ pub use subuser::{Permission, Subuser, SubuserManager};
 // Enterprise re-exports
 pub use audit::{AuditConfig, AuditEvent, AuditEventType, AuditLogger};
 pub use auth::{AuthConfig, AuthInterceptor, Claims, Identity};
-pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState};
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState,
+};
 pub use cloudflare::{CloudflareClient, CloudflareConfig, DnsRecord, SpectrumApp};
 pub use config_reload::{ConfigHolder, ConfigWatcher, EnvConfig, ReloadableConfig};
 pub use graceful::{Bulkhead, FeatureFlags, GracefulShutdown, LoadShedder, LoadShedderConfig};

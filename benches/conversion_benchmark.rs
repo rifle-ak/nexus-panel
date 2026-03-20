@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use egg_importer::{EggConverter, PterodactylEgg};
 
 /// Sample Pterodactyl egg JSON for benchmarking
@@ -95,7 +95,7 @@ fn bench_game_detection(c: &mut Criterion) {
     ];
 
     let mut group = c.benchmark_group("game_detection");
-    for (name, expected) in test_cases {
+    for (name, _expected) in test_cases {
         group.bench_with_input(BenchmarkId::new("detect", name), &name, |b, name| {
             let egg_json = format!(
                 r#"{{
@@ -112,7 +112,7 @@ fn bench_game_detection(c: &mut Criterion) {
             let converter = EggConverter::new();
             b.iter(|| {
                 let config = converter.convert(black_box(&egg)).unwrap();
-                black_box(&config.metadata.game)
+                black_box(config.metadata.game.clone())
             })
         });
     }

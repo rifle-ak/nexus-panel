@@ -13,11 +13,7 @@ pub trait ContainerRuntime: Send + Sync {
     async fn pull_image(&self, image: &str) -> Result<()>;
 
     /// Create a container from spec
-    async fn create(
-        &self,
-        id: &str,
-        spec: ContainerSpec,
-    ) -> Result<ContainerInfo>;
+    async fn create(&self, id: &str, spec: ContainerSpec) -> Result<ContainerInfo>;
 
     /// Start a container
     async fn start(&self, id: &str) -> Result<u32>; // Returns PID

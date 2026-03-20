@@ -5,10 +5,7 @@ use thiserror::Error;
 pub enum NexusPanelError {
     // ==================== File System Errors ====================
     #[error("Failed to read file: {path}\n\n💡 Solution:\n  • Check if the file exists: ls -la {path}\n  • Check file permissions: chmod 644 {path}\n  • Verify you have read access to the directory\n\nError: {error}")]
-    FileReadError {
-        path: String,
-        error: String,
-    },
+    FileReadError { path: String, error: String },
 
     #[error("Failed to write file: {path}\n\n💡 Solution:\n  • Check if the directory exists: mkdir -p {dir}\n  • Check disk space: df -h\n  • Verify write permissions: ls -ld {dir}\n\nError: {error}")]
     FileWriteError {
@@ -22,23 +19,14 @@ pub enum NexusPanelError {
 
     // ==================== Parsing Errors ====================
     #[error("Invalid Pterodactyl egg JSON: {path}\n\n❌ Parse Error:\n  {error}\n\n💡 Solution:\n  • Validate JSON syntax: cat {path} | jq .\n  • Check for trailing commas or missing quotes\n  • Ensure the file is a valid Pterodactyl egg (has 'meta', 'startup', 'variables' fields)\n  • Download a fresh copy from the source")]
-    InvalidEggJson {
-        path: String,
-        error: String,
-    },
+    InvalidEggJson { path: String, error: String },
 
     #[error("Invalid YAML config: {path}\n\n❌ Parse Error:\n  {error}\n\n💡 Solution:\n  • Check YAML syntax with: yamllint {path}\n  • Common issues: incorrect indentation, missing colons, unquoted special characters\n  • Validate the schema matches GameConfig format")]
-    InvalidYaml {
-        path: String,
-        error: String,
-    },
+    InvalidYaml { path: String, error: String },
 
     // ==================== Validation Errors ====================
     #[error("Config validation failed: {config_name}\n\n❌ Validation Errors:\n{errors}\n\n💡 Solution:\n  Fix the above issues and re-run validation")]
-    ValidationError {
-        config_name: String,
-        errors: String,
-    },
+    ValidationError { config_name: String, errors: String },
 
     #[error("Missing required field: {field} in {context}\n\n💡 Solution:\n  • Add the {field} field to your config\n  • Check example configs in ./examples/ for reference\n  • Required format: {expected_format}")]
     MissingRequiredField {
@@ -131,11 +119,19 @@ impl NexusPanelError {
 
 // Helper to convert std errors to our rich errors
 pub trait ResultExt<T> {
-    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, NexusPanelError>;
+    fn with_file_context(
+        self,
+        path: impl Into<String>,
+        operation: &str,
+    ) -> Result<T, NexusPanelError>;
 }
 
 impl<T, E: std::error::Error + 'static> ResultExt<T> for Result<T, E> {
-    fn with_file_context(self, path: impl Into<String>, operation: &str) -> Result<T, NexusPanelError> {
+    fn with_file_context(
+        self,
+        path: impl Into<String>,
+        operation: &str,
+    ) -> Result<T, NexusPanelError> {
         let path = path.into();
         self.map_err(|e| {
             if operation == "read" {

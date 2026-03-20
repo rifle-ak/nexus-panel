@@ -3,11 +3,10 @@
 //! Provides comprehensive health checks for the node daemon,
 //! including containerd connectivity, resource availability, and system health.
 
-use crate::error::{NodeError, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Health status of a component
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,9 +61,9 @@ pub struct HealthChecker {
     /// Data directory path
     data_dir: String,
     /// Minimum free disk space (bytes)
-    min_disk_space: u64,
+    _min_disk_space: u64,
     /// Minimum free memory (bytes)
-    min_memory: u64,
+    _min_memory: u64,
     /// Last check time
     last_check: Option<SystemTime>,
 }
@@ -80,8 +79,8 @@ impl HealthChecker {
         Self {
             containerd_socket,
             data_dir,
-            min_disk_space,
-            min_memory,
+            _min_disk_space: min_disk_space,
+            _min_memory: min_memory,
             last_check: None,
         }
     }
@@ -154,7 +153,10 @@ impl HealthChecker {
 
     /// Check containerd connectivity
     async fn check_containerd(&self) -> ComponentHealth {
-        debug!("Checking containerd connectivity: {}", self.containerd_socket);
+        debug!(
+            "Checking containerd connectivity: {}",
+            self.containerd_socket
+        );
 
         // Check if socket file exists
         let socket_path = Path::new(&self.containerd_socket);
@@ -205,7 +207,7 @@ impl HealthChecker {
         debug!("Checking disk space");
 
         match std::fs::metadata(&self.data_dir) {
-            Ok(metadata) => {
+            Ok(_metadata) => {
                 // Get filesystem stats
                 // Note: This is a simplified check. In production, use sysinfo or similar
                 // to get actual filesystem statistics
@@ -292,8 +294,7 @@ impl HealthChecker {
 
     /// Get time since last check
     pub fn time_since_last_check(&self) -> Option<Duration> {
-        self.last_check
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
+        self.last_check.and_then(|t| SystemTime::now().duration_since(t).ok())
     }
 }
 
@@ -330,5 +331,3 @@ mod tests {
         assert_eq!(data_dir_health.status, HealthStatus::Healthy);
     }
 }
-
-

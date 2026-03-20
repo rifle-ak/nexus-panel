@@ -33,7 +33,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Circuit breaker errors
 #[derive(Error, Debug, Clone)]
@@ -462,10 +462,7 @@ impl CircuitBreakerRegistry {
     /// Get all circuit breaker stats
     pub fn all_stats(&self) -> HashMap<String, CircuitBreakerStats> {
         let breakers = self.breakers.read();
-        breakers
-            .iter()
-            .map(|(name, breaker)| (name.clone(), breaker.stats()))
-            .collect()
+        breakers.iter().map(|(name, breaker)| (name.clone(), breaker.stats())).collect()
     }
 
     /// Force open all circuit breakers
@@ -565,9 +562,8 @@ mod tests {
     async fn test_execute_success() {
         let breaker = CircuitBreaker::new("test", CircuitBreakerConfig::default());
 
-        let result: Result<i32, CircuitBreakerError> = breaker
-            .execute(|| async { Ok::<_, std::io::Error>(42) })
-            .await;
+        let result: Result<i32, CircuitBreakerError> =
+            breaker.execute(|| async { Ok::<_, std::io::Error>(42) }).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
