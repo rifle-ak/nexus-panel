@@ -21,7 +21,7 @@
 use arc_swap::ArcSwap;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -93,9 +93,7 @@ impl<T: ReloadableConfig> ConfigHolder<T> {
     /// Update the configuration
     pub fn update(&self, new_config: T) -> Result<(), ReloadError> {
         // Validate new configuration
-        new_config
-            .validate()
-            .map_err(ReloadError::ValidationError)?;
+        new_config.validate().map_err(ReloadError::ValidationError)?;
 
         // Store previous for rollback
         let previous = self.current.load_full();
@@ -103,8 +101,7 @@ impl<T: ReloadableConfig> ConfigHolder<T> {
 
         // Swap atomically
         self.current.store(Arc::new(new_config));
-        self.reload_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.reload_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_reload.write() = Some(Instant::now());
 
         // Notify
@@ -128,9 +125,7 @@ impl<T: ReloadableConfig> ConfigHolder<T> {
     /// Get reload statistics
     pub fn stats(&self) -> ConfigStats {
         ConfigStats {
-            reload_count: self
-                .reload_count
-                .load(std::sync::atomic::Ordering::SeqCst),
+            reload_count: self.reload_count.load(std::sync::atomic::Ordering::SeqCst),
             last_reload: *self.last_reload.read(),
             has_previous: self.previous.read().is_some(),
         }
@@ -152,7 +147,7 @@ pub struct ConfigWatcher<T: ReloadableConfig + DeserializeOwned> {
     watcher: Option<RecommendedWatcher>,
     change_tx: broadcast::Sender<()>,
     debounce: Duration,
-    last_event: RwLock<Option<Instant>>,
+    _last_event: RwLock<Option<Instant>>,
 }
 
 impl<T: ReloadableConfig + DeserializeOwned> ConfigWatcher<T> {
@@ -167,7 +162,7 @@ impl<T: ReloadableConfig + DeserializeOwned> ConfigWatcher<T> {
             watcher: None,
             change_tx,
             debounce: Duration::from_millis(500),
-            last_event: RwLock::new(None),
+            _last_event: RwLock::new(None),
         })
     }
 
@@ -288,9 +283,7 @@ impl EnvConfig {
     /// Create from environment with prefix
     pub fn from_env(prefix: &str) -> Self {
         let prefix = prefix.to_uppercase();
-        let values = std::env::vars()
-            .filter(|(k, _)| k.starts_with(&prefix))
-            .collect();
+        let values = std::env::vars().filter(|(k, _)| k.starts_with(&prefix)).collect();
 
         Self { values, prefix }
     }
@@ -331,9 +324,7 @@ impl EnvConfig {
 
     /// Reload from environment
     pub fn reload(&mut self) {
-        self.values = std::env::vars()
-            .filter(|(k, _)| k.starts_with(&self.prefix))
-            .collect();
+        self.values = std::env::vars().filter(|(k, _)| k.starts_with(&self.prefix)).collect();
         info!("Environment configuration reloaded");
     }
 

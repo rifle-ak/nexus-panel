@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, info_span, warn, Instrument, Span};
+use tracing::{debug, info, info_span, warn, Instrument, Span};
 use uuid::Uuid;
 
 /// Tracing configuration
@@ -160,23 +160,18 @@ impl RequestContext {
             .map(String::from)
             .unwrap_or_else(|| request_id.clone());
 
-        let trace_id = headers
-            .get("traceparent")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|tp| {
-                // Parse W3C traceparent: version-trace_id-parent_id-flags
-                let parts: Vec<&str> = tp.split('-').collect();
-                if parts.len() >= 2 {
-                    Some(parts[1].to_string())
-                } else {
-                    None
-                }
-            });
+        let trace_id = headers.get("traceparent").and_then(|v| v.to_str().ok()).and_then(|tp| {
+            // Parse W3C traceparent: version-trace_id-parent_id-flags
+            let parts: Vec<&str> = tp.split('-').collect();
+            if parts.len() >= 2 {
+                Some(parts[1].to_string())
+            } else {
+                None
+            }
+        });
 
-        let parent_span_id = headers
-            .get("traceparent")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|tp| {
+        let parent_span_id =
+            headers.get("traceparent").and_then(|v| v.to_str().ok()).and_then(|tp| {
                 let parts: Vec<&str> = tp.split('-').collect();
                 if parts.len() >= 3 {
                     Some(parts[2].to_string())
@@ -189,17 +184,9 @@ impl RequestContext {
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-            .or_else(|| {
-                headers
-                    .get("x-real-ip")
-                    .and_then(|v| v.to_str().ok())
-                    .map(String::from)
-            });
+            .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(String::from));
 
-        let user_agent = headers
-            .get("user-agent")
-            .and_then(|v| v.to_str().ok())
-            .map(String::from);
+        let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).map(String::from);
 
         Self {
             request_id,
@@ -218,9 +205,7 @@ impl RequestContext {
 
     /// Get elapsed time since request start
     pub fn elapsed(&self) -> Duration {
-        self.start_time
-            .map(|t| t.elapsed())
-            .unwrap_or(Duration::ZERO)
+        self.start_time.map(|t| t.elapsed()).unwrap_or(Duration::ZERO)
     }
 
     /// Add an attribute
@@ -360,9 +345,7 @@ pub mod layer {
                             && !name_str.contains("secret")
                             && !name_str.contains("token")
                     })
-                    .map(|(k, v)| {
-                        format!("{}={}", k.as_str(), v.to_str().unwrap_or("<binary>"))
-                    })
+                    .map(|(k, v)| format!("{}={}", k.as_str(), v.to_str().unwrap_or("<binary>")))
                     .collect();
 
                 debug!(
@@ -525,9 +508,7 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             "traceparent",
-            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-                .parse()
-                .unwrap(),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".parse().unwrap(),
         );
 
         let ctx = RequestContext::from_headers(&headers, "/api/test");

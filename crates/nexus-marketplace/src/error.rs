@@ -18,10 +18,7 @@ pub enum MarketplaceError {
 
     /// Version not found
     #[error("Version '{version}' not found for mod '{mod_id}'")]
-    VersionNotFound {
-        mod_id: String,
-        version: String,
-    },
+    VersionNotFound { mod_id: String, version: String },
 
     /// HTTP/network error
     #[error("Network error: {0}")]
@@ -44,21 +41,15 @@ pub enum MarketplaceError {
 
     /// Authentication required
     #[error("Authentication required for {provider}")]
-    AuthRequired {
-        provider: String,
-    },
+    AuthRequired { provider: String },
 
     /// Invalid API key
     #[error("Invalid API key for {provider}")]
-    InvalidApiKey {
-        provider: String,
-    },
+    InvalidApiKey { provider: String },
 
     /// Download failed
     #[error("Failed to download mod: {reason}")]
-    DownloadFailed {
-        reason: String,
-    },
+    DownloadFailed { reason: String },
 
     /// Checksum mismatch
     #[error("Checksum mismatch for {file}: expected {expected}, got {actual}")]
@@ -70,10 +61,7 @@ pub enum MarketplaceError {
 
     /// Unsupported game
     #[error("Game '{game}' is not supported by {provider}")]
-    UnsupportedGame {
-        provider: String,
-        game: String,
-    },
+    UnsupportedGame { provider: String, game: String },
 
     /// Generic API error
     #[error("API error from {provider}: {message}")]

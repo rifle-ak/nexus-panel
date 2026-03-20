@@ -22,7 +22,6 @@
 //! validator.validate_container_id("my-container-123")?;
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
 use tracing::warn;
@@ -324,12 +323,7 @@ impl Validator {
 
         // Check characters
         for c in name.chars() {
-            if !c.is_ascii_alphanumeric()
-                && c != '-'
-                && c != '_'
-                && c != '.'
-                && c != ' '
-            {
+            if !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.' && c != ' ' {
                 return Err(ValidationError::invalid_chars(field, c.to_string()));
             }
         }
@@ -338,10 +332,7 @@ impl Validator {
         let lower = name.to_lowercase();
         for pattern in &self.dangerous_patterns {
             if lower.contains(&pattern.to_lowercase()) {
-                warn!(
-                    "Dangerous pattern '{}' detected in container name",
-                    pattern
-                );
+                warn!("Dangerous pattern '{}' detected in container name", pattern);
                 return Err(ValidationError::dangerous(field, pattern.clone()));
             }
         }
@@ -442,10 +433,7 @@ impl Validator {
 
         // Check for null bytes
         if path.contains('\0') {
-            return Err(ValidationError::dangerous(
-                field_name,
-                "null byte in path",
-            ));
+            return Err(ValidationError::dangerous(field_name, "null byte in path"));
         }
 
         // Check for control characters
@@ -527,7 +515,8 @@ impl Validator {
 
     /// Batch validate multiple fields
     pub fn validate_all(&self, validations: Vec<ValidationResult>) -> ValidationResult {
-        let errors: Vec<ValidationError> = validations.into_iter().filter_map(|r| r.err()).collect();
+        let errors: Vec<ValidationError> =
+            validations.into_iter().filter_map(|r| r.err()).collect();
 
         if errors.is_empty() {
             Ok(())
@@ -561,11 +550,15 @@ pub fn mask_sensitive(input: &str, patterns: &[&str]) -> String {
         if let Some(pos) = result.to_lowercase().find(&pattern.to_lowercase()) {
             // Find the value after the pattern
             let start = pos + pattern.len();
-            if let Some(value_start) = result[start..].find(|c: char| !c.is_whitespace() && c != ':' && c != '=') {
+            if let Some(value_start) =
+                result[start..].find(|c: char| !c.is_whitespace() && c != ':' && c != '=')
+            {
                 let value_pos = start + value_start;
                 // Find the end of the value
                 let value_end = result[value_pos..]
-                    .find(|c: char| c.is_whitespace() || c == ',' || c == '}' || c == '"' || c == '\'')
+                    .find(|c: char| {
+                        c.is_whitespace() || c == ',' || c == '}' || c == '"' || c == '\''
+                    })
                     .map(|e| value_pos + e)
                     .unwrap_or(result.len());
 

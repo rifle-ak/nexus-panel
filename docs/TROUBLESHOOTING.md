@@ -248,7 +248,7 @@ Status: 429 Too Many Requests
 
 2. Increase rate limit:
    ```bash
-   export RATE_LIMIT_REQUESTS_PER_MINUTE=2000
+   export RATE_LIMIT_PER_CLIENT_RPS=200
    ```
 
 3. Implement client-side throttling
@@ -281,7 +281,7 @@ Error: Backup failed: disk full
    grpcurl -plaintext -d '{
      "container_id": "...",
      "exclude_paths": ["/logs", "/cache", "*.tmp"]
-   }' localhost:8080 nexus.node.v1.BackupService/CreateBackup
+   }' localhost:8080 nexus.node.v1.NodeService/CreateBackup
    ```
 
 ## Logging
@@ -325,10 +325,10 @@ sudo journalctl -u nexus-node --since "1 hour ago"
 curl http://localhost:9090/health
 ```
 
-### Detailed Health
+### Detailed Health (via gRPC)
 
 ```bash
-curl http://localhost:9090/health/detailed | jq
+grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/HealthCheck
 ```
 
 ### Prometheus Metrics

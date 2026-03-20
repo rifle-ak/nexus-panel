@@ -14,13 +14,11 @@
 //! let interceptor = AuthInterceptor::new(config);
 //! ```
 
-use hmac::Hmac;
 use jsonwebtoken::{decode, DecodingKey, TokenData, Validation};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tonic::{metadata::MetadataMap, Request, Status};
 use tracing::{debug, error, info, warn};
@@ -123,20 +121,14 @@ impl Claims {
 
     /// Check if the token is expired
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         now > self.exp
     }
 
     /// Check if the token is not yet valid
     pub fn is_not_yet_valid(&self) -> bool {
         if let Some(nbf) = self.nbf {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             now < nbf
         } else {
             false
@@ -219,10 +211,7 @@ impl AuthConfig {
 
         // API Keys (comma-separated, will be hashed)
         if let Ok(keys) = std::env::var("AUTH_API_KEYS") {
-            config.api_key_hashes = keys
-                .split(',')
-                .map(|k| Self::hash_api_key(k.trim()))
-                .collect();
+            config.api_key_hashes = keys.split(',').map(|k| Self::hash_api_key(k.trim())).collect();
         }
 
         // JWT configuration
@@ -353,7 +342,11 @@ impl AuthInterceptor {
     }
 
     /// Authenticate a request
-    pub fn authenticate(&self, metadata: &MetadataMap, method: &str) -> Result<Identity, AuthError> {
+    pub fn authenticate(
+        &self,
+        metadata: &MetadataMap,
+        method: &str,
+    ) -> Result<Identity, AuthError> {
         // Check if authentication is enabled
         if !self.config.enabled {
             debug!("Authentication disabled, allowing request");
@@ -369,9 +362,9 @@ impl AuthInterceptor {
         // Try API key authentication
         if self.config.enabled_methods.contains(&AuthMethod::ApiKey) {
             if let Some(api_key) = metadata.get("x-api-key") {
-                return self.authenticate_api_key(api_key.to_str().map_err(|e| {
-                    AuthError::InvalidApiKey
-                })?);
+                return self.authenticate_api_key(
+                    api_key.to_str().map_err(|_e| AuthError::InvalidApiKey)?,
+                );
             }
         }
 
@@ -532,7 +525,9 @@ pub mod layer {
                 for (key, value) in metadata.iter() {
                     let key_str = key.as_str();
                     if let Ok(value_str) = value.to_str() {
-                        if let Ok(meta_key) = tonic::metadata::MetadataKey::from_bytes(key_str.as_bytes()) {
+                        if let Ok(meta_key) =
+                            tonic::metadata::MetadataKey::from_bytes(key_str.as_bytes())
+                        {
                             if let Ok(meta_value) = value_str.parse() {
                                 tonic_metadata.insert(meta_key, meta_value);
                             }
@@ -559,10 +554,13 @@ pub mod layer {
                     Err(e) => {
                         warn!("Authentication failed for {}: {:?}", method, e);
                         let status_code = match e {
-                            AuthError::MissingCredentials | AuthError::InvalidApiKey | AuthError::InvalidToken(_) | AuthError::TokenExpired => {
-                                http::StatusCode::UNAUTHORIZED
+                            AuthError::MissingCredentials
+                            | AuthError::InvalidApiKey
+                            | AuthError::InvalidToken(_)
+                            | AuthError::TokenExpired => http::StatusCode::UNAUTHORIZED,
+                            AuthError::InsufficientPermissions { .. } => {
+                                http::StatusCode::FORBIDDEN
                             }
-                            AuthError::InsufficientPermissions { .. } => http::StatusCode::FORBIDDEN,
                             AuthError::RateLimitExceeded => http::StatusCode::TOO_MANY_REQUESTS,
                             _ => http::StatusCode::INTERNAL_SERVER_ERROR,
                         };
@@ -598,11 +596,7 @@ impl<T> RequestIdentityExt for Request<T> {
 // Hex encoding helper (inline to avoid external dependency)
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
+        bytes.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
     }
 }
 
@@ -652,10 +646,7 @@ mod tests {
 
     #[test]
     fn test_claims_expiration() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
         let expired_claims = Claims {
             sub: "test".to_string(),

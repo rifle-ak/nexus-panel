@@ -3,14 +3,19 @@ use super::proto::{
     *,
 };
 use crate::backup::BackupManager;
+use crate::circuit_breaker::CircuitBreakerRegistry;
 use crate::container::ContainerManager;
 use crate::files::FileManager;
 use crate::health::HealthChecker;
 use crate::metrics::Metrics;
-use crate::schedule::{ScheduleManager, ScheduleTask as InternalScheduleTask, ScheduleTaskType as InternalScheduleTaskType};
+use crate::schedule::{
+    ScheduleManager, ScheduleTask as InternalScheduleTask,
+    ScheduleTaskType as InternalScheduleTaskType,
+};
+use crate::validation::Validator;
 use nexus_config::GameConfig;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
@@ -28,6 +33,8 @@ pub struct NodeServiceImpl {
     health_checker: Arc<RwLock<HealthChecker>>,
     backup_manager: Arc<BackupManager>,
     schedule_manager: Arc<ScheduleManager>,
+    circuit_breakers: Arc<CircuitBreakerRegistry>,
+    validator: Arc<Validator>,
 }
 
 impl NodeServiceImpl {
@@ -48,6 +55,32 @@ impl NodeServiceImpl {
             health_checker,
             backup_manager,
             schedule_manager,
+            circuit_breakers: Arc::new(CircuitBreakerRegistry::new(Default::default())),
+            validator: Arc::new(Validator::default()),
+        }
+    }
+
+    /// Create a new NodeService with enterprise components
+    pub fn with_enterprise(
+        manager: Arc<ContainerManager>,
+        node_id: String,
+        health_checker: Arc<RwLock<HealthChecker>>,
+        backup_manager: Arc<BackupManager>,
+        schedule_manager: Arc<ScheduleManager>,
+        circuit_breakers: Arc<CircuitBreakerRegistry>,
+        validator: Arc<Validator>,
+    ) -> Self {
+        let metrics = manager.metrics().clone();
+        Self {
+            manager,
+            node_id,
+            start_time: SystemTime::now(),
+            metrics,
+            health_checker,
+            backup_manager,
+            schedule_manager,
+            circuit_breakers,
+            validator,
         }
     }
 
@@ -73,43 +106,79 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: CreateContainer request");
 
-        // Parse GameConfig from YAML
-        let config = GameConfig::from_yaml(&req.config_yaml)
-            .map_err(|e| {
-                self.metrics.record_grpc_request("CreateContainer", "invalid_argument", start.elapsed());
-                Status::invalid_argument(format!("Invalid config: {}", e))
+        // Validate input
+        if let Some(ref id) = req.container_id {
+            self.validator.validate_container_id(id).map_err(|e| {
+                self.metrics.record_grpc_request(
+                    "CreateContainer",
+                    "invalid_argument",
+                    start.elapsed(),
+                );
+                Status::invalid_argument(format!("Invalid container ID: {}", e))
             })?;
+        }
+
+        self.validator.validate_config_yaml(&req.config_yaml).map_err(|e| {
+            self.metrics.record_grpc_request(
+                "CreateContainer",
+                "invalid_argument",
+                start.elapsed(),
+            );
+            Status::invalid_argument(format!("Invalid config: {}", e))
+        })?;
+
+        // Check circuit breaker for containerd operations
+        let breaker = self.circuit_breakers.get("containerd");
+        if !breaker.allows_request() {
+            self.metrics
+                .record_grpc_request("CreateContainer", "unavailable", start.elapsed());
+            return Err(Status::unavailable(
+                "Container runtime temporarily unavailable",
+            ));
+        }
+
+        // Parse GameConfig from YAML
+        let config = GameConfig::from_yaml(&req.config_yaml).map_err(|e| {
+            self.metrics.record_grpc_request(
+                "CreateContainer",
+                "invalid_argument",
+                start.elapsed(),
+            );
+            Status::invalid_argument(format!("Invalid config: {}", e))
+        })?;
 
         // Create container
-        let container_id = self
-            .manager
-            .create_container(&config, req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
+        let container_id =
+            self.manager.create_container(&config, req.container_id).await.map_err(|e| {
+                breaker.record_failure(&e.to_string());
+                self.metrics.record_grpc_request(
+                    "CreateContainer",
+                    "internal_error",
+                    start.elapsed(),
+                );
                 Status::internal(format!("Failed to create container: {}", e))
             })?;
 
+        breaker.record_success();
+
         // Auto-start if requested
         if req.auto_start {
-            self.manager
-                .start_container(&container_id)
-                .await
-                .map_err(|e| {
-                    self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
-                    Status::internal(format!("Failed to start container: {}", e))
-                })?;
+            self.manager.start_container(&container_id).await.map_err(|e| {
+                self.metrics.record_grpc_request(
+                    "CreateContainer",
+                    "internal_error",
+                    start.elapsed(),
+                );
+                Status::internal(format!("Failed to start container: {}", e))
+            })?;
         }
 
         // Get container state
-        let state = self
-            .manager
-            .get_state(&container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("CreateContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to get state: {}", e))
-            })?;
+        let state = self.manager.get_state(&container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("CreateContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to get state: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("CreateContainer", "ok", start.elapsed());
 
@@ -128,24 +197,39 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: StartContainer {}", req.container_id);
 
+        // Validate input
+        self.validator.validate_container_id(&req.container_id).map_err(|e| {
+            self.metrics
+                .record_grpc_request("StartContainer", "invalid_argument", start.elapsed());
+            Status::invalid_argument(format!("Invalid container ID: {}", e))
+        })?;
+
+        // Check circuit breaker
+        let breaker = self.circuit_breakers.get("containerd");
+        if !breaker.allows_request() {
+            self.metrics
+                .record_grpc_request("StartContainer", "unavailable", start.elapsed());
+            return Err(Status::unavailable(
+                "Container runtime temporarily unavailable",
+            ));
+        }
+
         // Start container
-        self.manager
-            .start_container(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("StartContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to start container: {}", e))
-            })?;
+        self.manager.start_container(&req.container_id).await.map_err(|e| {
+            breaker.record_failure(&e.to_string());
+            self.metrics
+                .record_grpc_request("StartContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to start container: {}", e))
+        })?;
+
+        breaker.record_success();
 
         // Get updated state
-        let state = self
-            .manager
-            .get_state(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("StartContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to get state: {}", e))
-            })?;
+        let state = self.manager.get_state(&req.container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("StartContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to get state: {}", e))
+        })?;
 
         let pid = state.pid.unwrap_or(0);
 
@@ -166,26 +250,41 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: StopContainer {}", req.container_id);
 
+        // Validate input
+        self.validator.validate_container_id(&req.container_id).map_err(|e| {
+            self.metrics
+                .record_grpc_request("StopContainer", "invalid_argument", start.elapsed());
+            Status::invalid_argument(format!("Invalid container ID: {}", e))
+        })?;
+
         let timeout = req.timeout_secs.or(Some(30));
 
+        // Check circuit breaker
+        let breaker = self.circuit_breakers.get("containerd");
+        if !breaker.allows_request() {
+            self.metrics
+                .record_grpc_request("StopContainer", "unavailable", start.elapsed());
+            return Err(Status::unavailable(
+                "Container runtime temporarily unavailable",
+            ));
+        }
+
         // Stop container
-        self.manager
-            .stop_container(&req.container_id, timeout)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("StopContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to stop container: {}", e))
-            })?;
+        self.manager.stop_container(&req.container_id, timeout).await.map_err(|e| {
+            breaker.record_failure(&e.to_string());
+            self.metrics
+                .record_grpc_request("StopContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to stop container: {}", e))
+        })?;
+
+        breaker.record_success();
 
         // Get updated state
-        let state = self
-            .manager
-            .get_state(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("StopContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to get state: {}", e))
-            })?;
+        let state = self.manager.get_state(&req.container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("StopContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to get state: {}", e))
+        })?;
 
         let exit_code = state.exit_code.unwrap_or(0);
 
@@ -207,23 +306,18 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: RestartContainer {}", req.container_id);
 
         // Restart container
-        self.manager
-            .restart_container(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("RestartContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to restart container: {}", e))
-            })?;
+        self.manager.restart_container(&req.container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("RestartContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to restart container: {}", e))
+        })?;
 
         // Get updated state
-        let state = self
-            .manager
-            .get_state(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("RestartContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to get state: {}", e))
-            })?;
+        let state = self.manager.get_state(&req.container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("RestartContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to get state: {}", e))
+        })?;
 
         let pid = state.pid.unwrap_or(0);
 
@@ -245,13 +339,11 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: DeleteContainer {}", req.container_id);
 
         // Delete container
-        self.manager
-            .delete_container(&req.container_id, req.force)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("DeleteContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to delete container: {}", e))
-            })?;
+        self.manager.delete_container(&req.container_id, req.force).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("DeleteContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to delete container: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("DeleteContainer", "ok", start.elapsed());
 
@@ -268,14 +360,10 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: GetContainer {}", req.container_id);
 
         // Get container state
-        let state = self
-            .manager
-            .get_state(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("GetContainer", "not_found", start.elapsed());
-                Status::not_found(format!("Container not found: {}", e))
-            })?;
+        let state = self.manager.get_state(&req.container_id).await.map_err(|e| {
+            self.metrics.record_grpc_request("GetContainer", "not_found", start.elapsed());
+            Status::not_found(format!("Container not found: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("GetContainer", "ok", start.elapsed());
 
@@ -294,16 +382,11 @@ impl NodeService for NodeServiceImpl {
         // List all containers
         let containers = self.manager.list_containers().await;
 
-        let states = containers
-            .iter()
-            .map(convert_container_state)
-            .collect();
+        let states = containers.iter().map(convert_container_state).collect();
 
         self.metrics.record_grpc_request("ListContainers", "ok", start.elapsed());
 
-        Ok(Response::new(ListContainersResponse {
-            containers: states,
-        }))
+        Ok(Response::new(ListContainersResponse { containers: states }))
     }
 
     async fn stream_logs(
@@ -386,13 +469,19 @@ impl NodeService for NodeServiceImpl {
                 }
             }
 
-            info!("StreamLogs for {} completed ({} lines)", container_id, line_count);
+            info!(
+                "StreamLogs for {} completed ({} lines)",
+                container_id, line_count
+            );
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
-    type StreamLogsStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<LogEntry, Status>>;
+    type StreamLogsStream =
+        tokio_stream::wrappers::ReceiverStream<std::result::Result<LogEntry, Status>>;
 
     async fn send_command(
         &self,
@@ -422,7 +511,8 @@ impl NodeService for NodeServiceImpl {
         }
     }
 
-    type AttachConsoleStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<ConsoleOutput, Status>>;
+    type AttachConsoleStream =
+        tokio_stream::wrappers::ReceiverStream<std::result::Result<ConsoleOutput, Status>>;
 
     async fn attach_console(
         &self,
@@ -477,7 +567,7 @@ impl NodeService for NodeServiceImpl {
                         Ok(Some(data)) => {
                             let output = ConsoleOutput {
                                 output: Some(console_output::Output::Data(
-                                    String::from_utf8_lossy(&data).to_string()
+                                    String::from_utf8_lossy(&data).to_string(),
                                 )),
                                 error: None,
                             };
@@ -505,10 +595,12 @@ impl NodeService for NodeServiceImpl {
                 }
 
                 // Send closed signal
-                let _ = tx_reader.send(Ok(ConsoleOutput {
-                    output: Some(console_output::Output::Closed(true)),
-                    error: None,
-                })).await;
+                let _ = tx_reader
+                    .send(Ok(ConsoleOutput {
+                        output: Some(console_output::Output::Closed(true)),
+                        error: None,
+                    }))
+                    .await;
             });
 
             // Handle incoming input messages
@@ -518,7 +610,11 @@ impl NodeService for NodeServiceImpl {
                         console_input::Input::Data(data) => {
                             // We can't easily write here since console is moved
                             // In a real implementation, we'd use a channel or Arc<Mutex>
-                            info!("Console input for {}: {} bytes", msg.container_id, data.len());
+                            info!(
+                                "Console input for {}: {} bytes",
+                                msg.container_id,
+                                data.len()
+                            );
                         }
                         console_input::Input::Resize(_) => {
                             let rows = msg.rows.unwrap_or(24) as u16;
@@ -534,7 +630,9 @@ impl NodeService for NodeServiceImpl {
             info!("AttachConsole for {} completed", container_id_clone);
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     async fn get_node_info(
@@ -544,11 +642,7 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         info!("gRPC: GetNodeInfo");
 
-        let uptime = self
-            .start_time
-            .elapsed()
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let uptime = self.start_time.elapsed().map(|d| d.as_secs() as i64).unwrap_or(0);
 
         // Update uptime metric
         self.metrics.update_uptime(uptime as u64);
@@ -593,10 +687,7 @@ impl NodeService for NodeServiceImpl {
 
         let mut checks = std::collections::HashMap::new();
         for (component, component_health) in &health_result.checks {
-            checks.insert(
-                component.clone(),
-                format!("{:?}", component_health.status),
-            );
+            checks.insert(component.clone(), format!("{:?}", component_health.status));
         }
 
         let message = health_result.message.unwrap_or_else(|| {
@@ -621,13 +712,11 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: SuspendContainer {}", req.container_id);
 
-        self.manager
-            .suspend_container(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("SuspendContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to suspend container: {}", e))
-            })?;
+        self.manager.suspend_container(&req.container_id).await.map_err(|e| {
+            self.metrics
+                .record_grpc_request("SuspendContainer", "internal_error", start.elapsed());
+            Status::internal(format!("Failed to suspend container: {}", e))
+        })?;
 
         let state = self
             .manager
@@ -652,23 +741,25 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: UnsuspendContainer {}", req.container_id);
 
-        self.manager
-            .unsuspend_container(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("UnsuspendContainer", "internal_error", start.elapsed());
-                Status::internal(format!("Failed to unsuspend container: {}", e))
-            })?;
+        self.manager.unsuspend_container(&req.container_id).await.map_err(|e| {
+            self.metrics.record_grpc_request(
+                "UnsuspendContainer",
+                "internal_error",
+                start.elapsed(),
+            );
+            Status::internal(format!("Failed to unsuspend container: {}", e))
+        })?;
 
         // Auto-start if requested
         if req.auto_start {
-            self.manager
-                .start_container(&req.container_id)
-                .await
-                .map_err(|e| {
-                    self.metrics.record_grpc_request("UnsuspendContainer", "internal_error", start.elapsed());
-                    Status::internal(format!("Failed to start container: {}", e))
-                })?;
+            self.manager.start_container(&req.container_id).await.map_err(|e| {
+                self.metrics.record_grpc_request(
+                    "UnsuspendContainer",
+                    "internal_error",
+                    start.elapsed(),
+                );
+                Status::internal(format!("Failed to start container: {}", e))
+            })?;
         }
 
         let state = self
@@ -698,7 +789,11 @@ impl NodeService for NodeServiceImpl {
             .reinstall_container(&req.container_id, req.preserve_data)
             .await
             .map_err(|e| {
-                self.metrics.record_grpc_request("ReinstallContainer", "internal_error", start.elapsed());
+                self.metrics.record_grpc_request(
+                    "ReinstallContainer",
+                    "internal_error",
+                    start.elapsed(),
+                );
                 Status::internal(format!("Failed to reinstall container: {}", e))
             })?;
 
@@ -728,13 +823,10 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: ListFiles {} path={}", req.container_id, req.path);
 
         let fm = self.file_manager(&req.container_id);
-        let files = fm
-            .list_files(&req.path)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("ListFiles", "error", start.elapsed());
-                Status::internal(format!("Failed to list files: {}", e))
-            })?;
+        let files = fm.list_files(&req.path).await.map_err(|e| {
+            self.metrics.record_grpc_request("ListFiles", "error", start.elapsed());
+            Status::internal(format!("Failed to list files: {}", e))
+        })?;
 
         let proto_files = files
             .into_iter()
@@ -765,10 +857,8 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: ReadFile {} path={}", req.container_id, req.path);
 
         let fm = self.file_manager(&req.container_id);
-        let (content, total_size, mime_type) = fm
-            .read_file(&req.path, req.offset, req.length)
-            .await
-            .map_err(|e| {
+        let (content, total_size, mime_type) =
+            fm.read_file(&req.path, req.offset, req.length).await.map_err(|e| {
                 self.metrics.record_grpc_request("ReadFile", "error", start.elapsed());
                 Status::internal(format!("Failed to read file: {}", e))
             })?;
@@ -792,10 +882,8 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: WriteFile {} path={}", req.container_id, req.path);
 
         let fm = self.file_manager(&req.container_id);
-        let bytes_written = fm
-            .write_file(&req.path, &req.content, req.create_dirs)
-            .await
-            .map_err(|e| {
+        let bytes_written =
+            fm.write_file(&req.path, &req.content, req.create_dirs).await.map_err(|e| {
                 self.metrics.record_grpc_request("WriteFile", "error", start.elapsed());
                 Status::internal(format!("Failed to write file: {}", e))
             })?;
@@ -815,16 +903,16 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: DeleteFile {} paths={:?}", req.container_id, req.paths);
+        info!(
+            "gRPC: DeleteFile {} paths={:?}",
+            req.container_id, req.paths
+        );
 
         let fm = self.file_manager(&req.container_id);
-        let deleted_count = fm
-            .delete(&req.paths, req.recursive)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("DeleteFile", "error", start.elapsed());
-                Status::internal(format!("Failed to delete files: {}", e))
-            })?;
+        let deleted_count = fm.delete(&req.paths, req.recursive).await.map_err(|e| {
+            self.metrics.record_grpc_request("DeleteFile", "error", start.elapsed());
+            Status::internal(format!("Failed to delete files: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("DeleteFile", "ok", start.elapsed());
 
@@ -841,15 +929,16 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: RenameFile {} {} -> {}", req.container_id, req.old_path, req.new_path);
+        info!(
+            "gRPC: RenameFile {} {} -> {}",
+            req.container_id, req.old_path, req.new_path
+        );
 
         let fm = self.file_manager(&req.container_id);
-        fm.rename(&req.old_path, &req.new_path)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("RenameFile", "error", start.elapsed());
-                Status::internal(format!("Failed to rename file: {}", e))
-            })?;
+        fm.rename(&req.old_path, &req.new_path).await.map_err(|e| {
+            self.metrics.record_grpc_request("RenameFile", "error", start.elapsed());
+            Status::internal(format!("Failed to rename file: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("RenameFile", "ok", start.elapsed());
 
@@ -863,15 +952,16 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: CopyFile {} {} -> {}", req.container_id, req.source_path, req.dest_path);
+        info!(
+            "gRPC: CopyFile {} {} -> {}",
+            req.container_id, req.source_path, req.dest_path
+        );
 
         let fm = self.file_manager(&req.container_id);
-        fm.copy(&req.source_path, &req.dest_path, req.overwrite)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("CopyFile", "error", start.elapsed());
-                Status::internal(format!("Failed to copy file: {}", e))
-            })?;
+        fm.copy(&req.source_path, &req.dest_path, req.overwrite).await.map_err(|e| {
+            self.metrics.record_grpc_request("CopyFile", "error", start.elapsed());
+            Status::internal(format!("Failed to copy file: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("CopyFile", "ok", start.elapsed());
 
@@ -885,15 +975,16 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: CreateDirectory {} path={}", req.container_id, req.path);
+        info!(
+            "gRPC: CreateDirectory {} path={}",
+            req.container_id, req.path
+        );
 
         let fm = self.file_manager(&req.container_id);
-        fm.create_directory(&req.path, req.recursive)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("CreateDirectory", "error", start.elapsed());
-                Status::internal(format!("Failed to create directory: {}", e))
-            })?;
+        fm.create_directory(&req.path, req.recursive).await.map_err(|e| {
+            self.metrics.record_grpc_request("CreateDirectory", "error", start.elapsed());
+            Status::internal(format!("Failed to create directory: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("CreateDirectory", "ok", start.elapsed());
 
@@ -907,13 +998,14 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: CompressFiles {} -> {}", req.container_id, req.output_path);
+        info!(
+            "gRPC: CompressFiles {} -> {}",
+            req.container_id, req.output_path
+        );
 
         let fm = self.file_manager(&req.container_id);
-        let (archive_path, archive_size) = fm
-            .compress(&req.paths, &req.output_path, &req.format)
-            .await
-            .map_err(|e| {
+        let (archive_path, archive_size) =
+            fm.compress(&req.paths, &req.output_path, &req.format).await.map_err(|e| {
                 self.metrics.record_grpc_request("CompressFiles", "error", start.elapsed());
                 Status::internal(format!("Failed to compress files: {}", e))
             })?;
@@ -934,7 +1026,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: DecompressFile {} {} -> {}", req.container_id, req.archive_path, req.output_dir);
+        info!(
+            "gRPC: DecompressFile {} {} -> {}",
+            req.container_id, req.archive_path, req.output_dir
+        );
 
         let fm = self.file_manager(&req.container_id);
         let files_extracted = fm
@@ -953,7 +1048,8 @@ impl NodeService for NodeServiceImpl {
         }))
     }
 
-    type DownloadFileStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+    type DownloadFileStream =
+        tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
 
     async fn download_file(
         &self,
@@ -972,7 +1068,8 @@ impl NodeService for NodeServiceImpl {
             return Err(Status::not_found(format!("File not found: {}", path)));
         }
 
-        let metadata = tokio::fs::metadata(&file_path).await
+        let metadata = tokio::fs::metadata(&file_path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to get file metadata: {}", e)))?;
         let total_size = metadata.len();
 
@@ -982,7 +1079,8 @@ impl NodeService for NodeServiceImpl {
             let mut file = match tokio::fs::File::open(&file_path).await {
                 Ok(f) => f,
                 Err(e) => {
-                    let _ = tx.send(Err(Status::internal(format!("Failed to open file: {}", e)))).await;
+                    let _ =
+                        tx.send(Err(Status::internal(format!("Failed to open file: {}", e)))).await;
                     return;
                 }
             };
@@ -1023,7 +1121,9 @@ impl NodeService for NodeServiceImpl {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     async fn upload_file(
@@ -1063,13 +1163,10 @@ impl NodeService for NodeServiceImpl {
             }
         }
 
-        let bytes_written = fm
-            .write_file(&path, &data, true)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
-                Status::internal(format!("Failed to write uploaded file: {}", e))
-            })?;
+        let bytes_written = fm.write_file(&path, &data, true).await.map_err(|e| {
+            self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
+            Status::internal(format!("Failed to write uploaded file: {}", e))
+        })?;
 
         self.metrics.record_grpc_request("UploadFile", "ok", start.elapsed());
 
@@ -1122,14 +1219,10 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: ListBackups {}", req.container_id);
 
-        let backups = self
-            .backup_manager
-            .list_backups(&req.container_id)
-            .await
-            .map_err(|e| {
-                self.metrics.record_grpc_request("ListBackups", "error", start.elapsed());
-                Status::internal(format!("Failed to list backups: {}", e))
-            })?;
+        let backups = self.backup_manager.list_backups(&req.container_id).await.map_err(|e| {
+            self.metrics.record_grpc_request("ListBackups", "error", start.elapsed());
+            Status::internal(format!("Failed to list backups: {}", e))
+        })?;
 
         let proto_backups = backups.iter().map(convert_backup_info).collect();
 
@@ -1147,7 +1240,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: RestoreBackup {} backup={}", req.container_id, req.backup_id);
+        info!(
+            "gRPC: RestoreBackup {} backup={}",
+            req.container_id, req.backup_id
+        );
 
         // Stop container if requested
         if req.stop_container {
@@ -1177,7 +1273,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: DeleteBackup {} backup={}", req.container_id, req.backup_id);
+        info!(
+            "gRPC: DeleteBackup {} backup={}",
+            req.container_id, req.backup_id
+        );
 
         self.backup_manager
             .delete_backup(&req.container_id, &req.backup_id)
@@ -1192,7 +1291,8 @@ impl NodeService for NodeServiceImpl {
         Ok(Response::new(DeleteBackupResponse { success: true }))
     }
 
-    type DownloadBackupStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
+    type DownloadBackupStream =
+        tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
 
     async fn download_backup(
         &self,
@@ -1217,7 +1317,8 @@ impl NodeService for NodeServiceImpl {
             return Err(Status::not_found("Backup file not found on disk"));
         }
 
-        let metadata = tokio::fs::metadata(&backup_path).await
+        let metadata = tokio::fs::metadata(&backup_path)
+            .await
             .map_err(|e| Status::internal(format!("Failed to get backup metadata: {}", e)))?;
         let total_size = metadata.len();
 
@@ -1227,7 +1328,12 @@ impl NodeService for NodeServiceImpl {
             let mut file = match tokio::fs::File::open(&backup_path).await {
                 Ok(f) => f,
                 Err(e) => {
-                    let _ = tx.send(Err(Status::internal(format!("Failed to open backup: {}", e)))).await;
+                    let _ = tx
+                        .send(Err(Status::internal(format!(
+                            "Failed to open backup: {}",
+                            e
+                        ))))
+                        .await;
                     return;
                 }
             };
@@ -1268,7 +1374,9 @@ impl NodeService for NodeServiceImpl {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     // Schedule management endpoints
@@ -1280,7 +1388,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: CreateSchedule {} name={}", req.container_id, req.name);
+        info!(
+            "gRPC: CreateSchedule {} name={}",
+            req.container_id, req.name
+        );
 
         let tasks: Vec<InternalScheduleTask> = req
             .tasks
@@ -1324,11 +1435,8 @@ impl NodeService for NodeServiceImpl {
 
         info!("gRPC: ListSchedules {}", req.container_id);
 
-        let schedules = self
-            .schedule_manager
-            .list_schedules(&req.container_id)
-            .await
-            .map_err(|e| {
+        let schedules =
+            self.schedule_manager.list_schedules(&req.container_id).await.map_err(|e| {
                 self.metrics.record_grpc_request("ListSchedules", "error", start.elapsed());
                 Status::internal(format!("Failed to list schedules: {}", e))
             })?;
@@ -1349,7 +1457,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: UpdateSchedule {} schedule={}", req.container_id, req.schedule_id);
+        info!(
+            "gRPC: UpdateSchedule {} schedule={}",
+            req.container_id, req.schedule_id
+        );
 
         let tasks = if req.tasks.is_empty() {
             None
@@ -1397,7 +1508,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: DeleteSchedule {} schedule={}", req.container_id, req.schedule_id);
+        info!(
+            "gRPC: DeleteSchedule {} schedule={}",
+            req.container_id, req.schedule_id
+        );
 
         self.schedule_manager
             .delete_schedule(&req.container_id, &req.schedule_id)
@@ -1419,7 +1533,10 @@ impl NodeService for NodeServiceImpl {
         let start = Instant::now();
         let req = request.into_inner();
 
-        info!("gRPC: TriggerSchedule {} schedule={}", req.container_id, req.schedule_id);
+        info!(
+            "gRPC: TriggerSchedule {} schedule={}",
+            req.container_id, req.schedule_id
+        );
 
         // Create a simple callback that sends commands via the container manager
         let manager = self.manager.clone();
@@ -1432,21 +1549,22 @@ impl NodeService for NodeServiceImpl {
                     InternalScheduleTaskType::Command => {
                         manager.send_command(&container_id, &task.payload).await
                     }
-                    InternalScheduleTaskType::Power => {
-                        match task.payload.as_str() {
-                            "start" => manager.start_container(&container_id).await,
-                            "stop" => manager.stop_container(&container_id, Some(30)).await,
-                            "restart" => manager.restart_container(&container_id).await,
-                            "kill" => manager.stop_container(&container_id, Some(0)).await,
-                            other => Err(crate::error::NodeError::InvalidInput(
-                                format!("Unknown power action: {}", other),
-                            )),
-                        }
-                    }
+                    InternalScheduleTaskType::Power => match task.payload.as_str() {
+                        "start" => manager.start_container(&container_id).await,
+                        "stop" => manager.stop_container(&container_id, Some(30)).await,
+                        "restart" => manager.restart_container(&container_id).await,
+                        "kill" => manager.stop_container(&container_id, Some(0)).await,
+                        other => Err(crate::error::NodeError::InvalidInput(format!(
+                            "Unknown power action: {}",
+                            other
+                        ))),
+                    },
                     InternalScheduleTaskType::Backup => {
                         // Backup tasks require a backup manager reference;
                         // for manual triggers, just log a warning
-                        tracing::warn!("Backup task triggered manually; use CreateBackup RPC instead");
+                        tracing::warn!(
+                            "Backup task triggered manually; use CreateBackup RPC instead"
+                        );
                         Ok(())
                     }
                 }
@@ -1544,11 +1662,7 @@ fn convert_container_state(state: &crate::container::ContainerState) -> Containe
         pid: state.pid,
         exit_code: state.exit_code,
         image: state.image.clone(),
-        created_at: state
-            .created_at
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
+        created_at: state.created_at.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
         started_at: state
             .started_at
             .map(|t| t.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64),

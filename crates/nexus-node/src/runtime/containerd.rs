@@ -3,13 +3,10 @@ use crate::error::{NodeError, Result};
 use async_trait::async_trait;
 use containerd_client::{
     services::v1::{
-        containers_client::ContainersClient,
-        images_client::ImagesClient,
-        tasks_client::TasksClient,
-        Container as ContainerdContainer,
-        GetContainerRequest, GetImageRequest, ListTasksRequest,
-        CreateTaskRequest, StartRequest, KillRequest, DeleteTaskRequest,
-        CreateContainerRequest, DeleteContainerRequest,
+        containers_client::ContainersClient, images_client::ImagesClient,
+        tasks_client::TasksClient, Container as ContainerdContainer, CreateContainerRequest,
+        CreateTaskRequest, DeleteContainerRequest, DeleteTaskRequest, GetContainerRequest,
+        GetImageRequest, KillRequest, ListTasksRequest, StartRequest,
     },
     tonic::{transport::Channel, Request},
     with_namespace,
@@ -107,9 +104,12 @@ impl ContainerRuntime for ContainerdRuntime {
         let mut client = self.images_client().await?;
 
         // Check if image already exists
-        let req = with_namespace!(GetImageRequest {
-            name: image.to_string(),
-        }, &self.namespace);
+        let req = with_namespace!(
+            GetImageRequest {
+                name: image.to_string(),
+            },
+            &self.namespace
+        );
 
         match client.get(req).await {
             Ok(_) => {
@@ -162,14 +162,16 @@ impl ContainerRuntime for ContainerdRuntime {
             ..Default::default()
         };
 
-        let req = with_namespace!(CreateContainerRequest {
-            container: Some(container),
-        }, &self.namespace);
+        let req = with_namespace!(
+            CreateContainerRequest {
+                container: Some(container),
+            },
+            &self.namespace
+        );
 
-        client
-            .create(req)
-            .await
-            .map_err(|e| NodeError::ContainerdError(format!("Failed to create container: {}", e)))?;
+        client.create(req).await.map_err(|e| {
+            NodeError::ContainerdError(format!("Failed to create container: {}", e))
+        })?;
 
         info!("Successfully created container: {}", id);
 
@@ -187,10 +189,13 @@ impl ContainerRuntime for ContainerdRuntime {
         let mut tasks_client = self.tasks_client().await?;
 
         // Create task for the container
-        let req = with_namespace!(CreateTaskRequest {
-            container_id: id.to_string(),
-            ..Default::default()
-        }, &self.namespace);
+        let req = with_namespace!(
+            CreateTaskRequest {
+                container_id: id.to_string(),
+                ..Default::default()
+            },
+            &self.namespace
+        );
 
         let task_response = tasks_client
             .create(req)
@@ -201,10 +206,13 @@ impl ContainerRuntime for ContainerdRuntime {
         let pid = task_response.pid;
 
         // Start the task
-        let req = with_namespace!(StartRequest {
-            container_id: id.to_string(),
-            ..Default::default()
-        }, &self.namespace);
+        let req = with_namespace!(
+            StartRequest {
+                container_id: id.to_string(),
+                ..Default::default()
+            },
+            &self.namespace
+        );
 
         tasks_client
             .start(req)
@@ -216,16 +224,22 @@ impl ContainerRuntime for ContainerdRuntime {
     }
 
     async fn stop(&self, id: &str, timeout_secs: u32) -> Result<i32> {
-        info!("[Containerd] Stopping container: {} (timeout: {}s)", id, timeout_secs);
+        info!(
+            "[Containerd] Stopping container: {} (timeout: {}s)",
+            id, timeout_secs
+        );
 
         let mut tasks_client = self.tasks_client().await?;
 
         // Send SIGTERM to gracefully stop
-        let req = with_namespace!(KillRequest {
-            container_id: id.to_string(),
-            signal: 15, // SIGTERM
-            ..Default::default()
-        }, &self.namespace);
+        let req = with_namespace!(
+            KillRequest {
+                container_id: id.to_string(),
+                signal: 15, // SIGTERM
+                ..Default::default()
+            },
+            &self.namespace
+        );
 
         if let Err(e) = tasks_client.kill(req).await {
             warn!("Failed to send SIGTERM to container {}: {}", id, e);
@@ -237,9 +251,12 @@ impl ContainerRuntime for ContainerdRuntime {
 
         let exit_code = loop {
             // Check if task still exists
-            let req = with_namespace!(ListTasksRequest {
-                filter: format!("id=={}", id),
-            }, &self.namespace);
+            let req = with_namespace!(
+                ListTasksRequest {
+                    filter: format!("id=={}", id),
+                },
+                &self.namespace
+            );
 
             let response = tasks_client
                 .list(req)
@@ -255,25 +272,31 @@ impl ContainerRuntime for ContainerdRuntime {
             let task = &response.tasks[0];
             // Check if task status is stopped (status field is i32, not enum)
             // Status values: Unknown=0, Created=1, Running=2, Stopped=3, Paused=4, Pausing=5
-            if task.status == 3 { // Stopped
+            if task.status == 3 {
+                // Stopped
                 break task.exit_status as i32;
             }
 
             // Check timeout
             if start_time.elapsed() >= timeout {
-                warn!("Container {} did not stop within {}s, sending SIGKILL", id, timeout_secs);
+                warn!(
+                    "Container {} did not stop within {}s, sending SIGKILL",
+                    id, timeout_secs
+                );
 
                 // Force kill with SIGKILL
-                let req = with_namespace!(KillRequest {
-                    container_id: id.to_string(),
-                    signal: 9, // SIGKILL
-                    ..Default::default()
-                }, &self.namespace);
+                let req = with_namespace!(
+                    KillRequest {
+                        container_id: id.to_string(),
+                        signal: 9, // SIGKILL
+                        ..Default::default()
+                    },
+                    &self.namespace
+                );
 
-                tasks_client
-                    .kill(req)
-                    .await
-                    .map_err(|e| NodeError::ContainerdError(format!("Failed to send SIGKILL: {}", e)))?;
+                tasks_client.kill(req).await.map_err(|e| {
+                    NodeError::ContainerdError(format!("Failed to send SIGKILL: {}", e))
+                })?;
 
                 break 137; // Standard exit code for SIGKILL
             }
@@ -282,16 +305,22 @@ impl ContainerRuntime for ContainerdRuntime {
         };
 
         // Delete the task
-        let req = with_namespace!(DeleteTaskRequest {
-            container_id: id.to_string(),
-        }, &self.namespace);
+        let req = with_namespace!(
+            DeleteTaskRequest {
+                container_id: id.to_string(),
+            },
+            &self.namespace
+        );
 
         tasks_client
             .delete(req)
             .await
             .map_err(|e| NodeError::ContainerdError(format!("Failed to delete task: {}", e)))?;
 
-        info!("Successfully stopped container: {} (exit code: {})", id, exit_code);
+        info!(
+            "Successfully stopped container: {} (exit code: {})",
+            id, exit_code
+        );
         Ok(exit_code)
     }
 
@@ -302,23 +331,26 @@ impl ContainerRuntime for ContainerdRuntime {
         let mut containers_client = self.containers_client().await?;
 
         // Try to delete task first (if it exists)
-        let req = with_namespace!(DeleteTaskRequest {
-            container_id: id.to_string(),
-        }, &self.namespace);
+        let req = with_namespace!(
+            DeleteTaskRequest {
+                container_id: id.to_string(),
+            },
+            &self.namespace
+        );
 
         if let Err(e) = tasks_client.delete(req).await {
             debug!("Failed to delete task (may not exist): {}", e);
         }
 
         // Delete the container
-        let req = with_namespace!(DeleteContainerRequest {
-            id: id.to_string(),
-        }, &self.namespace);
+        let req = with_namespace!(
+            DeleteContainerRequest { id: id.to_string() },
+            &self.namespace
+        );
 
-        containers_client
-            .delete(req)
-            .await
-            .map_err(|e| NodeError::ContainerdError(format!("Failed to delete container: {}", e)))?;
+        containers_client.delete(req).await.map_err(|e| {
+            NodeError::ContainerdError(format!("Failed to delete container: {}", e))
+        })?;
 
         info!("Successfully deleted container: {}", id);
         Ok(())
@@ -331,9 +363,7 @@ impl ContainerRuntime for ContainerdRuntime {
         let mut tasks_client = self.tasks_client().await?;
 
         // Get container info
-        let req = with_namespace!(GetContainerRequest {
-            id: id.to_string(),
-        }, &self.namespace);
+        let req = with_namespace!(GetContainerRequest { id: id.to_string() }, &self.namespace);
 
         let _container = containers_client
             .get(req)
@@ -342,9 +372,12 @@ impl ContainerRuntime for ContainerdRuntime {
             .into_inner();
 
         // Get task info (if exists)
-        let req = with_namespace!(ListTasksRequest {
-            filter: format!("id=={}", id),
-        }, &self.namespace);
+        let req = with_namespace!(
+            ListTasksRequest {
+                filter: format!("id=={}", id),
+            },
+            &self.namespace
+        );
 
         let tasks_response = tasks_client
             .list(req)
@@ -365,7 +398,8 @@ impl ContainerRuntime for ContainerdRuntime {
             };
 
             let pid = if task.pid > 0 { Some(task.pid) } else { None };
-            let exit_code = if task.status == 3 { // Stopped
+            let exit_code = if task.status == 3 {
+                // Stopped
                 Some(task.exit_status as i32)
             } else {
                 None
@@ -395,7 +429,10 @@ impl ContainerRuntime for ContainerdRuntime {
     }
 
     async fn attach_bidirectional(&self, id: &str) -> Result<Box<dyn BidirectionalConsole>> {
-        info!("[Containerd] Attaching to container (bidirectional): {}", id);
+        info!(
+            "[Containerd] Attaching to container (bidirectional): {}",
+            id
+        );
 
         // Verify container exists and is running
         let info = self.inspect(id).await?;
@@ -414,7 +451,10 @@ impl ContainerRuntime for ContainerdRuntime {
     }
 
     async fn send_command(&self, id: &str, command: &str) -> Result<()> {
-        info!("[Containerd] Sending command to container {}: {}", id, command);
+        info!(
+            "[Containerd] Sending command to container {}: {}",
+            id, command
+        );
 
         // Verify container exists and is running
         let info = self.inspect(id).await?;
@@ -448,11 +488,7 @@ fn spec_to_oci(spec: &ContainerSpec) -> Result<String> {
     process_args.extend(spec.args.clone());
 
     // Convert environment variables to "KEY=VALUE" format
-    let env: Vec<String> = spec
-        .env
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect();
+    let env: Vec<String> = spec.env.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
 
     // Build Linux resources
     let cpu_shares = spec.resources.cpu_shares;
@@ -585,21 +621,21 @@ impl ContainerdBidirectionalConsole {
         }
 
         // Standard FIFO paths used by containerd
-        let fifo_base = format!("/run/containerd/io.containerd.runtime.v2.task/{}/{}",
-            self.namespace, self.container_id);
+        let fifo_base = format!(
+            "/run/containerd/io.containerd.runtime.v2.task/{}/{}",
+            self.namespace, self.container_id
+        );
 
         let stdin_path = format!("{}/stdin", fifo_base);
         let stdout_path = format!("{}/stdout", fifo_base);
 
-        debug!("Opening FIFOs for container {}: stdin={}, stdout={}",
-            self.container_id, stdin_path, stdout_path);
+        debug!(
+            "Opening FIFOs for container {}: stdin={}, stdout={}",
+            self.container_id, stdin_path, stdout_path
+        );
 
         // Open stdin for writing (non-blocking)
-        match tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&stdin_path)
-            .await
-        {
+        match tokio::fs::OpenOptions::new().write(true).open(&stdin_path).await {
             Ok(file) => {
                 self.stdin_writer = Some(file);
             }
@@ -641,8 +677,10 @@ impl BidirectionalConsole for ContainerdBidirectionalConsole {
 
             match tokio::time::timeout(
                 tokio::time::Duration::from_millis(100),
-                reader.read_line(&mut line)
-            ).await {
+                reader.read_line(&mut line),
+            )
+            .await
+            {
                 Ok(Ok(0)) => Ok(None), // EOF
                 Ok(Ok(n)) if n > 0 => Ok(Some(line.into_bytes())),
                 Ok(Ok(_)) => Ok(None),
@@ -676,7 +714,11 @@ impl BidirectionalConsole for ContainerdBidirectionalConsole {
                 .await
                 .map_err(|e| NodeError::Internal(format!("Flush error: {}", e)))?;
 
-            debug!("Wrote {} bytes to container {} stdin", data.len(), self.container_id);
+            debug!(
+                "Wrote {} bytes to container {} stdin",
+                data.len(),
+                self.container_id
+            );
             Ok(())
         } else {
             Err(NodeError::InvalidInput(format!(

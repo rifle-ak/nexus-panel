@@ -9,11 +9,11 @@
 
 use crate::api::WhmcsApi;
 use crate::error::{Result, WhmcsError};
-use crate::{ServiceInfo, ServiceStatus, ServiceType};
+use crate::{ServiceInfo, ServiceStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Server configuration for provisioning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,34 +123,19 @@ impl ProvisioningModule {
             } else {
                 service.domain.clone()
             },
-            memory_mb: cf
-                .get("memory")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1024),
+            memory_mb: cf.get("memory").and_then(|v| v.parse().ok()).unwrap_or(1024),
             cpu: cf.get("cpu").and_then(|v| v.parse().ok()).unwrap_or(100),
-            disk_mb: cf
-                .get("disk")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10240),
+            disk_mb: cf.get("disk").and_then(|v| v.parse().ok()).unwrap_or(10240),
             slots: cf.get("slots").and_then(|v| v.parse().ok()).unwrap_or(10),
             ip: cf.get("ip").cloned(),
             port: cf.get("port").and_then(|v| v.parse().ok()),
-            additional_ports: cf
-                .get("additional_ports")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0),
+            additional_ports: cf.get("additional_ports").and_then(|v| v.parse().ok()).unwrap_or(0),
             backups_enabled: cf
                 .get("backups_enabled")
                 .map(|v| v == "1" || v.to_lowercase() == "true")
                 .unwrap_or(true),
-            backup_limit: cf
-                .get("backup_limit")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(2),
-            database_limit: cf
-                .get("database_limit")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1),
+            backup_limit: cf.get("backup_limit").and_then(|v| v.parse().ok()).unwrap_or(2),
+            database_limit: cf.get("database_limit").and_then(|v| v.parse().ok()).unwrap_or(1),
             startup_command: cf.get("startup_command").cloned(),
             environment: HashMap::new(), // Would need more complex parsing
             egg_id: cf.get("egg_id").cloned(),
@@ -175,14 +160,10 @@ impl ProvisioningModule {
         };
 
         // Update WHMCS with server ID
-        self.api
-            .update_custom_field(service_id, "server_id", &server_id)
-            .await?;
+        self.api.update_custom_field(service_id, "server_id", &server_id).await?;
 
         // Update service status to Active
-        self.api
-            .update_service_status(service_id, ServiceStatus::Active)
-            .await?;
+        self.api.update_service_status(service_id, ServiceStatus::Active).await?;
 
         info!(
             "Successfully provisioned server {} for service {}",
@@ -213,9 +194,7 @@ impl ProvisioningModule {
         self.handler.suspend_server(&server_id, reason).await?;
 
         // Update WHMCS status
-        self.api
-            .update_service_status(service_id, ServiceStatus::Suspended)
-            .await?;
+        self.api.update_service_status(service_id, ServiceStatus::Suspended).await?;
 
         info!(
             "Successfully suspended server {} for service {}",
@@ -242,9 +221,7 @@ impl ProvisioningModule {
         self.handler.unsuspend_server(&server_id).await?;
 
         // Update WHMCS status
-        self.api
-            .update_service_status(service_id, ServiceStatus::Active)
-            .await?;
+        self.api.update_service_status(service_id, ServiceStatus::Active).await?;
 
         info!(
             "Successfully unsuspended server {} for service {}",
@@ -271,14 +248,10 @@ impl ProvisioningModule {
         self.handler.terminate_server(&server_id).await?;
 
         // Update WHMCS status
-        self.api
-            .update_service_status(service_id, ServiceStatus::Terminated)
-            .await?;
+        self.api.update_service_status(service_id, ServiceStatus::Terminated).await?;
 
         // Clear server ID
-        self.api
-            .update_custom_field(service_id, "server_id", "")
-            .await?;
+        self.api.update_custom_field(service_id, "server_id", "").await?;
 
         info!(
             "Successfully terminated server {} for service {}",
@@ -297,9 +270,9 @@ impl ProvisioningModule {
         info!("Resetting password for service {}", service_id);
 
         let service = self.api.get_service(service_id).await?;
-        let server_id = service.server_id.ok_or_else(|| {
-            WhmcsError::Internal("No server ID found for service".to_string())
-        })?;
+        let server_id = service
+            .server_id
+            .ok_or_else(|| WhmcsError::Internal("No server ID found for service".to_string()))?;
 
         // Reset the password
         let new_password = self.handler.reset_password(&server_id).await?;
@@ -319,9 +292,9 @@ impl ProvisioningModule {
 
         let service = self.api.get_service(service_id).await?;
         let config = Self::parse_config(&service);
-        let server_id = service.server_id.ok_or_else(|| {
-            WhmcsError::Internal("No server ID found for service".to_string())
-        })?;
+        let server_id = service
+            .server_id
+            .ok_or_else(|| WhmcsError::Internal("No server ID found for service".to_string()))?;
 
         // Update resources
         self.handler.update_resources(&server_id, &config).await?;
@@ -344,9 +317,9 @@ impl ProvisioningModule {
 
         let service = self.api.get_service(service_id).await?;
         let config = Self::parse_config(&service);
-        let server_id = service.server_id.ok_or_else(|| {
-            WhmcsError::Internal("No server ID found for service".to_string())
-        })?;
+        let server_id = service
+            .server_id
+            .ok_or_else(|| WhmcsError::Internal("No server ID found for service".to_string()))?;
 
         // Reinstall
         self.handler.reinstall_server(&server_id, &config).await?;

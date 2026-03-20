@@ -6,6 +6,7 @@ use egg_importer::{EggConverter, PterodactylEgg};
 use nexus_config::GameConfig;
 
 // Helper to create JSON strings without raw string issues
+#[allow(dead_code)]
 fn json_str(s: &str) -> String {
     s.to_string()
 }
@@ -108,7 +109,15 @@ mod game_detection {
     fn test_detect_minecraft_variants() {
         let converter = EggConverter::new();
 
-        for name in &["Paper", "Spigot", "Bukkit", "Purpur", "Fabric", "Forge", "Minecraft Server"] {
+        for name in &[
+            "Paper",
+            "Spigot",
+            "Bukkit",
+            "Purpur",
+            "Fabric",
+            "Forge",
+            "Minecraft Server",
+        ] {
             let egg = create_egg_with_name(name);
             let config = converter.convert(&egg).unwrap();
             assert_eq!(config.metadata.game, "minecraft", "Failed for: {}", name);

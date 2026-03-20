@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 /// Database type
@@ -152,10 +152,7 @@ impl Database {
     pub fn jdbc_connection_string(&self, host: &DatabaseHost) -> String {
         match host.db_type {
             DatabaseType::MySQL | DatabaseType::MariaDB => {
-                format!(
-                    "jdbc:mysql://{}:{}/{}",
-                    host.host, host.port, self.name
-                )
+                format!("jdbc:mysql://{}:{}/{}", host.host, host.port, self.name)
             }
             DatabaseType::PostgreSQL => {
                 format!(
@@ -248,9 +245,9 @@ impl DatabaseManager {
         let host_id = if let Some(hid) = host_id {
             // Validate host exists and has capacity
             let hosts = self.hosts.read().await;
-            let host = hosts.get(hid).ok_or_else(|| {
-                NodeError::InvalidInput(format!("Host {} not found", hid))
-            })?;
+            let host = hosts
+                .get(hid)
+                .ok_or_else(|| NodeError::InvalidInput(format!("Host {} not found", hid)))?;
             if !host.is_available {
                 return Err(NodeError::InvalidInput(format!(
                     "Host {} is not available",
@@ -270,15 +267,19 @@ impl DatabaseManager {
             }
             hid.to_string()
         } else {
-            self.find_available_host().await.ok_or_else(|| {
-                NodeError::InvalidInput("No available database hosts".to_string())
-            })?
+            self.find_available_host()
+                .await
+                .ok_or_else(|| NodeError::InvalidInput("No available database hosts".to_string()))?
         };
 
         // Generate database name if not provided
-        let db_name = name
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| format!("s{}_{}", container_id.chars().take(8).collect::<String>(), Uuid::new_v4().to_string().chars().take(8).collect::<String>()));
+        let db_name = name.map(|n| n.to_string()).unwrap_or_else(|| {
+            format!(
+                "s{}_{}",
+                container_id.chars().take(8).collect::<String>(),
+                Uuid::new_v4().to_string().chars().take(8).collect::<String>()
+            )
+        });
 
         // Generate credentials
         let db_id = Uuid::new_v4().to_string();
@@ -412,7 +413,7 @@ impl DatabaseManager {
     pub async fn get_stats(&self) -> DatabaseStats {
         let hosts = self.hosts.read().await;
         let databases = self.databases.read().await;
-        let counts = self.host_database_counts.read().await;
+        let _counts = self.host_database_counts.read().await;
 
         let total_capacity: u32 = hosts.values().map(|h| h.max_databases).sum();
         let total_databases = databases.len() as u32;
@@ -494,7 +495,8 @@ pub struct DatabaseStats {
 /// Generate a secure random password
 fn generate_secure_password(length: usize) -> String {
     use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+    const CHARSET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
     let mut rng = rand::thread_rng();
     (0..length)
         .map(|_| {
@@ -519,13 +521,7 @@ mod tests {
     async fn test_register_host() {
         let manager = DatabaseManager::new();
 
-        let host = DatabaseHost::new(
-            "localhost",
-            3306,
-            DatabaseType::MySQL,
-            "root",
-            "password",
-        );
+        let host = DatabaseHost::new("localhost", 3306, DatabaseType::MySQL, "root", "password");
 
         manager.register_host(host.clone()).await.unwrap();
 
@@ -537,13 +533,7 @@ mod tests {
     async fn test_create_database() {
         let manager = DatabaseManager::new();
 
-        let host = DatabaseHost::new(
-            "localhost",
-            3306,
-            DatabaseType::MySQL,
-            "root",
-            "password",
-        );
+        let host = DatabaseHost::new("localhost", 3306, DatabaseType::MySQL, "root", "password");
         let host_id = host.id.clone();
 
         manager.register_host(host).await.unwrap();
@@ -562,13 +552,7 @@ mod tests {
     async fn test_list_container_databases() {
         let manager = DatabaseManager::new();
 
-        let host = DatabaseHost::new(
-            "localhost",
-            3306,
-            DatabaseType::MySQL,
-            "root",
-            "password",
-        );
+        let host = DatabaseHost::new("localhost", 3306, DatabaseType::MySQL, "root", "password");
         let host_id = host.id.clone();
 
         manager.register_host(host).await.unwrap();
@@ -591,13 +575,7 @@ mod tests {
     async fn test_delete_database() {
         let manager = DatabaseManager::new();
 
-        let host = DatabaseHost::new(
-            "localhost",
-            3306,
-            DatabaseType::MySQL,
-            "root",
-            "password",
-        );
+        let host = DatabaseHost::new("localhost", 3306, DatabaseType::MySQL, "root", "password");
         let host_id = host.id.clone();
 
         manager.register_host(host).await.unwrap();

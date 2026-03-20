@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 use egg_importer::{EggConverter, PterodactylEgg};
 use nexus_config::{Diagnostics, GameConfig, NexusPanelError};
 use std::path::{Path, PathBuf};
-use tracing_subscriber;
 
 #[derive(Parser)]
 #[command(name = "egg-importer")]
@@ -112,7 +111,12 @@ fn main() -> Result<()> {
             no_security_scan,
             no_firewall_rules,
         } => {
-            convert_single_egg(&input, output.as_deref(), !no_security_scan, !no_firewall_rules)?;
+            convert_single_egg(
+                &input,
+                output.as_deref(),
+                !no_security_scan,
+                !no_firewall_rules,
+            )?;
         }
         Commands::Import {
             input_dir,
@@ -180,11 +184,9 @@ fn convert_single_egg(
     println!("📦 Converting egg: {}", input.display());
 
     // Load egg
-    let egg = PterodactylEgg::from_file(input).map_err(|e| {
-        NexusPanelError::InvalidEggJson {
-            path: input.display().to_string(),
-            error: e.to_string(),
-        }
+    let egg = PterodactylEgg::from_file(input).map_err(|e| NexusPanelError::InvalidEggJson {
+        path: input.display().to_string(),
+        error: e.to_string(),
     })?;
 
     // Convert
@@ -228,7 +230,7 @@ fn convert_single_egg(
     println!("   Game: {}", config.metadata.game);
     println!("   Variables: {}", config.variables.len());
     println!("   Ports: {}", config.networking.ports.len());
-    
+
     if security_scan {
         println!("   🔒 Security: Scanned and hardened");
     }
@@ -266,7 +268,10 @@ fn import_directory(
 
         match process_egg_file(&egg_path, output_dir, &converter) {
             Ok(output_path) => {
-                println!("✅ -> {}", output_path.file_name().unwrap().to_str().unwrap());
+                println!(
+                    "✅ -> {}",
+                    output_path.file_name().unwrap().to_str().unwrap()
+                );
                 success_count += 1;
             }
             Err(e) => {
@@ -288,11 +293,7 @@ fn import_directory(
 
 /// Check if a JSON file is a Pterodactyl egg (vs config/settings files)
 fn is_egg_file(path: &Path) -> bool {
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+    let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
     // Skip known non-egg configuration files
     let non_egg_patterns = [
@@ -396,7 +397,13 @@ fn clone_and_import(
     println!("✅ Repository cloned\n");
 
     // Import from cloned directory
-    import_directory(&temp_dir, output_dir, security_scan, add_firewall_rules, true)?;
+    import_directory(
+        &temp_dir,
+        output_dir,
+        security_scan,
+        add_firewall_rules,
+        true,
+    )?;
 
     // Clean up temp directory
     std::fs::remove_dir_all(&temp_dir)?;
@@ -407,11 +414,9 @@ fn clone_and_import(
 fn validate_config(input: &Path) -> Result<()> {
     println!("🔍 Validating config: {}", input.display());
 
-    let yaml = std::fs::read_to_string(input).map_err(|e| {
-        NexusPanelError::FileReadError {
-            path: input.display().to_string(),
-            error: e.to_string(),
-        }
+    let yaml = std::fs::read_to_string(input).map_err(|e| NexusPanelError::FileReadError {
+        path: input.display().to_string(),
+        error: e.to_string(),
     })?;
 
     let config = GameConfig::from_yaml(&yaml).map_err(|e| {
@@ -434,7 +439,10 @@ fn validate_config(input: &Path) -> Result<()> {
     println!("   Image: {}", config.container.image);
     println!("   Variables: {}", config.variables.len());
     println!("   Ports: {}", config.networking.ports.len());
-    println!("   Security rules: {}", config.security.firewall_rules.len());
+    println!(
+        "   Security rules: {}",
+        config.security.firewall_rules.len()
+    );
 
     // Show warnings if any
     let warnings = check_config_warnings(&config);

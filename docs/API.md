@@ -4,6 +4,8 @@ Complete reference for the Nexus Node gRPC API.
 
 ## Service Definition
 
+All operations are served by a single unified `NodeService`:
+
 ```protobuf
 service NodeService {
   // Container Lifecycle
@@ -12,6 +14,9 @@ service NodeService {
   rpc StopContainer(StopContainerRequest) returns (StopContainerResponse);
   rpc RestartContainer(RestartContainerRequest) returns (RestartContainerResponse);
   rpc DeleteContainer(DeleteContainerRequest) returns (DeleteContainerResponse);
+  rpc SuspendContainer(SuspendContainerRequest) returns (SuspendContainerResponse);
+  rpc UnsuspendContainer(UnsuspendContainerRequest) returns (UnsuspendContainerResponse);
+  rpc ReinstallContainer(ReinstallContainerRequest) returns (ReinstallContainerResponse);
 
   // Container Queries
   rpc GetContainer(GetContainerRequest) returns (GetContainerResponse);
@@ -21,6 +26,33 @@ service NodeService {
   rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
   rpc SendCommand(SendCommandRequest) returns (SendCommandResponse);
   rpc AttachConsole(stream ConsoleInput) returns (stream ConsoleOutput);
+
+  // File Management
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  rpc RenameFile(RenameFileRequest) returns (RenameFileResponse);
+  rpc CopyFile(CopyFileRequest) returns (CopyFileResponse);
+  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse);
+  rpc CompressFiles(CompressFilesRequest) returns (CompressFilesResponse);
+  rpc DecompressFile(DecompressFileRequest) returns (DecompressFileResponse);
+  rpc DownloadFile(DownloadFileRequest) returns (stream FileChunk);
+  rpc UploadFile(stream FileChunk) returns (UploadFileResponse);
+
+  // Backup Management
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc DownloadBackup(DownloadBackupRequest) returns (stream FileChunk);
+
+  // Schedule Management
+  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse);
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+  rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
 
   // Node Operations
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
@@ -46,7 +78,7 @@ Response:
 ```json
 {
   "container_id": "minecraft-1",
-  "success": true
+  "state": { ... }
 }
 ```
 
@@ -166,8 +198,9 @@ grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/HealthCheck
 | `CREATED` | Container created but not started |
 | `RUNNING` | Container is running |
 | `STOPPED` | Container stopped normally |
+| `PAUSED` | Container is paused |
 | `FAILED` | Container crashed or failed |
-| `RESTARTING` | Container is restarting |
+| `SUSPENDED` | Container is suspended (admin action) |
 
 ## Error Codes
 
@@ -187,7 +220,14 @@ grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/HealthCheck
 ### API Key
 
 ```bash
-grpcurl -H "authorization: Bearer <api-key>" \
+grpcurl -H "x-api-key: <api-key>" \
+  -plaintext localhost:8080 nexus.node.v1.NodeService/ListContainers
+```
+
+Or via Bearer token:
+
+```bash
+grpcurl -H "authorization: Bearer <jwt-token>" \
   -plaintext localhost:8080 nexus.node.v1.NodeService/ListContainers
 ```
 
@@ -204,64 +244,20 @@ grpcurl \
 ## Rate Limiting
 
 Default limits:
-- 1000 requests/minute per client
-- 100 concurrent connections
+- 10,000 requests/second global
+- 100 requests/second per client
+- 20 concurrent requests per client
 
 Headers returned:
 - `x-ratelimit-limit`: Request limit
 - `x-ratelimit-remaining`: Remaining requests
 - `x-ratelimit-reset`: Reset timestamp
 
-## File Management Endpoints
+## File, Backup, and Schedule Endpoints
 
-```protobuf
-service FileService {
-  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
-  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
-  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
-  rpc DeleteFiles(DeleteFilesRequest) returns (DeleteFilesResponse);
-  rpc Rename(RenameRequest) returns (RenameResponse);
-  rpc Copy(CopyRequest) returns (CopyResponse);
-  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse);
-  rpc Compress(CompressRequest) returns (CompressResponse);
-  rpc Decompress(DecompressRequest) returns (DecompressResponse);
-}
-```
-
-## Backup Endpoints
-
-```protobuf
-service BackupService {
-  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
-  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
-  rpc GetBackup(GetBackupRequest) returns (GetBackupResponse);
-  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
-  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
-}
-```
-
-## Schedule Endpoints
-
-```protobuf
-service ScheduleService {
-  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
-  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
-  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse);
-  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
-  rpc TriggerSchedule(TriggerScheduleRequest) returns (TriggerScheduleResponse);
-}
-```
-
-## Marketplace Endpoints
-
-```protobuf
-service MarketplaceService {
-  rpc SearchMods(SearchModsRequest) returns (SearchModsResponse);
-  rpc GetMod(GetModRequest) returns (GetModResponse);
-  rpc DownloadMod(DownloadModRequest) returns (DownloadModResponse);
-  rpc CheckUpdates(CheckUpdatesRequest) returns (CheckUpdatesResponse);
-}
-```
+All file management, backup, and schedule RPCs are part of the unified `NodeService`
+(see the full service definition above). There are no separate `FileService`,
+`BackupService`, or `ScheduleService` services.
 
 ## Performance
 

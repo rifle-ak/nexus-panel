@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Schedule task type
@@ -45,8 +45,8 @@ impl ScheduleTaskType {
 #[derive(Debug, Clone)]
 pub struct ScheduleTask {
     pub task_type: ScheduleTaskType,
-    pub time_offset: u32,  // Seconds after schedule triggers
-    pub payload: String,    // Task-specific payload
+    pub time_offset: u32, // Seconds after schedule triggers
+    pub payload: String,  // Task-specific payload
 }
 
 /// Schedule information
@@ -64,7 +64,9 @@ pub struct ScheduleInfo {
 }
 
 /// Schedule execution callback
-pub type ScheduleCallback = Arc<dyn Fn(&str, &ScheduleTask) -> futures::future::BoxFuture<'static, Result<()>> + Send + Sync>;
+pub type ScheduleCallback = Arc<
+    dyn Fn(&str, &ScheduleTask) -> futures::future::BoxFuture<'static, Result<()>> + Send + Sync,
+>;
 
 /// Schedule manager
 pub struct ScheduleManager {
@@ -131,18 +133,14 @@ impl ScheduleManager {
         // Store the schedule
         {
             let mut schedules = self.schedules.write().await;
-            let container_schedules = schedules
-                .entry(container_id.to_string())
-                .or_insert_with(HashMap::new);
+            let container_schedules =
+                schedules.entry(container_id.to_string()).or_insert_with(HashMap::new);
             container_schedules.insert(schedule_id.clone(), schedule_info.clone());
         }
 
         info!(
             "Created schedule {} '{}' for container {} ({})",
-            schedule_id,
-            name,
-            container_id,
-            cron_expression
+            schedule_id, name, container_id, cron_expression
         );
 
         Ok(schedule_info)
@@ -162,18 +160,23 @@ impl ScheduleManager {
     }
 
     /// Get a specific schedule
-    pub async fn get_schedule(&self, container_id: &str, schedule_id: &str) -> Result<ScheduleInfo> {
+    pub async fn get_schedule(
+        &self,
+        container_id: &str,
+        schedule_id: &str,
+    ) -> Result<ScheduleInfo> {
         let schedules = self.schedules.read().await;
 
         schedules
             .get(container_id)
             .and_then(|cs| cs.get(schedule_id))
             .cloned()
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Schedule {} not found for container {}",
-                schedule_id,
-                container_id
-            )))
+            .ok_or_else(|| {
+                NodeError::InvalidInput(format!(
+                    "Schedule {} not found for container {}",
+                    schedule_id, container_id
+                ))
+            })
     }
 
     /// Update a schedule
@@ -193,19 +196,13 @@ impl ScheduleManager {
 
         let mut schedules = self.schedules.write().await;
 
-        let container_schedules = schedules
-            .get_mut(container_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "No schedules found for container {}",
-                container_id
-            )))?;
+        let container_schedules = schedules.get_mut(container_id).ok_or_else(|| {
+            NodeError::InvalidInput(format!("No schedules found for container {}", container_id))
+        })?;
 
-        let schedule = container_schedules
-            .get_mut(schedule_id)
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Schedule {} not found",
-                schedule_id
-            )))?;
+        let schedule = container_schedules.get_mut(schedule_id).ok_or_else(|| {
+            NodeError::InvalidInput(format!("Schedule {} not found", schedule_id))
+        })?;
 
         // Apply updates
         if let Some(n) = name {
@@ -233,8 +230,7 @@ impl ScheduleManager {
 
         info!(
             "Updated schedule {} for container {}",
-            schedule_id,
-            container_id
+            schedule_id, container_id
         );
 
         Ok(schedule.clone())
@@ -248,8 +244,7 @@ impl ScheduleManager {
             if container_schedules.remove(schedule_id).is_some() {
                 info!(
                     "Deleted schedule {} for container {}",
-                    schedule_id,
-                    container_id
+                    schedule_id, container_id
                 );
                 return Ok(());
             }
@@ -257,8 +252,7 @@ impl ScheduleManager {
 
         Err(NodeError::InvalidInput(format!(
             "Schedule {} not found for container {}",
-            schedule_id,
-            container_id
+            schedule_id, container_id
         )))
     }
 
@@ -273,18 +267,13 @@ impl ScheduleManager {
 
         info!(
             "Manually triggering schedule {} for container {}",
-            schedule_id,
-            container_id
+            schedule_id, container_id
         );
 
         // Execute tasks
         for task in &schedule.tasks {
             if let Err(e) = callback(container_id, task).await {
-                warn!(
-                    "Task execution failed for schedule {}: {}",
-                    schedule_id,
-                    e
-                );
+                warn!("Task execution failed for schedule {}: {}", schedule_id, e);
             }
         }
 
@@ -345,22 +334,20 @@ impl ScheduleManager {
                 for (container_id, schedule_id, tasks) in to_run {
                     info!(
                         "Executing schedule {} for container {}",
-                        schedule_id,
-                        container_id
+                        schedule_id, container_id
                     );
 
                     for task in &tasks {
                         // Wait for task offset
                         if task.time_offset > 0 {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(task.time_offset as u64)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(
+                                task.time_offset as u64,
+                            ))
+                            .await;
                         }
 
                         if let Err(e) = callback(&container_id, task).await {
-                            warn!(
-                                "Task execution failed for schedule {}: {}",
-                                schedule_id,
-                                e
-                            );
+                            warn!("Task execution failed for schedule {}: {}", schedule_id, e);
                         }
                     }
 
@@ -372,10 +359,11 @@ impl ScheduleManager {
                                 schedule.last_run_at = Some(now);
 
                                 // Calculate next run time
-                                schedule.next_run_at = Schedule::from_str(&schedule.cron_expression)
-                                    .ok()
-                                    .and_then(|s| s.upcoming(chrono::Utc).next())
-                                    .map(|dt| dt.timestamp());
+                                schedule.next_run_at =
+                                    Schedule::from_str(&schedule.cron_expression)
+                                        .ok()
+                                        .and_then(|s| s.upcoming(chrono::Utc).next())
+                                        .map(|dt| dt.timestamp());
                             }
                         }
                     }
@@ -419,13 +407,11 @@ mod tests {
     async fn test_create_and_list_schedule() {
         let manager = ScheduleManager::new();
 
-        let tasks = vec![
-            ScheduleTask {
-                task_type: ScheduleTaskType::Command,
-                time_offset: 0,
-                payload: "save-all".to_string(),
-            },
-        ];
+        let tasks = vec![ScheduleTask {
+            task_type: ScheduleTaskType::Command,
+            time_offset: 0,
+            payload: "save-all".to_string(),
+        }];
 
         // Create schedule (cron crate uses 6-part format: sec min hour day month day-of-week)
         let schedule = manager

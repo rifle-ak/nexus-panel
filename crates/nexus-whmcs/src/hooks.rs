@@ -11,7 +11,7 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -115,10 +115,7 @@ impl WebhookHandler {
 
     /// Register a callback for an event
     pub fn on<C: WebhookCallback + 'static>(&mut self, event: WebhookEvent, callback: C) {
-        self.callbacks
-            .entry(event)
-            .or_insert_with(Vec::new)
-            .push(Box::new(callback));
+        self.callbacks.entry(event).or_insert_with(Vec::new).push(Box::new(callback));
     }
 
     /// Verify webhook signature
@@ -149,9 +146,8 @@ impl WebhookHandler {
         }
 
         // Try parsing as form data
-        let params: HashMap<String, String> = url::form_urlencoded::parse(body.as_bytes())
-            .into_owned()
-            .collect();
+        let params: HashMap<String, String> =
+            url::form_urlencoded::parse(body.as_bytes()).into_owned().collect();
 
         self.parse_form_payload(&params)
     }
@@ -196,7 +192,11 @@ impl WebhookHandler {
 
     /// Parse form-encoded webhook payload
     fn parse_form_payload(&self, params: &HashMap<String, String>) -> Result<WebhookPayload> {
-        let hook_name = params.get("hook").or_else(|| params.get("event")).cloned().unwrap_or_else(|| "unknown".to_string());
+        let hook_name = params
+            .get("hook")
+            .or_else(|| params.get("event"))
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
         let event = WebhookEvent::from_hook_name(&hook_name);
 
         Ok(WebhookPayload {

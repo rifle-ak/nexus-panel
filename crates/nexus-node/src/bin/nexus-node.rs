@@ -1,26 +1,40 @@
 use nexus_node::{
-    ContainerManager, ContainerdRuntime, HealthChecker, NodeServiceImpl, start_metrics_server,
-    BackupManager, ScheduleManager,
-    // Enterprise imports
-    AuthConfig, AuditConfig, AuditLogger, AuditEvent, AuditEventType,
-    RateLimitConfig, TlsConfig, TracingConfig, GracefulShutdown,
-    CircuitBreakerConfig, CircuitBreakerRegistry, Validator,
-    auth::layer::AuthLayer, rate_limit::layer::RateLimitLayer,
+    auth::layer::AuthLayer,
+    rate_limit::layer::RateLimitLayer,
+    start_metrics_server,
     tracing_middleware::layer::TracingLayer,
+    AuditConfig,
+    AuditEvent,
+    AuditEventType,
+    AuditLogger,
+    // Enterprise imports
+    AuthConfig,
+    BackupManager,
+    CircuitBreakerConfig,
+    CircuitBreakerRegistry,
+    ContainerManager,
+    ContainerdRuntime,
+    GracefulShutdown,
+    HealthChecker,
+    NodeServiceImpl,
+    RateLimitConfig,
+    ScheduleManager,
+    TlsConfig,
+    TracingConfig,
+    Validator,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tonic::transport::Server;
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing with JSON support for production
-    let json_logs = std::env::var("LOG_FORMAT")
-        .map(|f| f.to_lowercase() == "json")
-        .unwrap_or(false);
+    let json_logs =
+        std::env::var("LOG_FORMAT").map(|f| f.to_lowercase() == "json").unwrap_or(false);
 
     if json_logs {
         tracing_subscriber::registry()
@@ -40,25 +54,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .init();
     }
 
-    info!("Starting Nexus Node v{} (Enterprise Edition)", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Nexus Node v{} (Enterprise Edition)",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Configuration from environment variables
-    let grpc_bind = std::env::var("GRPC_BIND")
-        .unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-    let metrics_bind = std::env::var("METRICS_BIND")
-        .unwrap_or_else(|_| "127.0.0.1:9090".to_string());
+    let grpc_bind = std::env::var("GRPC_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let metrics_bind =
+        std::env::var("METRICS_BIND").unwrap_or_else(|_| "127.0.0.1:9090".to_string());
     let containerd_socket = std::env::var("CONTAINERD_SOCKET")
         .unwrap_or_else(|_| "/run/containerd/containerd.sock".to_string());
-    let containerd_namespace = std::env::var("CONTAINERD_NAMESPACE")
-        .unwrap_or_else(|_| "nexus-panel".to_string());
-    let data_dir = std::env::var("DATA_DIR")
-        .unwrap_or_else(|_| "/var/lib/nexus-node".to_string());
-    let node_id = std::env::var("NODE_ID")
-        .unwrap_or_else(|_| hostname::get()
+    let containerd_namespace =
+        std::env::var("CONTAINERD_NAMESPACE").unwrap_or_else(|_| "nexus-panel".to_string());
+    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/var/lib/nexus-node".to_string());
+    let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| {
+        hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "node-1".to_string())
-        );
+    });
 
     // Health check configuration
     let min_disk_space = std::env::var("MIN_DISK_SPACE_BYTES")
@@ -86,10 +101,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  Data directory: {}", data_dir);
     info!("  Node ID: {}", node_id);
     info!("Enterprise Features:");
-    info!("  Authentication: {}", if auth_config.enabled { "enabled" } else { "disabled" });
-    info!("  Rate Limiting: {}", if rate_limit_config.enabled { "enabled" } else { "disabled" });
-    info!("  TLS: {}", if tls_config.enabled { "enabled" } else { "disabled" });
-    info!("  Audit Logging: {}", if audit_config.enabled { "enabled" } else { "disabled" });
+    info!(
+        "  Authentication: {}",
+        if auth_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    info!(
+        "  Rate Limiting: {}",
+        if rate_limit_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    info!(
+        "  TLS: {}",
+        if tls_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    info!(
+        "  Audit Logging: {}",
+        if audit_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 
     // Create data directory if it doesn't exist
     std::fs::create_dir_all(&data_dir)?;
@@ -144,6 +187,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graceful_shutdown = Arc::new(GracefulShutdown::new());
     let circuit_breakers = Arc::new(CircuitBreakerRegistry::new(circuit_breaker_config));
     let validator = Arc::new(Validator::default());
+    info!(
+        "  Circuit Breakers: {}",
+        if circuit_breakers.all_stats().is_empty() {
+            "enabled (no active breakers)"
+        } else {
+            "enabled"
+        }
+    );
 
     // Initialize audit logger
     let audit_logger = if audit_config.enabled {
@@ -154,11 +205,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Log startup audit event
     if let Some(ref logger) = audit_logger {
-        logger.log(
-            AuditEvent::new(AuditEventType::NodeStarted, "node_startup")
-                .with_node_id(&node_id)
-                .success()
-        ).await;
+        logger
+            .log(
+                AuditEvent::new(AuditEventType::NodeStarted, "node_startup")
+                    .with_node_id(&node_id)
+                    .success(),
+            )
+            .await;
     }
 
     // Initialize backup manager
@@ -168,14 +221,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize schedule manager
     let schedule_manager = Arc::new(ScheduleManager::new());
 
-    // Create gRPC service
-    let node_service = NodeServiceImpl::new(
+    // Create gRPC service with enterprise components
+    let node_service = NodeServiceImpl::with_enterprise(
         manager.clone(),
         node_id.clone(),
         health_checker.clone(),
         backup_manager.clone(),
         schedule_manager.clone(),
-    ).into_server();
+        circuit_breakers,
+        validator,
+    )
+    .into_server();
 
     // Parse bind addresses
     let grpc_addr = grpc_bind.parse()?;
@@ -197,7 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn periodic health check updates
     let health_check_handle = {
         let health_checker = health_checker.clone();
-        let metrics = metrics.clone();
+        let _metrics = metrics.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
             loop {
@@ -239,9 +295,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     *by_state.entry(state_str).or_insert(0) += 1;
                 }
 
-                let by_state_vec: Vec<(&str, usize)> = by_state.iter()
-                    .map(|(k, v)| (*k, *v))
-                    .collect();
+                let by_state_vec: Vec<(&str, usize)> =
+                    by_state.iter().map(|(k, v)| (*k, *v)).collect();
 
                 metrics.update_container_counts(total, running, &by_state_vec);
             }
@@ -251,7 +306,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build gRPC server with enterprise middleware layers
     // Note: Layers are applied bottom-up, so auth is checked first, then rate limiting, then tracing
     let shutdown = graceful_shutdown.clone();
-    let grpc_server = Server::builder()
+
+    let mut server_builder = Server::builder();
+
+    // Wire TLS if enabled
+    if tls_config.enabled {
+        let cert_path = tls_config
+            .cert_path
+            .as_ref()
+            .ok_or("TLS_CERT_PATH is required when TLS_ENABLED=true")?;
+        let key_path = tls_config
+            .key_path
+            .as_ref()
+            .ok_or("TLS_KEY_PATH is required when TLS_ENABLED=true")?;
+
+        let cert_pem = std::fs::read(cert_path)?;
+        let key_pem = std::fs::read(key_path)?;
+        let identity = Identity::from_pem(cert_pem, key_pem);
+
+        let mut tls = ServerTlsConfig::new().identity(identity);
+
+        if let Some(ca_path) = &tls_config.ca_cert_path {
+            let ca_pem = std::fs::read(ca_path)?;
+            tls = tls.client_ca_root(Certificate::from_pem(ca_pem));
+            info!("TLS enabled with mTLS (client certificate verification)");
+        } else {
+            info!("TLS enabled (server-side only)");
+        }
+
+        server_builder = server_builder.tls_config(tls)?;
+    }
+
+    let grpc_server = server_builder
         .layer(TracingLayer::new(tracing_config))
         .layer(RateLimitLayer::new(rate_limit_config))
         .layer(AuthLayer::new(auth_config))
@@ -280,11 +366,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Log shutdown audit event
     if let Some(ref logger) = audit_logger {
-        logger.log(
-            AuditEvent::new(AuditEventType::NodeStopped, "node_shutdown")
-                .with_node_id(&node_id)
-                .success()
-        ).await;
+        logger
+            .log(
+                AuditEvent::new(AuditEventType::NodeStopped, "node_shutdown")
+                    .with_node_id(&node_id)
+                    .success(),
+            )
+            .await;
     }
 
     info!("Nexus Node shutting down");

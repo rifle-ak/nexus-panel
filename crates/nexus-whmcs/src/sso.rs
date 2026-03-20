@@ -92,8 +92,8 @@ impl SsoManager {
             config,
             api,
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            token_lifetime_secs: 300,    // 5 minutes for initial token
-            session_timeout_secs: 3600,  // 1 hour session
+            token_lifetime_secs: 300,   // 5 minutes for initial token
+            session_timeout_secs: 3600, // 1 hour session
         }
     }
 
@@ -160,15 +160,16 @@ impl SsoManager {
     }
 
     /// Create a session from a token
-    pub async fn create_session(&self, token: SsoToken, source_ip: Option<&str>) -> Result<SsoSession> {
+    pub async fn create_session(
+        &self,
+        token: SsoToken,
+        source_ip: Option<&str>,
+    ) -> Result<SsoSession> {
         // Validate source IP if specified in token
         if let Some(ref token_ip) = token.source_ip {
             if let Some(ip) = source_ip {
                 if ip != token_ip {
-                    warn!(
-                        "SSO token IP mismatch: expected {}, got {}",
-                        token_ip, ip
-                    );
+                    warn!("SSO token IP mismatch: expected {}, got {}", token_ip, ip);
                     return Err(WhmcsError::InvalidSsoToken);
                 }
             }
@@ -210,9 +211,7 @@ impl SsoManager {
     pub async fn get_session(&self, session_id: &str) -> Result<SsoSession> {
         let mut sessions = self.sessions.write().await;
 
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or(WhmcsError::InvalidSsoToken)?;
+        let session = sessions.get_mut(session_id).ok_or(WhmcsError::InvalidSsoToken)?;
 
         // Check session timeout
         let timeout = Duration::seconds(self.session_timeout_secs);
@@ -236,10 +235,7 @@ impl SsoManager {
         let session = self.get_session(session_id).await?;
 
         if !session.token.has_permission(permission) {
-            warn!(
-                "Session {} lacks permission: {}",
-                session_id, permission
-            );
+            warn!("Session {} lacks permission: {}", session_id, permission);
             return Err(WhmcsError::AuthFailed(format!(
                 "Missing permission: {}",
                 permission
@@ -308,7 +304,11 @@ impl SsoManager {
 
     /// Generate SSO URL for redirecting from WHMCS
     pub fn generate_sso_url(&self, token: &str, return_url: Option<&str>) -> String {
-        let mut url = format!("{}/sso?token={}", self.config.panel_url, urlencoding::encode(token));
+        let mut url = format!(
+            "{}/sso?token={}",
+            self.config.panel_url,
+            urlencoding::encode(token)
+        );
         if let Some(ret) = return_url {
             url.push_str(&format!("&return={}", urlencoding::encode(ret)));
         }

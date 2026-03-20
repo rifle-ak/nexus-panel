@@ -27,7 +27,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Rate limiting errors
 #[derive(Error, Debug)]
@@ -126,8 +126,7 @@ impl RateLimitConfig {
 
     /// Add method-specific rate limit
     pub fn set_method_limit(&mut self, method: &str, rps: u32, burst: u32) {
-        self.method_limits
-            .insert(method.to_string(), MethodLimit { rps, burst });
+        self.method_limits.insert(method.to_string(), MethodLimit { rps, burst });
     }
 }
 
@@ -198,7 +197,9 @@ pub struct RateLimiter_ {
     /// Per-client limiters
     clients: Arc<RwLock<HashMap<String, ClientState>>>,
     /// Per-method limiters
-    methods: Arc<RwLock<HashMap<String, RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>>>,
+    methods: Arc<
+        RwLock<HashMap<String, RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>>,
+    >,
 }
 
 impl RateLimiter_ {
@@ -207,9 +208,7 @@ impl RateLimiter_ {
         let global_quota = Quota::per_second(
             NonZeroU32::new(config.global_rps).unwrap_or(NonZeroU32::new(10000).unwrap()),
         )
-        .allow_burst(
-            NonZeroU32::new(config.burst_size).unwrap_or(NonZeroU32::new(1000).unwrap()),
-        );
+        .allow_burst(NonZeroU32::new(config.burst_size).unwrap_or(NonZeroU32::new(1000).unwrap()));
 
         let mut method_limiters = HashMap::new();
         for (method, limit) in &config.method_limits {
@@ -264,12 +263,7 @@ impl RateLimiter_ {
             let methods = self.methods.read();
             if let Some(limiter) = methods.get(method) {
                 if limiter.check().is_err() {
-                    let limit = self
-                        .config
-                        .method_limits
-                        .get(method)
-                        .map(|l| l.rps)
-                        .unwrap_or(100);
+                    let limit = self.config.method_limits.get(method).map(|l| l.rps).unwrap_or(100);
                     warn!("Method rate limit exceeded for {}", method);
                     return Err(RateLimitError::LimitExceeded(limit, Duration::from_secs(1)));
                 }

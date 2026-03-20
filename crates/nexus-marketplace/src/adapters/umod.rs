@@ -9,7 +9,7 @@ use crate::MarketplaceAdapter;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Instant;
@@ -150,7 +150,11 @@ impl MarketplaceAdapter for UmodAdapter {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<ModInfo>> {
-        let mut url = format!("{}?query={}", UMOD_SEARCH_API, urlencoding::encode(&query.query));
+        let mut url = format!(
+            "{}?query={}",
+            UMOD_SEARCH_API,
+            urlencoding::encode(&query.query)
+        );
 
         // Add game filter
         if let Some(ref game) = query.game {
@@ -212,7 +216,9 @@ impl MarketplaceAdapter for UmodAdapter {
                     },
                     downloads: plugin.downloads_total,
                     rating: Some((plugin.watchers as f32 / 100.0).min(5.0)),
-                    latest_version: plugin.latest_release_version.unwrap_or_else(|| "0.0.0".to_string()),
+                    latest_version: plugin
+                        .latest_release_version
+                        .unwrap_or_else(|| "0.0.0".to_string()),
                     updated_at,
                     url: format!("{}/{}", UMOD_API_BASE, plugin.slug),
                     icon_url: plugin.icon_url,
@@ -306,7 +312,7 @@ impl MarketplaceAdapter for UmodAdapter {
         })
     }
 
-    async fn get_categories(&self, game: &str) -> Result<Vec<Category>> {
+    async fn get_categories(&self, _game: &str) -> Result<Vec<Category>> {
         // Umod categories are somewhat fixed per game
         // Return common categories
         let categories = vec![
@@ -372,13 +378,12 @@ impl MarketplaceAdapter for UmodAdapter {
         // Get mod details to find download URL
         let details = self.get_mod_details(mod_id).await?;
 
-        let version_info = details
-            .versions
-            .iter()
-            .find(|v| v.version == version)
-            .ok_or_else(|| MarketplaceError::VersionNotFound {
-                mod_id: mod_id.to_string(),
-                version: version.to_string(),
+        let version_info =
+            details.versions.iter().find(|v| v.version == version).ok_or_else(|| {
+                MarketplaceError::VersionNotFound {
+                    mod_id: mod_id.to_string(),
+                    version: version.to_string(),
+                }
             })?;
 
         info!(
@@ -451,8 +456,14 @@ mod tests {
     fn test_game_to_slug() {
         assert_eq!(UmodAdapter::game_to_slug("rust"), Some("rust"));
         assert_eq!(UmodAdapter::game_to_slug("Rust"), Some("rust"));
-        assert_eq!(UmodAdapter::game_to_slug("7daystodie"), Some("7-days-to-die"));
-        assert_eq!(UmodAdapter::game_to_slug("ark"), Some("ark-survival-evolved"));
+        assert_eq!(
+            UmodAdapter::game_to_slug("7daystodie"),
+            Some("7-days-to-die")
+        );
+        assert_eq!(
+            UmodAdapter::game_to_slug("ark"),
+            Some("ark-survival-evolved")
+        );
         assert_eq!(UmodAdapter::game_to_slug("unknown"), None);
     }
 

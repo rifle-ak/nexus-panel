@@ -7,8 +7,8 @@
 //! - Background backup creation
 
 use crate::error::{NodeError, Result};
-use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use flate2::Compression;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tar::{Archive, Builder};
 use tokio::fs;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Backup status
@@ -108,17 +108,16 @@ impl BackupManager {
         // Register the backup
         {
             let mut backups = self.backups.write().await;
-            let container_backups = backups.entry(container_id.to_string()).or_insert_with(HashMap::new);
+            let container_backups =
+                backups.entry(container_id.to_string()).or_insert_with(HashMap::new);
             container_backups.insert(backup_id.clone(), backup_info.clone());
         }
 
         // Create the backup
-        match self.create_backup_archive(
-            &container_dir,
-            &backup_path,
-            include_paths,
-            exclude_paths,
-        ).await {
+        match self
+            .create_backup_archive(&container_dir, &backup_path, include_paths, exclude_paths)
+            .await
+        {
             Ok((size, checksum)) => {
                 backup_info.size = size;
                 backup_info.checksum = checksum;
@@ -126,9 +125,7 @@ impl BackupManager {
 
                 info!(
                     "Created backup {} for container {} ({} bytes)",
-                    backup_id,
-                    container_id,
-                    size
+                    backup_id, container_id, size
                 );
             }
             Err(e) => {
@@ -137,9 +134,7 @@ impl BackupManager {
 
                 warn!(
                     "Failed to create backup {} for container {}: {}",
-                    backup_id,
-                    container_id,
-                    e
+                    backup_id, container_id, e
                 );
             }
         }
@@ -156,7 +151,7 @@ impl BackupManager {
             // Clean up failed backup file
             let _ = fs::remove_file(&backup_path).await;
             return Err(NodeError::Internal(
-                backup_info.error.unwrap_or_else(|| "Backup failed".to_string())
+                backup_info.error.unwrap_or_else(|| "Backup failed".to_string()),
             ));
         }
 
@@ -183,40 +178,39 @@ impl BackupManager {
             let mut archive = Builder::new(encoder);
 
             // Walk the directory
-            for entry in walkdir::WalkDir::new(&source)
-                .into_iter()
-                .filter_entry(|e| {
-                    let path = e.path().strip_prefix(&source)
-                        .map(|p| format!("/{}", p.display()))
-                        .unwrap_or_default();
+            for entry in walkdir::WalkDir::new(&source).into_iter().filter_entry(|e| {
+                let path = e
+                    .path()
+                    .strip_prefix(&source)
+                    .map(|p| format!("/{}", p.display()))
+                    .unwrap_or_default();
 
-                    // Check excludes
-                    for exclude in &excludes {
-                        if path.starts_with(exclude) || glob_match(exclude, &path) {
-                            return false;
-                        }
-                    }
-
-                    // Check includes (if specified)
-                    if !includes.is_empty() {
-                        for include in &includes {
-                            if path.starts_with(include) || glob_match(include, &path) {
-                                return true;
-                            }
-                        }
+                // Check excludes
+                for exclude in &excludes {
+                    if path.starts_with(exclude) || glob_match(exclude, &path) {
                         return false;
                     }
+                }
 
-                    true
-                })
-            {
+                // Check includes (if specified)
+                if !includes.is_empty() {
+                    for include in &includes {
+                        if path.starts_with(include) || glob_match(include, &path) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                true
+            }) {
                 let entry = entry?;
                 let path = entry.path();
                 let rel_path = path.strip_prefix(&source)?;
 
                 if path.is_file() {
                     archive.append_path_with_name(path, rel_path)?;
-                } else if path.is_dir() && rel_path.as_os_str().len() > 0 {
+                } else if path.is_dir() && !rel_path.as_os_str().is_empty() {
                     archive.append_dir(rel_path, path)?;
                 }
             }
@@ -242,7 +236,8 @@ impl BackupManager {
             let metadata = std::fs::metadata(&output)?;
 
             Ok::<_, anyhow::Error>((metadata.len(), checksum))
-        }).await??;
+        })
+        .await??;
 
         Ok(result)
     }
@@ -268,11 +263,12 @@ impl BackupManager {
             .get(container_id)
             .and_then(|cb| cb.get(backup_id))
             .cloned()
-            .ok_or_else(|| NodeError::InvalidInput(format!(
-                "Backup {} not found for container {}",
-                backup_id,
-                container_id
-            )))
+            .ok_or_else(|| {
+                NodeError::InvalidInput(format!(
+                    "Backup {} not found for container {}",
+                    backup_id, container_id
+                ))
+            })
     }
 
     /// Restore a backup
@@ -287,8 +283,7 @@ impl BackupManager {
         if backup.status != BackupStatus::Completed {
             return Err(NodeError::InvalidInput(format!(
                 "Backup {} is not complete (status: {:?})",
-                backup_id,
-                backup.status
+                backup_id, backup.status
             )));
         }
 
@@ -307,8 +302,7 @@ impl BackupManager {
         if actual_checksum != backup.checksum {
             return Err(NodeError::InvalidInput(format!(
                 "Backup checksum mismatch: expected {}, got {}",
-                backup.checksum,
-                actual_checksum
+                backup.checksum, actual_checksum
             )));
         }
 
@@ -330,12 +324,12 @@ impl BackupManager {
             let mut archive = Archive::new(decoder);
             archive.unpack(&dest)?;
             Ok::<_, anyhow::Error>(())
-        }).await??;
+        })
+        .await??;
 
         info!(
             "Restored backup {} for container {}",
-            backup_id,
-            container_id
+            backup_id, container_id
         );
 
         Ok(())
@@ -360,8 +354,7 @@ impl BackupManager {
 
         info!(
             "Deleted backup {} for container {}",
-            backup_id,
-            container_id
+            backup_id, container_id
         );
 
         Ok(())
@@ -381,7 +374,8 @@ impl BackupManager {
             let mut reader = std::io::BufReader::new(file);
             std::io::copy(&mut reader, &mut hasher)?;
             Ok::<_, anyhow::Error>(format!("{:x}", hasher.finalize()))
-        }).await??;
+        })
+        .await??;
 
         Ok(checksum)
     }
@@ -419,10 +413,7 @@ mod tests {
         fs::write(container_dir.join("subdir/nested.txt"), "Nested file").await.unwrap();
 
         // Create backup
-        let backup = manager
-            .create_backup(container_id, "Test Backup", &[], &[])
-            .await
-            .unwrap();
+        let backup = manager.create_backup(container_id, "Test Backup", &[], &[]).await.unwrap();
 
         assert_eq!(backup.status, BackupStatus::Completed);
         assert!(backup.size > 0);
@@ -432,10 +423,7 @@ mod tests {
         fs::remove_dir_all(&container_dir).await.unwrap();
 
         // Restore backup
-        manager
-            .restore_backup(container_id, &backup.id, false)
-            .await
-            .unwrap();
+        manager.restore_backup(container_id, &backup.id, false).await.unwrap();
 
         // Verify files are restored
         assert!(container_dir.join("test.txt").exists());

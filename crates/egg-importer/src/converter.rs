@@ -74,8 +74,17 @@ impl EggConverter {
     fn generate_backup_config(&self, game_type: &str) -> Option<Backups> {
         let (paths, exclude) = match game_type {
             "minecraft" => (
-                vec!["/world".to_string(), "/world_nether".to_string(), "/world_the_end".to_string(), "/plugins".to_string()],
-                vec!["*.log".to_string(), "/logs".to_string(), "/cache".to_string()],
+                vec![
+                    "/world".to_string(),
+                    "/world_nether".to_string(),
+                    "/world_the_end".to_string(),
+                    "/plugins".to_string(),
+                ],
+                vec![
+                    "*.log".to_string(),
+                    "/logs".to_string(),
+                    "/cache".to_string(),
+                ],
             ),
             "rust" => (
                 vec!["/server".to_string(), "/oxide".to_string()],
@@ -123,10 +132,10 @@ impl EggConverter {
                     sysctl: [
                         ("net.core.rmem_max".to_string(), "26214400".to_string()),
                         ("net.core.wmem_max".to_string(), "26214400".to_string()),
-                    ].into_iter().collect(),
-                    ulimits: [
-                        ("nofile".to_string(), 100000),
-                    ].into_iter().collect(),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    ulimits: [("nofile".to_string(), 100000)].into_iter().collect(),
                 }),
                 nice: Some(-10),
                 io_class: Some("realtime".to_string()),
@@ -253,7 +262,20 @@ impl EggConverter {
         // Game detection rules - ordered by specificity
         let game_patterns: &[(&[&str], &str)] = &[
             // Minecraft variants (most specific first)
-            (&["paper", "spigot", "bukkit", "purpur", "fabric", "forge", "bungeecord", "waterfall", "velocity"], "minecraft"),
+            (
+                &[
+                    "paper",
+                    "spigot",
+                    "bukkit",
+                    "purpur",
+                    "fabric",
+                    "forge",
+                    "bungeecord",
+                    "waterfall",
+                    "velocity",
+                ],
+                "minecraft",
+            ),
             (&["minecraft"], "minecraft"),
             // Survival games
             (&["rust dedicated", "rust server", "rustdedicated"], "rust"),
@@ -265,13 +287,19 @@ impl EggConverter {
             (&["dayz"], "dayz"),
             (&["unturned"], "unturned"),
             (&["conan exiles", "conanexiles"], "conanexiles"),
-            (&["the forest", "theforest", "sons of the forest"], "theforest"),
+            (
+                &["the forest", "theforest", "sons of the forest"],
+                "theforest",
+            ),
             (&["raft"], "raft"),
             (&["palworld"], "palworld"),
             (&["enshrouded"], "enshrouded"),
             (&["v rising", "vrising"], "vrising"),
             // FPS/Competitive
-            (&["counter-strike 2", "cs2", "csgo", "counter-strike"], "csgo"),
+            (
+                &["counter-strike 2", "cs2", "csgo", "counter-strike"],
+                "csgo",
+            ),
             (&["team fortress", "tf2"], "tf2"),
             (&["garry's mod", "gmod", "garrysmod"], "gmod"),
             (&["left 4 dead", "l4d"], "l4d2"),
@@ -420,7 +448,10 @@ impl EggConverter {
 
         // Complex case: wrap in shell script
         tracing::warn!("Complex startup command detected, wrapping in shell");
-        Ok(("bash".to_string(), vec!["-c".to_string(), trimmed.to_string()]))
+        Ok((
+            "bash".to_string(),
+            vec!["-c".to_string(), trimmed.to_string()],
+        ))
     }
 
     fn convert_installation_script(&self, egg: &PterodactylEgg) -> Result<Lifecycle> {
@@ -455,10 +486,7 @@ impl EggConverter {
     }
 
     fn convert_variables(&self, variables: &[EggVariable]) -> Result<Vec<Variable>> {
-        variables
-            .iter()
-            .map(|var| self.convert_variable(var))
-            .collect()
+        variables.iter().map(|var| self.convert_variable(var)).collect()
     }
 
     fn convert_variable(&self, var: &EggVariable) -> Result<Variable> {
@@ -499,7 +527,8 @@ impl EggConverter {
                 if let Some(range_str) = rule.strip_prefix("between:") {
                     let parts: Vec<&str> = range_str.split(',').collect();
                     if parts.len() == 2 {
-                        if let (Ok(min), Ok(max)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>())
+                        if let (Ok(min), Ok(max)) =
+                            (parts[0].parse::<u16>(), parts[1].parse::<u16>())
                         {
                             parsed_rules.push(ValidationRule::Port { range: (min, max) });
                         }
@@ -513,7 +542,8 @@ impl EggConverter {
                 }
             } else if rule.starts_with("in:") {
                 if let Some(values_str) = rule.strip_prefix("in:") {
-                    let values: Vec<String> = values_str.split(',').map(|s| s.trim().to_string()).collect();
+                    let values: Vec<String> =
+                        values_str.split(',').map(|s| s.trim().to_string()).collect();
                     parsed_rules.push(ValidationRule::Enum { values });
                 }
             } else if rule.starts_with("min:") {
@@ -567,7 +597,12 @@ impl EggConverter {
             } else if rule == "boolean" {
                 // Boolean values
                 parsed_rules.push(ValidationRule::Enum {
-                    values: vec!["true".to_string(), "false".to_string(), "1".to_string(), "0".to_string()],
+                    values: vec![
+                        "true".to_string(),
+                        "false".to_string(),
+                        "1".to_string(),
+                        "0".to_string(),
+                    ],
                 });
             } else if rule == "uuid" {
                 // UUID validation
@@ -662,10 +697,7 @@ impl EggConverter {
 
     fn convert_monitoring(&self, egg: &PterodactylEgg) -> Result<Option<Monitoring>> {
         // Try to detect if server has RCON or query port for health checks
-        let has_rcon = egg
-            .variables
-            .iter()
-            .any(|v| v.name.to_lowercase().contains("rcon"));
+        let has_rcon = egg.variables.iter().any(|v| v.name.to_lowercase().contains("rcon"));
 
         if has_rcon {
             Ok(Some(Monitoring {
@@ -684,7 +716,8 @@ impl EggConverter {
                 .variables
                 .iter()
                 .find(|v| {
-                    v.name.to_lowercase().contains("port") && !v.name.to_lowercase().contains("rcon")
+                    v.name.to_lowercase().contains("port")
+                        && !v.name.to_lowercase().contains("rcon")
                 })
                 .map(|v| format!("{{{{{}}}}}", v.env_variable));
 
@@ -713,9 +746,7 @@ mod tests {
     #[test]
     fn test_parse_simple_startup() {
         let converter = EggConverter::new();
-        let (cmd, args) = converter
-            .parse_startup_command("./server -port 25565")
-            .unwrap();
+        let (cmd, args) = converter.parse_startup_command("./server -port 25565").unwrap();
         assert_eq!(cmd, "./server");
         assert_eq!(args, vec!["-port", "25565"]);
     }

@@ -21,7 +21,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// TLS configuration errors
 #[derive(Error, Debug)]
@@ -198,9 +198,8 @@ pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, TlsError>
     })?;
 
     let mut reader = BufReader::new(file);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-        .filter_map(|result| result.ok())
-        .collect();
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut reader).filter_map(|result| result.ok()).collect();
 
     if certs.is_empty() {
         return Err(TlsError::NoCertificates(path.to_path_buf()));
@@ -266,15 +265,9 @@ pub fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsError>
 
 /// Build a rustls ServerConfig from TlsConfig
 pub fn build_server_config(config: &TlsConfig) -> Result<Arc<rustls::ServerConfig>, TlsError> {
-    let cert_path = config
-        .cert_path
-        .as_ref()
-        .ok_or(TlsError::NotConfigured)?;
+    let cert_path = config.cert_path.as_ref().ok_or(TlsError::NotConfigured)?;
 
-    let key_path = config
-        .key_path
-        .as_ref()
-        .ok_or(TlsError::NotConfigured)?;
+    let key_path = config.key_path.as_ref().ok_or(TlsError::NotConfigured)?;
 
     // Load certificates and key
     let certs = load_certs(cert_path)?;
@@ -306,11 +299,9 @@ pub fn build_server_config(config: &TlsConfig) -> Result<Arc<rustls::ServerConfi
                 })?
         };
 
-        rustls::ServerConfig::builder()
-            .with_client_cert_verifier(verifier)
+        rustls::ServerConfig::builder().with_client_cert_verifier(verifier)
     } else {
-        rustls::ServerConfig::builder()
-            .with_no_client_auth()
+        rustls::ServerConfig::builder().with_no_client_auth()
     };
 
     // Set certificates
@@ -352,18 +343,17 @@ pub fn build_client_config(
     // Build client config
     let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
 
-    let client_config = if let (Some(cert_path), Some(key_path)) =
-        (client_cert_path, client_key_path)
-    {
-        // mTLS: Use client certificate
-        let certs = load_certs(cert_path)?;
-        let key = load_private_key(key_path)?;
-        builder.with_client_auth_cert(certs, key).map_err(|e| {
-            TlsError::ConfigBuildError(format!("Failed to set client certificate: {}", e))
-        })?
-    } else {
-        builder.with_no_client_auth()
-    };
+    let client_config =
+        if let (Some(cert_path), Some(key_path)) = (client_cert_path, client_key_path) {
+            // mTLS: Use client certificate
+            let certs = load_certs(cert_path)?;
+            let key = load_private_key(key_path)?;
+            builder.with_client_auth_cert(certs, key).map_err(|e| {
+                TlsError::ConfigBuildError(format!("Failed to set client certificate: {}", e))
+            })?
+        } else {
+            builder.with_no_client_auth()
+        };
 
     info!("TLS client configuration built successfully");
     Ok(Arc::new(client_config))
@@ -438,11 +428,8 @@ mod tests {
 
     #[test]
     fn test_tls_config_production_mtls() {
-        let config = TlsConfig::production_mtls(
-            "/path/to/cert.pem",
-            "/path/to/key.pem",
-            "/path/to/ca.pem",
-        );
+        let config =
+            TlsConfig::production_mtls("/path/to/cert.pem", "/path/to/key.pem", "/path/to/ca.pem");
         assert!(config.enabled);
         assert!(config.require_client_cert);
         assert_eq!(config.min_version, TlsVersion::Tls13);

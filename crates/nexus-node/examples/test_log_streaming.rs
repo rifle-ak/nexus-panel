@@ -74,9 +74,7 @@ security:
 
     // Create container
     println!("Creating container...");
-    let container_id = manager
-        .create_container(&config, Some("test-logs".to_string()))
-        .await?;
+    let container_id = manager.create_container(&config, Some("test-logs".to_string())).await?;
     println!("✓ Container created: {}\n", container_id);
 
     // Start container

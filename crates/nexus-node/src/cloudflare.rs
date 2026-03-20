@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 /// Cloudflare API errors
 #[derive(Error, Debug)]
@@ -426,7 +426,7 @@ pub struct ZonePlan {
 struct ApiResponse<T> {
     success: bool,
     errors: Vec<ApiError>,
-    messages: Vec<String>,
+    _messages: Vec<String>,
     result: Option<T>,
 }
 
@@ -466,11 +466,7 @@ impl CloudflareClient {
         endpoint: &str,
         body: Option<&impl Serialize>,
     ) -> Result<T, CloudflareError> {
-        let token = self
-            .config
-            .api_token
-            .as_ref()
-            .ok_or(CloudflareError::AuthenticationFailed)?;
+        let token = self.config.api_token.as_ref().ok_or(CloudflareError::AuthenticationFailed)?;
 
         let url = format!("{}{}", self.config.api_base_url, endpoint);
 
@@ -486,10 +482,8 @@ impl CloudflareClient {
             request = request.body(body_str);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| CloudflareError::NetworkError(e.to_string()))?;
+        let response =
+            request.send().await.map_err(|e| CloudflareError::NetworkError(e.to_string()))?;
 
         let status = response.status();
 
@@ -536,14 +530,17 @@ impl CloudflareClient {
             }
         }
 
-        let zone_id = self
-            .config
-            .zone_id
-            .as_ref()
-            .ok_or_else(|| CloudflareError::InvalidConfig("Zone ID not configured".to_string()))?;
+        let zone_id =
+            self.config.zone_id.as_ref().ok_or_else(|| {
+                CloudflareError::InvalidConfig("Zone ID not configured".to_string())
+            })?;
 
         let zone: ZoneInfo = self
-            .api_request(reqwest::Method::GET, &format!("/zones/{}", zone_id), None::<&()>)
+            .api_request(
+                reqwest::Method::GET,
+                &format!("/zones/{}", zone_id),
+                None::<&()>,
+            )
             .await?;
 
         // Update cache
@@ -559,7 +556,10 @@ impl CloudflareClient {
     // ==================== Spectrum API ====================
 
     /// Create a Spectrum application for a game server
-    pub async fn create_spectrum_app(&self, app: &SpectrumApp) -> Result<SpectrumApp, CloudflareError> {
+    pub async fn create_spectrum_app(
+        &self,
+        app: &SpectrumApp,
+    ) -> Result<SpectrumApp, CloudflareError> {
         if !self.config.spectrum_enabled {
             return Err(CloudflareError::SpectrumNotAvailable);
         }
@@ -710,7 +710,10 @@ impl CloudflareClient {
     // ==================== DNS API ====================
 
     /// Create a DNS record
-    pub async fn create_dns_record(&self, record: &DnsRecord) -> Result<DnsRecord, CloudflareError> {
+    pub async fn create_dns_record(
+        &self,
+        record: &DnsRecord,
+    ) -> Result<DnsRecord, CloudflareError> {
         let zone_id = self
             .config
             .zone_id
@@ -831,14 +834,15 @@ impl CloudflareClient {
         protocol: SpectrumProtocol,
     ) -> Result<GameServerSetup, CloudflareError> {
         if !self.config.enabled {
-            return Err(CloudflareError::InvalidConfig("Cloudflare not enabled".to_string()));
+            return Err(CloudflareError::InvalidConfig(
+                "Cloudflare not enabled".to_string(),
+            ));
         }
 
-        let domain = self
-            .config
-            .domain
-            .as_ref()
-            .ok_or_else(|| CloudflareError::InvalidConfig("Domain not configured".to_string()))?;
+        let domain =
+            self.config.domain.as_ref().ok_or_else(|| {
+                CloudflareError::InvalidConfig("Domain not configured".to_string())
+            })?;
 
         info!(
             "Setting up game server: {} at {}.{} ({}:{:?})",
@@ -877,7 +881,10 @@ impl CloudflareClient {
     }
 
     /// Teardown a game server (remove Spectrum and DNS)
-    pub async fn teardown_game_server(&self, setup: &GameServerSetup) -> Result<(), CloudflareError> {
+    pub async fn teardown_game_server(
+        &self,
+        setup: &GameServerSetup,
+    ) -> Result<(), CloudflareError> {
         if let Some(ref app) = setup.spectrum_app {
             if let Some(ref id) = app.id {
                 self.delete_spectrum_app(id).await?;
@@ -910,7 +917,7 @@ impl GameServerSetup {
     pub fn connection_address(&self) -> String {
         if let Some(ref app) = self.spectrum_app {
             format!("{}.{}:{}", self.subdomain, self.domain, app.edge_port)
-        } else if let Some(ref record) = self.dns_record {
+        } else if let Some(ref _record) = self.dns_record {
             format!("{}.{}", self.subdomain, self.domain)
         } else {
             self.subdomain.clone()

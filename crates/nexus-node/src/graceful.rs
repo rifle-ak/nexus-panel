@@ -18,14 +18,13 @@
 //! ```
 
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Graceful degradation errors
 #[derive(Error, Debug)]
@@ -98,7 +97,7 @@ impl GracefulShutdown {
     }
 
     /// Record request start
-    pub fn request_start(&self) -> Result<RequestGuard, GracefulError> {
+    pub fn request_start(&self) -> Result<RequestGuard<'_>, GracefulError> {
         if self.is_shutting_down() {
             return Err(GracefulError::ShuttingDown);
         }
@@ -122,10 +121,7 @@ impl GracefulShutdown {
             }
 
             if start.elapsed() > self.timeout {
-                warn!(
-                    "Shutdown timeout reached with {} active requests",
-                    count
-                );
+                warn!("Shutdown timeout reached with {} active requests", count);
                 return;
             }
 
@@ -155,9 +151,7 @@ impl GracefulShutdown {
 
         #[cfg(windows)]
         {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to register Ctrl+C handler");
+            tokio::signal::ctrl_c().await.expect("Failed to register Ctrl+C handler");
             info!("Received Ctrl+C");
         }
 
@@ -259,7 +253,7 @@ impl LoadShedder {
     }
 
     /// Acquire a request slot
-    pub fn acquire(&self) -> Result<LoadShedGuard, GracefulError> {
+    pub fn acquire(&self) -> Result<LoadShedGuard<'_>, GracefulError> {
         if !self.should_accept() {
             return Err(GracefulError::LoadShedding);
         }
@@ -406,7 +400,7 @@ impl Bulkhead {
     }
 
     /// Try to acquire a permit
-    pub fn try_acquire(&self) -> Result<BulkheadPermit, GracefulError> {
+    pub fn try_acquire(&self) -> Result<BulkheadPermit<'_>, GracefulError> {
         let current = self.current.fetch_add(1, Ordering::SeqCst);
         if current >= self.max_concurrent {
             self.current.fetch_sub(1, Ordering::SeqCst);

@@ -1,9 +1,9 @@
 use super::*;
 use crate::error::{NodeError, Result};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 
 /// Mock container runtime for testing
 pub struct MockRuntime {
@@ -20,11 +20,17 @@ struct MockContainer {
     exit_code: Option<i32>,
 }
 
-impl MockRuntime {
-    pub fn new() -> Self {
+impl Default for MockRuntime {
+    fn default() -> Self {
         Self {
             containers: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+}
+
+impl MockRuntime {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -101,9 +107,8 @@ impl ContainerRuntime for MockRuntime {
 
     async fn inspect(&self, id: &str) -> Result<ContainerInfo> {
         let containers = self.containers.read().await;
-        let container = containers
-            .get(id)
-            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+        let container =
+            containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
 
         Ok(ContainerInfo {
             id: container.id.clone(),
@@ -130,9 +135,8 @@ impl ContainerRuntime for MockRuntime {
 
         // Check container exists and is running
         let containers = self.containers.read().await;
-        let container = containers
-            .get(id)
-            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+        let container =
+            containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
 
         if container.status != "running" {
             return Err(NodeError::InvalidInput(format!(
@@ -149,9 +153,8 @@ impl ContainerRuntime for MockRuntime {
 
         // Check container exists and is running
         let containers = self.containers.read().await;
-        let container = containers
-            .get(id)
-            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+        let container =
+            containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
 
         if container.status != "running" {
             return Err(NodeError::InvalidInput(format!(
@@ -201,7 +204,10 @@ impl ConsoleStream for MockConsoleStream {
                 1 => format!("[{}] Server starting...", self.container_id),
                 2 => format!("[{}] Loading configuration", self.container_id),
                 3 => format!("[{}] Initializing game world", self.container_id),
-                4 => format!("[{}] Starting network listener on port 25565", self.container_id),
+                4 => format!(
+                    "[{}] Starting network listener on port 25565",
+                    self.container_id
+                ),
                 5 => format!("[{}] Server ready!", self.container_id),
                 6 => format!("[{}] Waiting for players...", self.container_id),
                 7 => format!("[{}] Player joined: TestPlayer", self.container_id),
@@ -289,13 +295,22 @@ impl BidirectionalConsole for MockBidirectionalConsole {
 
         // Generate mock responses based on common commands
         let response = if command.eq_ignore_ascii_case("help") {
-            format!("[{}] Available commands: help, status, players, stop", self.container_id)
+            format!(
+                "[{}] Available commands: help, status, players, stop",
+                self.container_id
+            )
         } else if command.eq_ignore_ascii_case("status") {
-            format!("[{}] Server is running | Players: 5/20 | TPS: 20.0", self.container_id)
+            format!(
+                "[{}] Server is running | Players: 5/20 | TPS: 20.0",
+                self.container_id
+            )
         } else if command.eq_ignore_ascii_case("players") || command.eq_ignore_ascii_case("list") {
-            format!("[{}] Online players (5): Player1, Player2, Player3, Player4, Player5", self.container_id)
-        } else if command.starts_with("say ") {
-            format!("[{}] [Server] {}", self.container_id, &command[4..])
+            format!(
+                "[{}] Online players (5): Player1, Player2, Player3, Player4, Player5",
+                self.container_id
+            )
+        } else if let Some(stripped) = command.strip_prefix("say ") {
+            format!("[{}] [Server] {}", self.container_id, stripped)
         } else {
             format!("[{}] Unknown command: {}", self.container_id, command)
         };
