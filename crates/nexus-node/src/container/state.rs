@@ -14,6 +14,8 @@ pub enum ContainerStatus {
     Stopped,
     /// Container has exited with an error
     Failed,
+    /// Container is suspended (stopped but marked for billing purposes)
+    Suspended,
 }
 
 impl ContainerStatus {
@@ -23,6 +25,10 @@ impl ContainerStatus {
 
     pub fn is_stopped(&self) -> bool {
         matches!(self, ContainerStatus::Stopped | ContainerStatus::Failed)
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        matches!(self, ContainerStatus::Suspended)
     }
 }
 
@@ -96,5 +102,16 @@ impl ContainerState {
 
     pub fn mark_restarted(&mut self) {
         self.restart_count += 1;
+    }
+
+    pub fn mark_suspended(&mut self) {
+        self.status = ContainerStatus::Suspended;
+        self.pid = None;
+        self.stopped_at = Some(SystemTime::now());
+    }
+
+    pub fn mark_unsuspended(&mut self) {
+        self.status = ContainerStatus::Stopped;
+        // Container is now in stopped state, ready to be started
     }
 }

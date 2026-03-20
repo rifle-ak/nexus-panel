@@ -2,15 +2,22 @@ use super::proto::{
     node_service_server::{NodeService, NodeServiceServer},
     *,
 };
+use crate::backup::BackupManager;
 use crate::container::ContainerManager;
+use crate::files::FileManager;
 use crate::health::HealthChecker;
 use crate::metrics::Metrics;
+use crate::schedule::{ScheduleManager, ScheduleTask as InternalScheduleTask, ScheduleTaskType as InternalScheduleTaskType};
 use nexus_config::GameConfig;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 use tracing::info;
+
+/// Chunk size for streaming file operations (64KB)
+const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
 /// gRPC server implementation for Nexus Node
 pub struct NodeServiceImpl {
@@ -19,6 +26,8 @@ pub struct NodeServiceImpl {
     start_time: SystemTime,
     metrics: Arc<Metrics>,
     health_checker: Arc<RwLock<HealthChecker>>,
+    backup_manager: Arc<BackupManager>,
+    schedule_manager: Arc<ScheduleManager>,
 }
 
 impl NodeServiceImpl {
@@ -27,6 +36,8 @@ impl NodeServiceImpl {
         manager: Arc<ContainerManager>,
         node_id: String,
         health_checker: Arc<RwLock<HealthChecker>>,
+        backup_manager: Arc<BackupManager>,
+        schedule_manager: Arc<ScheduleManager>,
     ) -> Self {
         let metrics = manager.metrics().clone();
         Self {
@@ -35,12 +46,19 @@ impl NodeServiceImpl {
             start_time: SystemTime::now(),
             metrics,
             health_checker,
+            backup_manager,
+            schedule_manager,
         }
     }
 
     /// Create a gRPC server instance
     pub fn into_server(self) -> NodeServiceServer<Self> {
         NodeServiceServer::new(self)
+    }
+
+    /// Create a FileManager for a container
+    fn file_manager(&self, container_id: &str) -> FileManager {
+        FileManager::new(container_id, self.manager.data_dir())
     }
 }
 
@@ -594,182 +612,915 @@ impl NodeService for NodeServiceImpl {
         }))
     }
 
-    // Stub implementations for Phase 5 features
-    // These will be fully implemented in subsequent iterations
-
     async fn suspend_container(
         &self,
-        _request: Request<SuspendContainerRequest>,
+        request: Request<SuspendContainerRequest>,
     ) -> std::result::Result<Response<SuspendContainerResponse>, Status> {
-        Err(Status::unimplemented("SuspendContainer is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: SuspendContainer {}", req.container_id);
+
+        self.manager
+            .suspend_container(&req.container_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("SuspendContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to suspend container: {}", e))
+            })?;
+
+        let state = self
+            .manager
+            .get_state(&req.container_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+
+        self.metrics.record_grpc_request("SuspendContainer", "ok", start.elapsed());
+
+        Ok(Response::new(SuspendContainerResponse {
+            success: true,
+            state: Some(convert_container_state(&state)),
+        }))
     }
 
     async fn unsuspend_container(
         &self,
-        _request: Request<UnsuspendContainerRequest>,
+        request: Request<UnsuspendContainerRequest>,
     ) -> std::result::Result<Response<UnsuspendContainerResponse>, Status> {
-        Err(Status::unimplemented("UnsuspendContainer is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: UnsuspendContainer {}", req.container_id);
+
+        self.manager
+            .unsuspend_container(&req.container_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("UnsuspendContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to unsuspend container: {}", e))
+            })?;
+
+        // Auto-start if requested
+        if req.auto_start {
+            self.manager
+                .start_container(&req.container_id)
+                .await
+                .map_err(|e| {
+                    self.metrics.record_grpc_request("UnsuspendContainer", "internal_error", start.elapsed());
+                    Status::internal(format!("Failed to start container: {}", e))
+                })?;
+        }
+
+        let state = self
+            .manager
+            .get_state(&req.container_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+
+        self.metrics.record_grpc_request("UnsuspendContainer", "ok", start.elapsed());
+
+        Ok(Response::new(UnsuspendContainerResponse {
+            success: true,
+            state: Some(convert_container_state(&state)),
+        }))
     }
 
     async fn reinstall_container(
         &self,
-        _request: Request<ReinstallContainerRequest>,
+        request: Request<ReinstallContainerRequest>,
     ) -> std::result::Result<Response<ReinstallContainerResponse>, Status> {
-        Err(Status::unimplemented("ReinstallContainer is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: ReinstallContainer {}", req.container_id);
+
+        self.manager
+            .reinstall_container(&req.container_id, req.preserve_data)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("ReinstallContainer", "internal_error", start.elapsed());
+                Status::internal(format!("Failed to reinstall container: {}", e))
+            })?;
+
+        let state = self
+            .manager
+            .get_state(&req.container_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to get state: {}", e)))?;
+
+        self.metrics.record_grpc_request("ReinstallContainer", "ok", start.elapsed());
+
+        Ok(Response::new(ReinstallContainerResponse {
+            success: true,
+            state: Some(convert_container_state(&state)),
+        }))
     }
 
-    // File management stubs
+    // File management endpoints
+
     async fn list_files(
         &self,
-        _request: Request<ListFilesRequest>,
+        request: Request<ListFilesRequest>,
     ) -> std::result::Result<Response<ListFilesResponse>, Status> {
-        Err(Status::unimplemented("ListFiles is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: ListFiles {} path={}", req.container_id, req.path);
+
+        let fm = self.file_manager(&req.container_id);
+        let files = fm
+            .list_files(&req.path)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("ListFiles", "error", start.elapsed());
+                Status::internal(format!("Failed to list files: {}", e))
+            })?;
+
+        let proto_files = files
+            .into_iter()
+            .map(|f| FileInfo {
+                name: f.name,
+                path: f.path,
+                is_directory: f.is_directory,
+                size: f.size,
+                modified_at: f.modified_at,
+                mime_type: f.mime_type,
+                is_symlink: f.is_symlink,
+                symlink_target: f.symlink_target,
+            })
+            .collect();
+
+        self.metrics.record_grpc_request("ListFiles", "ok", start.elapsed());
+
+        Ok(Response::new(ListFilesResponse { files: proto_files }))
     }
 
     async fn read_file(
         &self,
-        _request: Request<ReadFileRequest>,
+        request: Request<ReadFileRequest>,
     ) -> std::result::Result<Response<ReadFileResponse>, Status> {
-        Err(Status::unimplemented("ReadFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: ReadFile {} path={}", req.container_id, req.path);
+
+        let fm = self.file_manager(&req.container_id);
+        let (content, total_size, mime_type) = fm
+            .read_file(&req.path, req.offset, req.length)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("ReadFile", "error", start.elapsed());
+                Status::internal(format!("Failed to read file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("ReadFile", "ok", start.elapsed());
+
+        Ok(Response::new(ReadFileResponse {
+            content,
+            total_size,
+            mime_type,
+        }))
     }
 
     async fn write_file(
         &self,
-        _request: Request<WriteFileRequest>,
+        request: Request<WriteFileRequest>,
     ) -> std::result::Result<Response<WriteFileResponse>, Status> {
-        Err(Status::unimplemented("WriteFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: WriteFile {} path={}", req.container_id, req.path);
+
+        let fm = self.file_manager(&req.container_id);
+        let bytes_written = fm
+            .write_file(&req.path, &req.content, req.create_dirs)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("WriteFile", "error", start.elapsed());
+                Status::internal(format!("Failed to write file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("WriteFile", "ok", start.elapsed());
+
+        Ok(Response::new(WriteFileResponse {
+            success: true,
+            bytes_written,
+        }))
     }
 
     async fn delete_file(
         &self,
-        _request: Request<DeleteFileRequest>,
+        request: Request<DeleteFileRequest>,
     ) -> std::result::Result<Response<DeleteFileResponse>, Status> {
-        Err(Status::unimplemented("DeleteFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: DeleteFile {} paths={:?}", req.container_id, req.paths);
+
+        let fm = self.file_manager(&req.container_id);
+        let deleted_count = fm
+            .delete(&req.paths, req.recursive)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("DeleteFile", "error", start.elapsed());
+                Status::internal(format!("Failed to delete files: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("DeleteFile", "ok", start.elapsed());
+
+        Ok(Response::new(DeleteFileResponse {
+            success: true,
+            deleted_count,
+        }))
     }
 
     async fn rename_file(
         &self,
-        _request: Request<RenameFileRequest>,
+        request: Request<RenameFileRequest>,
     ) -> std::result::Result<Response<RenameFileResponse>, Status> {
-        Err(Status::unimplemented("RenameFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: RenameFile {} {} -> {}", req.container_id, req.old_path, req.new_path);
+
+        let fm = self.file_manager(&req.container_id);
+        fm.rename(&req.old_path, &req.new_path)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("RenameFile", "error", start.elapsed());
+                Status::internal(format!("Failed to rename file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("RenameFile", "ok", start.elapsed());
+
+        Ok(Response::new(RenameFileResponse { success: true }))
     }
 
     async fn copy_file(
         &self,
-        _request: Request<CopyFileRequest>,
+        request: Request<CopyFileRequest>,
     ) -> std::result::Result<Response<CopyFileResponse>, Status> {
-        Err(Status::unimplemented("CopyFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: CopyFile {} {} -> {}", req.container_id, req.source_path, req.dest_path);
+
+        let fm = self.file_manager(&req.container_id);
+        fm.copy(&req.source_path, &req.dest_path, req.overwrite)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CopyFile", "error", start.elapsed());
+                Status::internal(format!("Failed to copy file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CopyFile", "ok", start.elapsed());
+
+        Ok(Response::new(CopyFileResponse { success: true }))
     }
 
     async fn create_directory(
         &self,
-        _request: Request<CreateDirectoryRequest>,
+        request: Request<CreateDirectoryRequest>,
     ) -> std::result::Result<Response<CreateDirectoryResponse>, Status> {
-        Err(Status::unimplemented("CreateDirectory is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: CreateDirectory {} path={}", req.container_id, req.path);
+
+        let fm = self.file_manager(&req.container_id);
+        fm.create_directory(&req.path, req.recursive)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateDirectory", "error", start.elapsed());
+                Status::internal(format!("Failed to create directory: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CreateDirectory", "ok", start.elapsed());
+
+        Ok(Response::new(CreateDirectoryResponse { success: true }))
     }
 
     async fn compress_files(
         &self,
-        _request: Request<CompressFilesRequest>,
+        request: Request<CompressFilesRequest>,
     ) -> std::result::Result<Response<CompressFilesResponse>, Status> {
-        Err(Status::unimplemented("CompressFiles is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: CompressFiles {} -> {}", req.container_id, req.output_path);
+
+        let fm = self.file_manager(&req.container_id);
+        let (archive_path, archive_size) = fm
+            .compress(&req.paths, &req.output_path, &req.format)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CompressFiles", "error", start.elapsed());
+                Status::internal(format!("Failed to compress files: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CompressFiles", "ok", start.elapsed());
+
+        Ok(Response::new(CompressFilesResponse {
+            success: true,
+            archive_path,
+            archive_size,
+        }))
     }
 
     async fn decompress_file(
         &self,
-        _request: Request<DecompressFileRequest>,
+        request: Request<DecompressFileRequest>,
     ) -> std::result::Result<Response<DecompressFileResponse>, Status> {
-        Err(Status::unimplemented("DecompressFile is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: DecompressFile {} {} -> {}", req.container_id, req.archive_path, req.output_dir);
+
+        let fm = self.file_manager(&req.container_id);
+        let files_extracted = fm
+            .decompress(&req.archive_path, &req.output_dir, req.overwrite)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("DecompressFile", "error", start.elapsed());
+                Status::internal(format!("Failed to decompress file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("DecompressFile", "ok", start.elapsed());
+
+        Ok(Response::new(DecompressFileResponse {
+            success: true,
+            files_extracted,
+        }))
     }
 
     type DownloadFileStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
 
     async fn download_file(
         &self,
-        _request: Request<DownloadFileRequest>,
+        request: Request<DownloadFileRequest>,
     ) -> std::result::Result<Response<Self::DownloadFileStream>, Status> {
-        Err(Status::unimplemented("DownloadFile is not yet implemented"))
+        let req = request.into_inner();
+        let container_id = req.container_id.clone();
+        let path = req.path.clone();
+
+        info!("gRPC: DownloadFile {} path={}", container_id, path);
+
+        let fm = self.file_manager(&container_id);
+        let file_path = fm.server_dir().join(path.trim_start_matches('/'));
+
+        if !file_path.exists() {
+            return Err(Status::not_found(format!("File not found: {}", path)));
+        }
+
+        let metadata = tokio::fs::metadata(&file_path).await
+            .map_err(|e| Status::internal(format!("Failed to get file metadata: {}", e)))?;
+        let total_size = metadata.len();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut file = match tokio::fs::File::open(&file_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Err(Status::internal(format!("Failed to open file: {}", e)))).await;
+                    return;
+                }
+            };
+
+            let mut offset: u64 = 0;
+            let mut buffer = vec![0u8; STREAM_CHUNK_SIZE];
+
+            loop {
+                let n = match file.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = tx.send(Err(Status::internal(format!("Read error: {}", e)))).await;
+                        return;
+                    }
+                };
+
+                let is_last = offset + n as u64 >= total_size;
+
+                let chunk = FileChunk {
+                    container_id: container_id.clone(),
+                    path: path.clone(),
+                    data: buffer[..n].to_vec(),
+                    offset,
+                    total_size,
+                    is_last,
+                };
+
+                offset += n as u64;
+
+                if tx.send(Ok(chunk)).await.is_err() {
+                    break;
+                }
+
+                if is_last {
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
     async fn upload_file(
         &self,
-        _request: Request<tonic::Streaming<FileChunk>>,
+        request: Request<tonic::Streaming<FileChunk>>,
     ) -> std::result::Result<Response<UploadFileResponse>, Status> {
-        Err(Status::unimplemented("UploadFile is not yet implemented"))
+        let start = Instant::now();
+        let mut stream = request.into_inner();
+
+        // Read the first chunk to get container_id and path
+        let first_chunk = stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to read first chunk: {}", e)))?
+            .ok_or_else(|| Status::invalid_argument("No data received"))?;
+
+        let container_id = first_chunk.container_id.clone();
+        let path = first_chunk.path.clone();
+
+        info!("gRPC: UploadFile {} path={}", container_id, path);
+
+        let fm = self.file_manager(&container_id);
+
+        // Collect all data
+        let mut data = first_chunk.data;
+
+        if !first_chunk.is_last {
+            while let Some(chunk) = stream
+                .message()
+                .await
+                .map_err(|e| Status::internal(format!("Failed to read chunk: {}", e)))?
+            {
+                data.extend_from_slice(&chunk.data);
+                if chunk.is_last {
+                    break;
+                }
+            }
+        }
+
+        let bytes_written = fm
+            .write_file(&path, &data, true)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
+                Status::internal(format!("Failed to write uploaded file: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("UploadFile", "ok", start.elapsed());
+
+        Ok(Response::new(UploadFileResponse {
+            success: true,
+            bytes_written,
+            path,
+        }))
     }
 
-    // Backup management stubs
+    // Backup management endpoints
+
     async fn create_backup(
         &self,
-        _request: Request<CreateBackupRequest>,
+        request: Request<CreateBackupRequest>,
     ) -> std::result::Result<Response<CreateBackupResponse>, Status> {
-        Err(Status::unimplemented("CreateBackup is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: CreateBackup {} name={}", req.container_id, req.name);
+
+        let backup = self
+            .backup_manager
+            .create_backup(
+                &req.container_id,
+                &req.name,
+                &req.include_paths,
+                &req.exclude_paths,
+            )
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateBackup", "error", start.elapsed());
+                Status::internal(format!("Failed to create backup: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CreateBackup", "ok", start.elapsed());
+
+        Ok(Response::new(CreateBackupResponse {
+            success: true,
+            backup: Some(convert_backup_info(&backup)),
+        }))
     }
 
     async fn list_backups(
         &self,
-        _request: Request<ListBackupsRequest>,
+        request: Request<ListBackupsRequest>,
     ) -> std::result::Result<Response<ListBackupsResponse>, Status> {
-        Err(Status::unimplemented("ListBackups is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: ListBackups {}", req.container_id);
+
+        let backups = self
+            .backup_manager
+            .list_backups(&req.container_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("ListBackups", "error", start.elapsed());
+                Status::internal(format!("Failed to list backups: {}", e))
+            })?;
+
+        let proto_backups = backups.iter().map(convert_backup_info).collect();
+
+        self.metrics.record_grpc_request("ListBackups", "ok", start.elapsed());
+
+        Ok(Response::new(ListBackupsResponse {
+            backups: proto_backups,
+        }))
     }
 
     async fn restore_backup(
         &self,
-        _request: Request<RestoreBackupRequest>,
+        request: Request<RestoreBackupRequest>,
     ) -> std::result::Result<Response<RestoreBackupResponse>, Status> {
-        Err(Status::unimplemented("RestoreBackup is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: RestoreBackup {} backup={}", req.container_id, req.backup_id);
+
+        // Stop container if requested
+        if req.stop_container {
+            let _ = self.manager.stop_container(&req.container_id, Some(30)).await;
+        }
+
+        self.backup_manager
+            .restore_backup(&req.container_id, &req.backup_id, req.delete_existing)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("RestoreBackup", "error", start.elapsed());
+                Status::internal(format!("Failed to restore backup: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("RestoreBackup", "ok", start.elapsed());
+
+        Ok(Response::new(RestoreBackupResponse {
+            success: true,
+            error: None,
+        }))
     }
 
     async fn delete_backup(
         &self,
-        _request: Request<DeleteBackupRequest>,
+        request: Request<DeleteBackupRequest>,
     ) -> std::result::Result<Response<DeleteBackupResponse>, Status> {
-        Err(Status::unimplemented("DeleteBackup is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: DeleteBackup {} backup={}", req.container_id, req.backup_id);
+
+        self.backup_manager
+            .delete_backup(&req.container_id, &req.backup_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("DeleteBackup", "error", start.elapsed());
+                Status::internal(format!("Failed to delete backup: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("DeleteBackup", "ok", start.elapsed());
+
+        Ok(Response::new(DeleteBackupResponse { success: true }))
     }
 
     type DownloadBackupStream = tokio_stream::wrappers::ReceiverStream<std::result::Result<FileChunk, Status>>;
 
     async fn download_backup(
         &self,
-        _request: Request<DownloadBackupRequest>,
+        request: Request<DownloadBackupRequest>,
     ) -> std::result::Result<Response<Self::DownloadBackupStream>, Status> {
-        Err(Status::unimplemented("DownloadBackup is not yet implemented"))
+        let req = request.into_inner();
+        let container_id = req.container_id.clone();
+        let backup_id = req.backup_id.clone();
+
+        info!("gRPC: DownloadBackup {} backup={}", container_id, backup_id);
+
+        // Verify backup exists
+        let _backup = self
+            .backup_manager
+            .get_backup(&container_id, &backup_id)
+            .await
+            .map_err(|e| Status::not_found(format!("Backup not found: {}", e)))?;
+
+        let backup_path = self.backup_manager.get_backup_path(&container_id, &backup_id);
+
+        if !backup_path.exists() {
+            return Err(Status::not_found("Backup file not found on disk"));
+        }
+
+        let metadata = tokio::fs::metadata(&backup_path).await
+            .map_err(|e| Status::internal(format!("Failed to get backup metadata: {}", e)))?;
+        let total_size = metadata.len();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut file = match tokio::fs::File::open(&backup_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Err(Status::internal(format!("Failed to open backup: {}", e)))).await;
+                    return;
+                }
+            };
+
+            let mut offset: u64 = 0;
+            let mut buffer = vec![0u8; STREAM_CHUNK_SIZE];
+
+            loop {
+                let n = match file.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = tx.send(Err(Status::internal(format!("Read error: {}", e)))).await;
+                        return;
+                    }
+                };
+
+                let is_last = offset + n as u64 >= total_size;
+
+                let chunk = FileChunk {
+                    container_id: container_id.clone(),
+                    path: backup_id.clone(),
+                    data: buffer[..n].to_vec(),
+                    offset,
+                    total_size,
+                    is_last,
+                };
+
+                offset += n as u64;
+
+                if tx.send(Ok(chunk)).await.is_err() {
+                    break;
+                }
+
+                if is_last {
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
-    // Schedule management stubs
+    // Schedule management endpoints
+
     async fn create_schedule(
         &self,
-        _request: Request<CreateScheduleRequest>,
+        request: Request<CreateScheduleRequest>,
     ) -> std::result::Result<Response<CreateScheduleResponse>, Status> {
-        Err(Status::unimplemented("CreateSchedule is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: CreateSchedule {} name={}", req.container_id, req.name);
+
+        let tasks: Vec<InternalScheduleTask> = req
+            .tasks
+            .iter()
+            .map(|t| InternalScheduleTask {
+                task_type: InternalScheduleTaskType::from_i32(t.task_type),
+                time_offset: t.time_offset,
+                payload: t.payload.clone(),
+            })
+            .collect();
+
+        let schedule = self
+            .schedule_manager
+            .create_schedule(
+                &req.container_id,
+                &req.name,
+                &req.cron_expression,
+                req.is_active,
+                tasks,
+            )
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("CreateSchedule", "error", start.elapsed());
+                Status::invalid_argument(format!("Failed to create schedule: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("CreateSchedule", "ok", start.elapsed());
+
+        Ok(Response::new(CreateScheduleResponse {
+            success: true,
+            schedule: Some(convert_schedule_info(&schedule)),
+        }))
     }
 
     async fn list_schedules(
         &self,
-        _request: Request<ListSchedulesRequest>,
+        request: Request<ListSchedulesRequest>,
     ) -> std::result::Result<Response<ListSchedulesResponse>, Status> {
-        Err(Status::unimplemented("ListSchedules is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: ListSchedules {}", req.container_id);
+
+        let schedules = self
+            .schedule_manager
+            .list_schedules(&req.container_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("ListSchedules", "error", start.elapsed());
+                Status::internal(format!("Failed to list schedules: {}", e))
+            })?;
+
+        let proto_schedules = schedules.iter().map(convert_schedule_info).collect();
+
+        self.metrics.record_grpc_request("ListSchedules", "ok", start.elapsed());
+
+        Ok(Response::new(ListSchedulesResponse {
+            schedules: proto_schedules,
+        }))
     }
 
     async fn update_schedule(
         &self,
-        _request: Request<UpdateScheduleRequest>,
+        request: Request<UpdateScheduleRequest>,
     ) -> std::result::Result<Response<UpdateScheduleResponse>, Status> {
-        Err(Status::unimplemented("UpdateSchedule is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: UpdateSchedule {} schedule={}", req.container_id, req.schedule_id);
+
+        let tasks = if req.tasks.is_empty() {
+            None
+        } else {
+            Some(
+                req.tasks
+                    .iter()
+                    .map(|t| InternalScheduleTask {
+                        task_type: InternalScheduleTaskType::from_i32(t.task_type),
+                        time_offset: t.time_offset,
+                        payload: t.payload.clone(),
+                    })
+                    .collect(),
+            )
+        };
+
+        let schedule = self
+            .schedule_manager
+            .update_schedule(
+                &req.container_id,
+                &req.schedule_id,
+                req.name.as_deref(),
+                req.cron_expression.as_deref(),
+                req.is_active,
+                tasks,
+            )
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("UpdateSchedule", "error", start.elapsed());
+                Status::internal(format!("Failed to update schedule: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("UpdateSchedule", "ok", start.elapsed());
+
+        Ok(Response::new(UpdateScheduleResponse {
+            success: true,
+            schedule: Some(convert_schedule_info(&schedule)),
+        }))
     }
 
     async fn delete_schedule(
         &self,
-        _request: Request<DeleteScheduleRequest>,
+        request: Request<DeleteScheduleRequest>,
     ) -> std::result::Result<Response<DeleteScheduleResponse>, Status> {
-        Err(Status::unimplemented("DeleteSchedule is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: DeleteSchedule {} schedule={}", req.container_id, req.schedule_id);
+
+        self.schedule_manager
+            .delete_schedule(&req.container_id, &req.schedule_id)
+            .await
+            .map_err(|e| {
+                self.metrics.record_grpc_request("DeleteSchedule", "error", start.elapsed());
+                Status::internal(format!("Failed to delete schedule: {}", e))
+            })?;
+
+        self.metrics.record_grpc_request("DeleteSchedule", "ok", start.elapsed());
+
+        Ok(Response::new(DeleteScheduleResponse { success: true }))
     }
 
     async fn trigger_schedule(
         &self,
-        _request: Request<TriggerScheduleRequest>,
+        request: Request<TriggerScheduleRequest>,
     ) -> std::result::Result<Response<TriggerScheduleResponse>, Status> {
-        Err(Status::unimplemented("TriggerSchedule is not yet implemented"))
+        let start = Instant::now();
+        let req = request.into_inner();
+
+        info!("gRPC: TriggerSchedule {} schedule={}", req.container_id, req.schedule_id);
+
+        // Create a simple callback that sends commands via the container manager
+        let manager = self.manager.clone();
+        let callback: crate::schedule::ScheduleCallback = Arc::new(move |container_id, task| {
+            let manager = manager.clone();
+            let container_id = container_id.to_string();
+            let task = task.clone();
+            Box::pin(async move {
+                match task.task_type {
+                    InternalScheduleTaskType::Command => {
+                        manager.send_command(&container_id, &task.payload).await
+                    }
+                    InternalScheduleTaskType::Power => {
+                        match task.payload.as_str() {
+                            "start" => manager.start_container(&container_id).await,
+                            "stop" => manager.stop_container(&container_id, Some(30)).await,
+                            "restart" => manager.restart_container(&container_id).await,
+                            "kill" => manager.stop_container(&container_id, Some(0)).await,
+                            other => Err(crate::error::NodeError::InvalidInput(
+                                format!("Unknown power action: {}", other),
+                            )),
+                        }
+                    }
+                    InternalScheduleTaskType::Backup => {
+                        // Backup tasks require a backup manager reference;
+                        // for manual triggers, just log a warning
+                        tracing::warn!("Backup task triggered manually; use CreateBackup RPC instead");
+                        Ok(())
+                    }
+                }
+            })
+        });
+
+        match self
+            .schedule_manager
+            .trigger_schedule(&req.container_id, &req.schedule_id, &callback)
+            .await
+        {
+            Ok(()) => {
+                self.metrics.record_grpc_request("TriggerSchedule", "ok", start.elapsed());
+                Ok(Response::new(TriggerScheduleResponse {
+                    success: true,
+                    error: None,
+                }))
+            }
+            Err(e) => {
+                self.metrics.record_grpc_request("TriggerSchedule", "error", start.elapsed());
+                Ok(Response::new(TriggerScheduleResponse {
+                    success: false,
+                    error: Some(format!("{}", e)),
+                }))
+            }
+        }
+    }
+}
+
+/// Convert internal BackupInfo to protobuf BackupInfo
+fn convert_backup_info(info: &crate::backup::BackupInfo) -> super::proto::BackupInfo {
+    use crate::backup::BackupStatus as InternalBackupStatus;
+
+    let status = match info.status {
+        InternalBackupStatus::Pending => BackupStatus::BackupPending,
+        InternalBackupStatus::InProgress => BackupStatus::BackupInProgress,
+        InternalBackupStatus::Completed => BackupStatus::BackupCompleted,
+        InternalBackupStatus::Failed => BackupStatus::BackupFailed,
+    };
+
+    super::proto::BackupInfo {
+        id: info.id.clone(),
+        container_id: info.container_id.clone(),
+        name: info.name.clone(),
+        size: info.size,
+        created_at: info.created_at,
+        checksum: info.checksum.clone(),
+        status: status as i32,
+        error: info.error.clone(),
+    }
+}
+
+/// Convert internal ScheduleInfo to protobuf ScheduleInfo
+fn convert_schedule_info(info: &crate::schedule::ScheduleInfo) -> super::proto::ScheduleInfo {
+    let tasks = info
+        .tasks
+        .iter()
+        .map(|t| super::proto::ScheduleTask {
+            task_type: t.task_type.to_i32(),
+            time_offset: t.time_offset,
+            payload: t.payload.clone(),
+        })
+        .collect();
+
+    super::proto::ScheduleInfo {
+        id: info.id.clone(),
+        container_id: info.container_id.clone(),
+        name: info.name.clone(),
+        cron_expression: info.cron_expression.clone(),
+        is_active: info.is_active,
+        created_at: info.created_at,
+        last_run_at: info.last_run_at,
+        next_run_at: info.next_run_at,
+        tasks,
     }
 }
 
@@ -783,6 +1534,7 @@ fn convert_container_state(state: &crate::container::ContainerState) -> Containe
         InternalStatus::Paused => ContainerStatus::StatusRunning, // Treat paused as running for now
         InternalStatus::Stopped => ContainerStatus::StatusStopped,
         InternalStatus::Failed => ContainerStatus::StatusFailed,
+        InternalStatus::Suspended => ContainerStatus::StatusSuspended,
     };
 
     ContainerState {
