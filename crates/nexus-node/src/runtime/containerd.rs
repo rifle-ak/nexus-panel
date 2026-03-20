@@ -421,11 +421,7 @@ impl ContainerRuntime for ContainerdRuntime {
     async fn attach(&self, id: &str) -> Result<Box<dyn ConsoleStream>> {
         info!("[Containerd] Attaching to container (read-only): {}", id);
 
-        // For now, return a placeholder stream
-        // Real implementation would use containerd's attach API
-        // This requires more complex stream handling with containerd's I/O pipes
-
-        Ok(Box::new(ContainerdConsoleStream::new(id)))
+        Ok(Box::new(ContainerdConsoleStream::new(id, &self.namespace)))
     }
 
     async fn attach_bidirectional(&self, id: &str) -> Result<Box<dyn BidirectionalConsole>> {
@@ -562,30 +558,81 @@ fn spec_to_oci(spec: &ContainerSpec) -> Result<String> {
         .map_err(|e| NodeError::Internal(format!("Failed to serialize OCI spec: {}", e)))
 }
 
-/// Placeholder console stream for Containerd
-/// Real implementation would use containerd's attach/exec API
+/// Console stream that reads from Containerd's stdout FIFO pipe
 struct ContainerdConsoleStream {
-    _container_id: String,
+    container_id: String,
+    namespace: String,
+    reader: Option<tokio::io::BufReader<tokio::fs::File>>,
+    initialized: bool,
 }
 
 impl ContainerdConsoleStream {
-    fn new(container_id: &str) -> Self {
+    fn new(container_id: &str, namespace: &str) -> Self {
         Self {
-            _container_id: container_id.to_string(),
+            container_id: container_id.to_string(),
+            namespace: namespace.to_string(),
+            reader: None,
+            initialized: false,
         }
+    }
+
+    /// Open the stdout FIFO created by containerd's runtime shim
+    async fn init(&mut self) -> Result<()> {
+        if self.initialized {
+            return Ok(());
+        }
+        self.initialized = true;
+
+        let stdout_path = format!(
+            "/run/containerd/io.containerd.runtime.v2.task/{}/{}/stdout",
+            self.namespace, self.container_id
+        );
+
+        debug!(
+            "Opening stdout FIFO for container {}: {}",
+            self.container_id, stdout_path
+        );
+
+        match tokio::fs::File::open(&stdout_path).await {
+            Ok(file) => {
+                self.reader = Some(tokio::io::BufReader::new(file));
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to open stdout FIFO {} for container {}: {}",
+                    stdout_path, self.container_id, e
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl ConsoleStream for ContainerdConsoleStream {
     async fn read_line(&mut self) -> Result<Option<String>> {
-        // TODO: Implement actual console streaming
-        // This would require:
-        // 1. Attaching to task's I/O
-        // 2. Reading from stdout/stderr streams
-        // 3. Handling EOF and errors
+        use tokio::io::AsyncBufReadExt;
 
-        Ok(None) // Return EOF for now
+        self.init().await?;
+
+        if let Some(ref mut reader) = self.reader {
+            let mut line = String::new();
+
+            match tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                reader.read_line(&mut line),
+            )
+            .await
+            {
+                Ok(Ok(0)) => Ok(None), // EOF
+                Ok(Ok(_)) => Ok(Some(line)),
+                Ok(Err(e)) => Err(NodeError::Internal(format!("Console read error: {}", e))),
+                Err(_) => Ok(None), // Timeout - no data available yet
+            }
+        } else {
+            Ok(None) // No reader available
+        }
     }
 }
 

@@ -651,18 +651,45 @@ impl NodeService for NodeServiceImpl {
 
         self.metrics.record_grpc_request("GetNodeInfo", "ok", start.elapsed());
 
+        // Collect actual system resource metrics
+        let resources = {
+            use sysinfo::{Disks, System};
+
+            let mut sys = System::new();
+            sys.refresh_cpu_all();
+            sys.refresh_memory();
+
+            let total_cpu_millicores = (sys.cpus().len() as u64) * 1000;
+            let total_memory_bytes = sys.total_memory();
+            let used_memory_bytes = sys.used_memory();
+
+            // Estimate CPU usage across all cores (as millicores)
+            let used_cpu_millicores = sys.cpus().iter().fold(0u64, |acc, cpu| {
+                acc + (cpu.cpu_usage() * 10.0) as u64 // percent -> millicores per core
+            });
+
+            // Get disk stats for the root filesystem
+            let disks = Disks::new_with_refreshed_list();
+            let (total_disk_bytes, used_disk_bytes) = disks
+                .iter()
+                .find(|d| d.mount_point() == std::path::Path::new("/"))
+                .map(|d| (d.total_space(), d.total_space() - d.available_space()))
+                .unwrap_or((0, 0));
+
+            NodeResources {
+                total_cpu_millicores,
+                total_memory_bytes,
+                total_disk_bytes,
+                used_cpu_millicores,
+                used_memory_bytes,
+                used_disk_bytes,
+            }
+        };
+
         Ok(Response::new(GetNodeInfoResponse {
             node_id: self.node_id.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            resources: Some(NodeResources {
-                // TODO: Get actual resource info from system
-                total_cpu_millicores: 4000,
-                total_memory_bytes: 8 * 1024 * 1024 * 1024,
-                total_disk_bytes: 100 * 1024 * 1024 * 1024,
-                used_cpu_millicores: 0,
-                used_memory_bytes: 0,
-                used_disk_bytes: 0,
-            }),
+            resources: Some(resources),
             container_count,
             uptime_secs: uptime,
         }))
