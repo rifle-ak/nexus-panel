@@ -637,6 +637,7 @@ impl CodeflingAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn test_supported_games() {
