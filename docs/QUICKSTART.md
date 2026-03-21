@@ -4,16 +4,40 @@ Get Nexus Panel running in minutes.
 
 ## Prerequisites
 
-- Rust 1.75+
+- Rust 1.85+ (latest stable recommended)
 - Linux 5.15+ (for cgroup v2, eBPF)
 - Containerd 1.7+ (for production)
+
+## Install Dependencies
+
+### Rust
+
+```bash
+# Install Rust (if not installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Or update an existing installation
+rustup update stable
+```
+
+### Containerd
+
+Required for production use. In development mode, a mock runtime is used automatically if containerd is unavailable.
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y containerd
+
+# Enable and start
+sudo systemctl enable containerd
+sudo systemctl start containerd
+```
 
 ## Build
 
 ```bash
-# Install Rust (if needed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
 # Clone and build
 git clone https://github.com/rifle-ak/nexus-panel.git
 cd nexus-panel

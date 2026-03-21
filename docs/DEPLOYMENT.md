@@ -12,6 +12,22 @@ Deploy Nexus Node in a production environment.
 
 ## Install Dependencies
 
+### Rust Toolchain
+
+Rust 1.85+ (latest stable) is required to build Nexus Node. Some dependencies use Rust edition 2024 features that are not available in older toolchains.
+
+```bash
+# Install Rust (if not installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Or update an existing installation to latest stable
+rustup update stable
+
+# Verify version (must be 1.85+)
+cargo --version
+```
+
 ### Containerd
 
 ```bash
@@ -42,7 +58,7 @@ curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_
 ## Install Nexus Node
 
 ```bash
-# Download or build
+# Build
 cargo build --release
 
 # Install binary
