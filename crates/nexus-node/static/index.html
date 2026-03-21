@@ -37,6 +37,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           Blueprints
         </a>
+        <a href="#/marketplace" class="nav-item" data-page="marketplace">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+          Mod Marketplace
+        </a>
       </div>
       <div class="nav-section">
         <div class="nav-section-title">MANAGEMENT</div>
@@ -203,6 +207,33 @@
     <div class="blueprint-grid" id="blueprint-grid"></div>
   </template>
 
+  <template id="tmpl-marketplace">
+    <div class="page-header">
+      <h1>Mod Marketplace</h1>
+    </div>
+    <p class="text-muted" style="margin-bottom:1rem">Search mods from Umod, Codefling, and Lone.Design.</p>
+    <div class="flex gap-1" style="margin-bottom:1.5rem;flex-wrap:wrap">
+      <input type="text" class="form-input" id="mp-search" placeholder="Search mods..." style="flex:1;min-width:200px">
+      <select class="form-input" id="mp-game" style="width:auto">
+        <option value="">All Games</option>
+        <option value="rust">Rust</option>
+        <option value="minecraft">Minecraft</option>
+        <option value="valheim">Valheim</option>
+        <option value="ark">ARK</option>
+        <option value="7daystodie">7 Days to Die</option>
+      </select>
+      <select class="form-input" id="mp-provider" style="width:auto">
+        <option value="">All Providers</option>
+        <option value="umod">Umod</option>
+        <option value="codefling">Codefling</option>
+        <option value="lone_design">Lone.Design</option>
+      </select>
+    </div>
+    <div class="blueprint-grid" id="mp-results">
+      <p class="text-muted">Enter a search term to find mods.</p>
+    </div>
+  </template>
+
   <template id="tmpl-analytics">
     <div class="page-header"><h1>Analytics</h1></div>
     <div class="stats-grid" id="analytics-stats"></div>
@@ -216,12 +247,12 @@
     <div class="page-header"><h1>Security</h1></div>
     <div class="card" style="padding:1.5rem">
       <h3>Firewall & DDoS Protection</h3>
-      <p class="text-muted" style="margin-top:0.5rem">XDP/eBPF firewall with game-specific profiles. Configure rules per-server in the server settings tab.</p>
+      <p class="text-muted" style="margin-top:0.5rem">XDP/eBPF firewall with game-specific profiles. Per-server rule configuration is on the roadmap.</p>
       <div class="feature-grid" style="margin-top:1.5rem">
-        <div class="feature-card"><h4>SYN Flood Protection</h4><span class="badge badge-success">Active</span></div>
-        <div class="feature-card"><h4>UDP Amplification Guard</h4><span class="badge badge-success">Active</span></div>
-        <div class="feature-card"><h4>Per-IP Rate Limiting</h4><span class="badge badge-success">Active</span></div>
-        <div class="feature-card"><h4>Connection Tracking</h4><span class="badge badge-success">Active</span></div>
+        <div class="feature-card"><h4>SYN Flood Protection</h4><span class="badge badge-info">Planned</span></div>
+        <div class="feature-card"><h4>UDP Amplification Guard</h4><span class="badge badge-info">Planned</span></div>
+        <div class="feature-card"><h4>Per-IP Rate Limiting</h4><span class="badge badge-info">Planned</span></div>
+        <div class="feature-card"><h4>Connection Tracking</h4><span class="badge badge-info">Planned</span></div>
       </div>
     </div>
     <div class="card" style="padding:1.5rem;margin-top:1rem">
@@ -233,6 +264,10 @@
   <template id="tmpl-settings">
     <div class="page-header"><h1>Node Settings</h1></div>
     <div class="card" style="padding:1.5rem">
+      <h3>Software Updates</h3>
+      <div id="update-status" style="margin-top:1rem"><span class="text-muted">Loading...</span></div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
       <h3>Node Configuration</h3>
       <div id="node-config" style="margin-top:1rem"></div>
     </div>
@@ -241,12 +276,12 @@
   <template id="tmpl-users">
     <div class="page-header"><h1>Users</h1></div>
     <div class="card" style="padding:1.5rem">
-      <p class="text-muted">User management with role-based access control. Configure sub-users and permissions per server.</p>
+      <p class="text-muted">User management with role-based access control. These features are on the roadmap.</p>
       <div class="feature-grid" style="margin-top:1.5rem">
-        <div class="feature-card"><h4>Sub-user Permissions</h4><p class="text-muted text-sm">Granular per-server permissions</p></div>
-        <div class="feature-card"><h4>API Key Management</h4><p class="text-muted text-sm">Create and revoke API keys</p></div>
-        <div class="feature-card"><h4>JWT Authentication</h4><p class="text-muted text-sm">Token-based access control</p></div>
-        <div class="feature-card"><h4>Audit Trail</h4><p class="text-muted text-sm">Full action logging</p></div>
+        <div class="feature-card"><h4>Sub-user Permissions</h4><p class="text-muted text-sm">Granular per-server permissions</p><span class="badge badge-info">Planned</span></div>
+        <div class="feature-card"><h4>API Key Management</h4><p class="text-muted text-sm">Create and revoke API keys</p><span class="badge badge-info">Planned</span></div>
+        <div class="feature-card"><h4>JWT Authentication</h4><p class="text-muted text-sm">Token-based access control</p><span class="badge badge-success">Backend Ready</span></div>
+        <div class="feature-card"><h4>Audit Trail</h4><p class="text-muted text-sm">Full action logging</p><span class="badge badge-success">Backend Ready</span></div>
       </div>
     </div>
   </template>

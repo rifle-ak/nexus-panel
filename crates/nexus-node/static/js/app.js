@@ -25,6 +25,298 @@ const BLUEPRINTS = [
   { id: 'palworld',        name: 'Palworld',        desc: 'Palworld Dedicated Server with optimised memory and CPU settings.', tags: ['popular','survival'], game: 'palworld' },
 ];
 
+// ── Per-game YAML configs ────────────────────────────────────────
+
+const BLUEPRINT_YAMLS = {
+'minecraft-paper': `blueprint_version: "1.0"
+metadata:
+  name: Minecraft Paper Server
+  game: minecraft
+  version: "1.21"
+  author: Nexus Panel
+  description: Paper 1.21 with optimised JVM flags and plugin support
+  tags: [java, popular, auto-scale]
+
+container:
+  image: itzg/minecraft-server:latest
+  environment:
+    TYPE: PAPER
+    VERSION: "1.21"
+    EULA: "TRUE"
+    MEMORY: "2G"
+
+resources:
+  cpu:
+    min: 1000
+    max: 4000
+  memory:
+    min: 2Gi
+    max: 4Gi
+  disk:
+    min: 10Gi
+
+startup:
+  command: java
+  args: ["-jar", "paper.jar", "--nogui"]
+  working_dir: /data
+
+networking:
+  ports:
+    - name: game
+      internal: "25565"
+      protocol: tcp
+      required: true
+    - name: rcon
+      internal: "25575"
+      protocol: tcp
+      required: false
+
+performance:
+  jvm:
+    gc: g1gc
+    initial_heap: "2G"
+    max_heap: "4G"
+    aikar_flags: true
+
+mods:
+  loader: bukkit
+  mods_dir: /data/plugins
+  config_dir: /data/plugins
+  marketplaces: [spigot, modrinth]
+
+backups:
+  paths: [/data/world, /data/plugins, /data/server.properties]
+  exclude: ["*.tmp", "*.log"]
+  retention: 5`,
+
+'rust': `blueprint_version: "1.0"
+metadata:
+  name: Rust Dedicated Server
+  game: rust
+  version: "latest"
+  author: Nexus Panel
+  description: Rust with Oxide mod support and DDoS protection
+  tags: [popular, oxide, anticheat]
+
+container:
+  image: gameservermanagers/gameserver:rust
+  environment:
+    SERVER_NAME: "Rust Server"
+    RCON_PASSWORD: "changeme"
+    MAX_PLAYERS: "100"
+
+resources:
+  cpu:
+    min: 2000
+    max: 6000
+  memory:
+    min: 4Gi
+    max: 8Gi
+  disk:
+    min: 20Gi
+
+startup:
+  command: ./RustDedicated
+  args: ["-batchmode", "+server.port", "28015", "+rcon.port", "28016", "+rcon.web", "1"]
+  working_dir: /home/container
+
+networking:
+  ports:
+    - name: game
+      internal: "28015"
+      protocol: udp
+      required: true
+    - name: rcon
+      internal: "28016"
+      protocol: tcp
+      required: false
+
+mods:
+  loader: oxide
+  mods_dir: /home/container/oxide/plugins
+  config_dir: /home/container/oxide/config
+  marketplaces: [umod, codefling]
+
+security:
+  firewall_rules:
+    - type: connection_rate
+      name: anti-ddos
+      limit: "200/s"
+      action: drop
+
+backups:
+  paths: [/home/container/server, /home/container/oxide]
+  exclude: ["*.log", "*.tmp"]
+  retention: 5`,
+
+'valheim': `blueprint_version: "1.0"
+metadata:
+  name: Valheim Dedicated Server
+  game: valheim
+  version: "latest"
+  author: Nexus Panel
+  description: Valheim with BepInEx mod framework and automatic updates
+  tags: [survival, mods, bepinex]
+
+container:
+  image: lloesche/valheim-server:latest
+  environment:
+    SERVER_NAME: "Valheim Server"
+    SERVER_PASS: "changeme"
+    WORLD_NAME: "Dedicated"
+
+resources:
+  cpu:
+    min: 1000
+    max: 4000
+  memory:
+    min: 2Gi
+    max: 4Gi
+  disk:
+    min: 5Gi
+
+startup:
+  command: ./valheim_server.x86_64
+  args: ["-name", "Valheim Server", "-port", "2456", "-world", "Dedicated"]
+  working_dir: /home/container
+
+networking:
+  ports:
+    - name: game
+      internal: "2456"
+      protocol: udp
+      required: true
+    - name: query
+      internal: "2457"
+      protocol: udp
+      required: true
+
+mods:
+  loader: bepinex
+  mods_dir: /home/container/BepInEx/plugins
+  config_dir: /home/container/BepInEx/config
+  marketplaces: []
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 896660
+  auto_update: true
+
+backups:
+  paths: [/home/container/worlds, /home/container/BepInEx]
+  exclude: ["*.log"]
+  retention: 5`,
+
+'cs2': `blueprint_version: "1.0"
+metadata:
+  name: Counter-Strike 2 Server
+  game: cs2
+  version: "latest"
+  author: Nexus Panel
+  description: CS2 with GSLT, competitive configs, and workshop map support
+  tags: [competitive, esports, srcds]
+
+container:
+  image: joedwards32/cs2:latest
+  environment:
+    CS2_SERVERNAME: "CS2 Server"
+    CS2_PORT: "27015"
+    CS2_MAXPLAYERS: "12"
+    CS2_GAMETYPE: "0"
+    CS2_GAMEMODE: "1"
+
+resources:
+  cpu:
+    min: 2000
+    max: 4000
+  memory:
+    min: 2Gi
+    max: 4Gi
+  disk:
+    min: 40Gi
+
+startup:
+  command: ./cs2
+  args: ["-dedicated", "+map", "de_dust2"]
+  working_dir: /home/container
+
+networking:
+  ports:
+    - name: game
+      internal: "27015"
+      protocol: both
+      required: true
+    - name: gotv
+      internal: "27020"
+      protocol: udp
+      required: false
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 730
+  auto_update: true
+
+backups:
+  paths: [/home/container/game/csgo/cfg]
+  exclude: ["*.log"]
+  retention: 5`,
+
+'palworld': `blueprint_version: "1.0"
+metadata:
+  name: Palworld Dedicated Server
+  game: palworld
+  version: "latest"
+  author: Nexus Panel
+  description: Palworld with optimised memory and CPU settings
+  tags: [popular, survival]
+
+container:
+  image: thijsvanloef/palworld-server-docker:latest
+  environment:
+    SERVER_NAME: "Palworld Server"
+    MAX_PLAYERS: "32"
+    ADMIN_PASSWORD: "changeme"
+
+resources:
+  cpu:
+    min: 4000
+    max: 8000
+  memory:
+    min: 8Gi
+    max: 16Gi
+  disk:
+    min: 30Gi
+
+startup:
+  command: ./PalServer.sh
+  args: ["-port=8211", "-players=32"]
+  working_dir: /home/container
+
+networking:
+  ports:
+    - name: game
+      internal: "8211"
+      protocol: udp
+      required: true
+    - name: query
+      internal: "27015"
+      protocol: udp
+      required: true
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 2394010
+  auto_update: true
+
+backups:
+  paths: [/home/container/Pal/Saved]
+  exclude: ["*.log", "*.tmp"]
+  retention: 5`,
+};
+
 // ── Toast notifications ───────────────────────────────────────────
 
 function toast(msg, type = 'info') {
@@ -72,6 +364,7 @@ function route() {
       else { renderDashboard(); }
       break;
     case 'blueprints':  renderBlueprints(); break;
+    case 'marketplace': renderMarketplace(); break;
     case 'analytics':   renderAnalytics(); break;
     case 'security':    renderPage('security'); break;
     case 'settings':    renderSettings(); break;
@@ -632,12 +925,8 @@ NX.removeSchedule = async function(scheduleId) {
 
 // ── Create Server ─────────────────────────────────────────────────
 
-NX.showCreateServer = function() {
-  document.getElementById('modal-title').textContent = 'Create Server';
-  document.getElementById('modal-body').innerHTML = `
-    <div class="form-group">
-      <label class="form-label">Blueprint Config (YAML)</label>
-      <textarea class="form-input" id="create-yaml" style="width:100%;height:280px" placeholder="Paste your blueprint YAML here...">metadata:
+NX.showCreateServer = function(prefillYaml) {
+  const yaml = prefillYaml || `metadata:
   name: My Server
   game: minecraft
   version: "1.0"
@@ -663,7 +952,12 @@ networking:
   ports:
     - name: game
       internal: "25565"
-      protocol: tcp</textarea>
+      protocol: tcp`;
+  document.getElementById('modal-title').textContent = 'Create Server';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      <label class="form-label">Blueprint Config (YAML)</label>
+      <textarea class="form-input" id="create-yaml" style="width:100%;height:280px" placeholder="Paste your blueprint YAML here...">${esc(yaml)}</textarea>
     </div>
     <div class="form-group">
       <label class="form-label">
@@ -711,9 +1005,14 @@ function renderBlueprints() {
 }
 
 NX.deployBlueprint = async function(bpId) {
-  // In a real deployment, this would fetch the blueprint YAML from /blueprints/{id}.yaml
-  toast(`Blueprint "${bpId}" selected. Use Create Server with the matching YAML.`, 'info');
-  NX.showCreateServer();
+  const yaml = BLUEPRINT_YAMLS[bpId];
+  if (!yaml) {
+    toast(`Unknown blueprint "${bpId}"`, 'error');
+    return;
+  }
+  const bp = BLUEPRINTS.find(b => b.id === bpId);
+  toast(`Loading ${bp ? bp.name : bpId} blueprint`, 'success');
+  NX.showCreateServer(yaml);
 };
 
 // ── Analytics ─────────────────────────────────────────────────────
@@ -771,7 +1070,96 @@ async function renderSettings() {
       `;
     }
   } catch (e) { toast(e.message, 'error'); }
+  NX.checkForUpdates();
 }
+
+// ── Mod Marketplace ──────────────────────────────────────────────
+
+async function renderMarketplace() {
+  renderPage('marketplace');
+  const searchInput = document.getElementById('mp-search');
+  const gameFilter = document.getElementById('mp-game');
+  const providerFilter = document.getElementById('mp-provider');
+  const results = document.getElementById('mp-results');
+  if (!searchInput || !results) return;
+
+  async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) { results.innerHTML = '<p class="text-muted">Enter a search term to find mods.</p>'; return; }
+    results.innerHTML = '<p class="text-muted">Searching...</p>';
+    try {
+      const params = new URLSearchParams({ q, limit: '24' });
+      if (gameFilter.value) params.set('game', gameFilter.value);
+      if (providerFilter.value) params.set('provider', providerFilter.value);
+      const mods = await api('/marketplace/search?' + params);
+      if (!mods.length) { results.innerHTML = '<p class="text-muted">No mods found.</p>'; return; }
+      results.innerHTML = mods.map(m => `
+        <div class="blueprint-card" onclick="NX.viewMod('${esc(m.provider)}','${esc(m.id)}')">
+          <div class="flex items-center gap-1" style="margin-bottom:0.5rem">
+            <h3 style="margin:0;flex:1">${esc(m.name)}</h3>
+            <span class="badge badge-info">${esc(m.provider)}</span>
+          </div>
+          <p class="text-sm text-muted" style="margin-bottom:0.5rem">${esc(m.description).slice(0, 120)}${m.description.length > 120 ? '...' : ''}</p>
+          <div class="flex items-center gap-1 text-xs text-muted">
+            <span>by ${esc(m.author)}</span>
+            <span>&middot;</span>
+            <span>${Number(m.downloads).toLocaleString()} downloads</span>
+            ${m.rating ? `<span>&middot;</span><span>${m.rating.toFixed(1)}/5</span>` : ''}
+          </div>
+        </div>
+      `).join('');
+    } catch (e) { results.innerHTML = `<p class="text-danger">${esc(e.message)}</p>`; }
+  }
+
+  let debounce = null;
+  searchInput.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(doSearch, 400); });
+  gameFilter.addEventListener('change', doSearch);
+  providerFilter.addEventListener('change', doSearch);
+}
+
+NX.viewMod = async function(provider, modId) {
+  try {
+    const mod = await api(`/marketplace/mods/${encodeURIComponent(provider)}/${encodeURIComponent(modId)}`);
+    document.getElementById('modal-title').textContent = mod.name;
+    document.getElementById('modal-body').innerHTML = `
+      <div style="margin-bottom:1rem">
+        <span class="badge badge-info">${esc(mod.provider)}</span>
+        <span class="text-muted text-sm" style="margin-left:0.5rem">by ${esc(mod.author)}</span>
+      </div>
+      <p>${esc(mod.description)}</p>
+      <div class="kv-row" style="margin-top:1rem"><span class="kv-key">Latest Version</span><span class="kv-value">${esc(mod.latest_version)}</span></div>
+      <div class="kv-row"><span class="kv-key">Downloads</span><span class="kv-value">${Number(mod.downloads).toLocaleString()}</span></div>
+      ${mod.rating ? `<div class="kv-row"><span class="kv-key">Rating</span><span class="kv-value">${mod.rating.toFixed(1)} / 5</span></div>` : ''}
+      ${mod.url ? `<div style="margin-top:1rem"><a href="${esc(mod.url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm">View on ${esc(mod.provider)}</a></div>` : ''}
+    `;
+    document.getElementById('modal-overlay').classList.remove('hidden');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ── Update check ─────────────────────────────────────────────────
+
+NX.checkForUpdates = async function() {
+  const el = document.getElementById('update-status');
+  if (!el) return;
+  el.innerHTML = '<span class="text-muted">Checking for updates...</span>';
+  try {
+    const info = await api('/node/update-check');
+    if (info.update_available) {
+      el.innerHTML = `
+        <span class="badge badge-warning" style="margin-right:0.5rem">Update Available</span>
+        <span>v${esc(info.latest_version)} is available (you have v${esc(info.current_version)})</span>
+        <div style="margin-top:0.75rem">
+          <p class="text-sm text-muted">Run the installer to update:</p>
+          <code class="text-sm" style="display:block;margin-top:0.5rem;padding:0.5rem;background:var(--bg-primary);border-radius:var(--radius-sm)">curl -fsSL https://get.nexuspanel.io | sudo bash</code>
+        </div>
+      `;
+    } else {
+      el.innerHTML = `<span class="badge badge-success" style="margin-right:0.5rem">Up to Date</span><span>v${esc(info.current_version)}</span>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<span class="text-muted">Could not check for updates: ${esc(e.message)}</span>`;
+  }
+};
 
 // ── Modal ─────────────────────────────────────────────────────────
 
