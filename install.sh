@@ -423,24 +423,17 @@ LOG_FORMAT=json
 EOF
 
     # TLS config
-    if [ "$ENABLE_TLS" = "true" ] && [ -n "$PANEL_DOMAIN" ]; then
-        cat >> "$config_file" <<EOF
+    # Note: When using Caddy as a reverse proxy (ENABLE_TLS=true with a domain),
+    # Caddy handles TLS termination. The nexus-node binary does NOT need its own
+    # TLS — it listens on localhost and Caddy proxies HTTPS traffic to it.
+    cat >> "$config_file" <<EOF
 
-# TLS (managed by Let's Encrypt via Caddy)
-TLS_ENABLED=true
-TLS_CERT_PATH=/etc/nexus-node/tls/cert.pem
-TLS_KEY_PATH=/etc/nexus-node/tls/key.pem
-EOF
-    else
-        cat >> "$config_file" <<EOF
-
-# TLS (uncomment to enable)
+# TLS (uncomment to enable direct TLS on the gRPC server, without a reverse proxy)
 # TLS_ENABLED=true
 # TLS_CERT_PATH=$NEXUS_CONFIG/server.crt
 # TLS_KEY_PATH=$NEXUS_CONFIG/server.key
 # TLS_CA_CERT_PATH=$NEXUS_CONFIG/ca.crt
 EOF
-    fi
 
     # Auth config
     if [ "$ENABLE_AUTH" = "true" ]; then
