@@ -2,38 +2,77 @@
 
 Get Nexus Panel running in minutes.
 
-## Prerequisites
+## Automatic Install (Recommended)
 
-- Rust 1.75+
+One command installs all dependencies, builds the project, and starts the node as a systemd service:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+```
+
+Or if you've already cloned the repo:
+
+```bash
+sudo bash install.sh
+```
+
+The installer handles: Rust, containerd, protobuf compiler, CNI plugins, building both binaries, creating config files, and setting up the systemd service.
+
+Once complete, verify:
+
+```bash
+curl http://localhost:9090/health
+systemctl status nexus-node
+```
+
+## Manual Install
+
+If you prefer to install manually, follow the steps below.
+
+### Prerequisites
+
+- Rust 1.85+ (latest stable recommended)
 - Linux 5.15+ (for cgroup v2, eBPF)
 - Containerd 1.7+ (for production)
+- Protobuf compiler (`protoc`)
 
-## Build
+### Install Dependencies
 
 ```bash
-# Install Rust (if needed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y containerd protobuf-compiler gcc g++ make
 
-# Clone and build
+# Install Rust (if not installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Or update an existing installation
+rustup update stable
+```
+
+### Build
+
+```bash
 git clone https://github.com/rifle-ak/nexus-panel.git
 cd nexus-panel
-cargo build --release
+cargo build --release --workspace
 ```
 
-## Run the Node Daemon
+### Run the Node Daemon
 
-### Development Mode
+#### Development Mode
 
-Uses mock runtime if Containerd is unavailable:
+Uses mock runtime if containerd is unavailable:
 
 ```bash
-cargo run --release --bin nexus-node
+cargo run --release -p nexus-node --bin nexus-node
 ```
 
-### Production Mode
+#### Production Mode
 
 ```bash
-# Start Containerd
+# Start containerd
 sudo systemctl start containerd
 
 # Configure environment
@@ -66,16 +105,16 @@ grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/ListContainers
 
 ```bash
 # Single egg
-./target/release/nexus-panel convert --input egg.json --output config.yaml
+nexus-panel convert --input egg.json --output config.yaml
 
 # Bulk import
-./target/release/nexus-panel import --input-dir ./eggs --output-dir ./configs
+nexus-panel import --input-dir ./eggs --output-dir ./configs
 
 # From GitHub
-./target/release/nexus-panel clone --repo https://github.com/parkervcp/eggs
+nexus-panel clone --repo https://github.com/parkervcp/eggs
 
 # Validate config
-./target/release/nexus-panel validate --input config.yaml
+nexus-panel validate --input config.yaml
 ```
 
 ### CLI Options
@@ -155,10 +194,10 @@ grpcurl -plaintext -d '{
 
 ```bash
 # Debug logging
-RUST_LOG=debug cargo run --bin nexus-node
+RUST_LOG=debug cargo run -p nexus-node --bin nexus-node
 
 # Specific module
-RUST_LOG=nexus_node=debug cargo run --bin nexus-node
+RUST_LOG=nexus_node=debug cargo run -p nexus-node --bin nexus-node
 ```
 
 ## Development

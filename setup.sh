@@ -1,39 +1,11 @@
 #!/bin/bash
-set -e
-
-echo "🚀 Nexus Panel - Quick Start"
+# Legacy setup script - redirects to the full installer
+echo "This script has been replaced by install.sh"
 echo ""
-
-# Check if Rust is installed
-if ! command -v cargo &> /dev/null; then
-    echo "📦 Installing Rust..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source $HOME/.cargo/env
-    echo "✅ Rust installed"
-else
-    echo "✅ Rust already installed"
-fi
-
+echo "For a full automated install (recommended):"
+echo "  sudo bash install.sh"
 echo ""
-echo "🔨 Building project..."
-cargo build --release
-
+echo "Or run directly from GitHub:"
+echo "  curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash"
 echo ""
-echo "✅ Build complete!"
-echo ""
-echo "📋 Available commands:"
-echo "   ./target/release/nexus-panel convert --input <egg.json> --output <config.yaml>"
-echo "   ./target/release/nexus-panel import --input-dir <dir> --output-dir <dir>"
-echo "   ./target/release/nexus-panel clone --repo <url> --output-dir <dir>"
-echo "   ./target/release/nexus-panel validate --input <config.yaml>"
-echo ""
-echo "🧪 Test the importer:"
-echo "   ./target/release/nexus-panel convert --input examples/rust-egg.json --output test.yaml"
-echo ""
-echo "📚 Documentation:"
-echo "   README.md      - Full documentation"
-echo "   SUMMARY.md     - What we built and why"
-echo "   DEVELOPER.md   - Contributing guide"
-echo "   ERROR_CODES.md - Error reference"
-echo "   LOGGING.md     - Logging guide"
-echo ""
+exit 1
