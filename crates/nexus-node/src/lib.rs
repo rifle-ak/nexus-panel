@@ -56,6 +56,9 @@ pub mod allocation;
 pub mod database;
 pub mod subuser;
 
+// Web panel
+pub mod web;
+
 // Enterprise modules
 pub mod audit;
 pub mod auth;
@@ -101,4 +104,5 @@ pub use rate_limit::{RateLimitConfig, RateLimiter_};
 pub use tls::{TlsConfig, TlsError};
 pub use tracing_middleware::{RequestContext, TracingConfig};
 pub use validation::{ValidationError, Validator};
+pub use web::start_web_server;
 pub use xdp_firewall::{FirewallConfig, FirewallRule, GameType, XdpFirewall};

@@ -39,17 +39,15 @@ impl ContainerdRuntime {
             self.socket_path, self.namespace
         );
 
-        // Containerd uses Unix domain sockets, prepend "unix://" scheme
-        let endpoint = if self.socket_path.starts_with("unix://") {
-            self.socket_path.clone()
-        } else {
-            format!("unix://{}", self.socket_path)
-        };
+        // Strip any "unix://" prefix to get the raw filesystem path
+        let socket_path = self
+            .socket_path
+            .strip_prefix("unix://")
+            .unwrap_or(&self.socket_path);
 
-        // Connect to Containerd via Unix socket
-        let channel = Channel::from_shared(endpoint)
-            .map_err(|e| NodeError::ContainerdError(format!("Invalid endpoint: {}", e)))?
-            .connect()
+        // Use the containerd-client crate's connect helper which properly
+        // creates a Unix domain socket connection via tower::service_fn
+        let channel = containerd_client::connect(socket_path)
             .await
             .map_err(|e| NodeError::ContainerdError(format!("Failed to connect: {}", e)))?;
 

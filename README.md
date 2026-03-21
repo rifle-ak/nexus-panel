@@ -4,6 +4,8 @@ A high-performance game server control panel built in Rust with security and per
 
 ## Features
 
+- **Built-in Web Panel**: Beautiful dark-themed admin UI — no separate frontend, no PHP, no MySQL
+- **Single Binary**: Panel + node + API all compiled into one binary via `install.sh`
 - **High Performance**: Rust-based daemon with sub-100ms command execution
 - **Security First**: XDP firewall, secrets management, sandboxed execution
 - **Blueprints**: Superior game server configs with performance tuning, auto-scaling, mod support

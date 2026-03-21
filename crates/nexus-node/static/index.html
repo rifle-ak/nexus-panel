@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus Panel</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+          <line x1="12" y1="22" x2="12" y2="15.5"/>
+          <polyline points="22 8.5 12 15.5 2 8.5"/>
+          <polyline points="2 15.5 12 8.5 22 15.5"/>
+          <line x1="12" y1="2" x2="12" y2="8.5"/>
+        </svg>
+        <span class="logo-text">Nexus Panel</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-title">MAIN</div>
+        <a href="#/" class="nav-item active" data-page="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Dashboard
+        </a>
+        <a href="#/servers" class="nav-item" data-page="servers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          Servers
+        </a>
+        <a href="#/blueprints" class="nav-item" data-page="blueprints">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Blueprints
+        </a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-title">MANAGEMENT</div>
+        <a href="#/users" class="nav-item" data-page="users">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Users
+        </a>
+        <a href="#/analytics" class="nav-item" data-page="analytics">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Analytics
+        </a>
+        <a href="#/security" class="nav-item" data-page="security">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Security
+        </a>
+        <a href="#/settings" class="nav-item" data-page="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </a>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="node-badge">
+        <span class="node-dot"></span>
+        <span id="sidebar-node-id">Node</span>
+      </div>
+      <div class="version-text" id="sidebar-version"></div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main id="main" class="main">
+    <div id="page-content"></div>
+  </main>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Page templates (hidden) -->
+  <template id="tmpl-dashboard">
+    <div class="page-header">
+      <h1>Dashboard</h1>
+      <div class="header-actions">
+        <button class="btn btn-primary" onclick="NX.showCreateServer()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Create Server
+        </button>
+      </div>
+    </div>
+    <div class="stats-grid" id="stats-grid"></div>
+    <div class="card">
+      <div class="card-header">
+        <h2>Servers</h2>
+        <input type="text" class="search-input" placeholder="Search servers..." id="server-search" oninput="NX.filterServers(this.value)">
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>Status</th>
+              <th>Image</th>
+              <th>Restarts</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="server-table-body"></tbody>
+        </table>
+        <div id="no-servers" class="empty-state" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <p>No servers yet</p>
+          <button class="btn btn-primary" onclick="NX.showCreateServer()">Create your first server</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tmpl-server-detail">
+    <div class="page-header">
+      <div class="breadcrumb">
+        <a href="#/servers">Servers</a>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg>
+        <span id="detail-server-name"></span>
+      </div>
+      <div class="header-actions" id="detail-actions"></div>
+    </div>
+    <div class="detail-status-bar" id="detail-status-bar"></div>
+    <div class="tabs" id="detail-tabs">
+      <button class="tab active" data-tab="console" onclick="NX.switchTab('console')">Console</button>
+      <button class="tab" data-tab="files" onclick="NX.switchTab('files')">Files</button>
+      <button class="tab" data-tab="backups" onclick="NX.switchTab('backups')">Backups</button>
+      <button class="tab" data-tab="schedules" onclick="NX.switchTab('schedules')">Schedules</button>
+      <button class="tab" data-tab="settings" onclick="NX.switchTab('settings')">Settings</button>
+    </div>
+    <div class="tab-content" id="tab-console">
+      <div class="console-container">
+        <div id="terminal" class="terminal-box"></div>
+        <div class="console-input-row">
+          <span class="console-prompt">$</span>
+          <input type="text" id="console-input" class="console-input" placeholder="Type a command..." onkeydown="if(event.key==='Enter')NX.sendCommand()">
+          <button class="btn btn-sm btn-primary" onclick="NX.sendCommand()">Send</button>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content hidden" id="tab-files">
+      <div class="file-toolbar">
+        <div class="file-breadcrumb" id="file-breadcrumb"></div>
+        <div class="file-actions">
+          <button class="btn btn-sm" onclick="NX.createNewFile()">New File</button>
+          <button class="btn btn-sm" onclick="NX.createNewFolder()">New Folder</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Size</th><th>Modified</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="file-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tab-content hidden" id="tab-backups">
+      <div class="card-header" style="padding:0 0 1rem 0">
+        <h3>Backups</h3>
+        <button class="btn btn-sm btn-primary" onclick="NX.createBackup()">Create Backup</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Size</th><th>Date</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="backup-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tab-content hidden" id="tab-schedules">
+      <div class="card-header" style="padding:0 0 1rem 0">
+        <h3>Schedules</h3>
+        <button class="btn btn-sm btn-primary" onclick="NX.showCreateSchedule()">Create Schedule</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Name</th><th>Cron</th><th>Active</th><th>Last Run</th><th>Next Run</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="schedule-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tab-content hidden" id="tab-settings">
+      <div class="card" style="padding:1.5rem">
+        <h3 style="margin-bottom:1rem">Server Information</h3>
+        <div id="server-settings-info"></div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tmpl-blueprints">
+    <div class="page-header">
+      <h1>Blueprints</h1>
+    </div>
+    <p class="text-muted" style="margin-bottom:1.5rem">Pre-built game server configurations ready to deploy.</p>
+    <div class="blueprint-grid" id="blueprint-grid"></div>
+  </template>
+
+  <template id="tmpl-analytics">
+    <div class="page-header"><h1>Analytics</h1></div>
+    <div class="stats-grid" id="analytics-stats"></div>
+    <div class="card" style="padding:1.5rem">
+      <h3>Node Health</h3>
+      <div id="health-checks" style="margin-top:1rem"></div>
+    </div>
+  </template>
+
+  <template id="tmpl-security">
+    <div class="page-header"><h1>Security</h1></div>
+    <div class="card" style="padding:1.5rem">
+      <h3>Firewall & DDoS Protection</h3>
+      <p class="text-muted" style="margin-top:0.5rem">XDP/eBPF firewall with game-specific profiles. Configure rules per-server in the server settings tab.</p>
+      <div class="feature-grid" style="margin-top:1.5rem">
+        <div class="feature-card"><h4>SYN Flood Protection</h4><span class="badge badge-success">Active</span></div>
+        <div class="feature-card"><h4>UDP Amplification Guard</h4><span class="badge badge-success">Active</span></div>
+        <div class="feature-card"><h4>Per-IP Rate Limiting</h4><span class="badge badge-success">Active</span></div>
+        <div class="feature-card"><h4>Connection Tracking</h4><span class="badge badge-success">Active</span></div>
+      </div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Authentication</h3>
+      <div id="auth-status" style="margin-top:1rem"></div>
+    </div>
+  </template>
+
+  <template id="tmpl-settings">
+    <div class="page-header"><h1>Node Settings</h1></div>
+    <div class="card" style="padding:1.5rem">
+      <h3>Node Configuration</h3>
+      <div id="node-config" style="margin-top:1rem"></div>
+    </div>
+  </template>
+
+  <template id="tmpl-users">
+    <div class="page-header"><h1>Users</h1></div>
+    <div class="card" style="padding:1.5rem">
+      <p class="text-muted">User management with role-based access control. Configure sub-users and permissions per server.</p>
+      <div class="feature-grid" style="margin-top:1.5rem">
+        <div class="feature-card"><h4>Sub-user Permissions</h4><p class="text-muted text-sm">Granular per-server permissions</p></div>
+        <div class="feature-card"><h4>API Key Management</h4><p class="text-muted text-sm">Create and revoke API keys</p></div>
+        <div class="feature-card"><h4>JWT Authentication</h4><p class="text-muted text-sm">Token-based access control</p></div>
+        <div class="feature-card"><h4>Audit Trail</h4><p class="text-muted text-sm">Full action logging</p></div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Create server modal -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="NX.closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h2 id="modal-title">Create Server</h2>
+        <button class="btn-icon" onclick="NX.closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
