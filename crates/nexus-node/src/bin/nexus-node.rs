@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_bind = std::env::var("GRPC_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let metrics_bind =
         std::env::var("METRICS_BIND").unwrap_or_else(|_| "127.0.0.1:9090".to_string());
+    let web_bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
     let containerd_socket = std::env::var("CONTAINERD_SOCKET")
         .unwrap_or_else(|_| "/run/containerd/containerd.sock".to_string());
     let containerd_namespace =
@@ -239,6 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting gRPC server on {}", grpc_addr);
     info!("Starting metrics server on {}", metrics_addr);
+    info!("Starting web panel on {}", web_bind);
 
     // Spawn metrics server
     let metrics_server_handle = {
@@ -246,6 +248,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             if let Err(e) = start_metrics_server(metrics, metrics_addr).await {
                 error!("Metrics server error: {}", e);
+            }
+        })
+    };
+
+    // Spawn web panel server
+    let web_server_handle = {
+        let web_state = nexus_node::web::AppState {
+            manager: manager.clone(),
+            backup_manager: backup_manager.clone(),
+            schedule_manager: schedule_manager.clone(),
+            health_checker: health_checker.clone(),
+            metrics: metrics.clone(),
+            node_id: node_id.clone(),
+            data_dir: data_dir.clone(),
+            start_time: std::time::SystemTime::now(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {
+                error!("Web panel server error: {}", e);
             }
         })
     };
@@ -355,6 +376,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ = metrics_server_handle => {
             warn!("Metrics server stopped");
+        }
+        _ = web_server_handle => {
+            warn!("Web panel server stopped");
         }
         _ = health_check_handle => {
             warn!("Health check task stopped");

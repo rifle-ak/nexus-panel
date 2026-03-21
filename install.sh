@@ -191,6 +191,9 @@ GRPC_BIND=$GRPC_BIND
 # Metrics server
 METRICS_BIND=$METRICS_BIND
 
+# Web panel
+WEB_BIND=0.0.0.0:3000
+
 # Containerd
 CONTAINERD_SOCKET=/run/containerd/containerd.sock
 CONTAINERD_NAMESPACE=nexus-panel
@@ -305,6 +308,8 @@ main() {
     echo "============================================"
     echo ""
     echo "  Nexus Node is running on this server."
+    echo ""
+    echo "  Web Panel: http://YOUR_IP:3000"
     echo ""
     echo "  Verify:"
     echo "    curl http://localhost:9090/health"
