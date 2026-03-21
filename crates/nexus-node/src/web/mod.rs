@@ -17,6 +17,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use nexus_marketplace::{MarketplaceManager, SearchQuery, SortOrder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,6 +44,7 @@ pub struct AppState {
     pub schedule_manager: Arc<ScheduleManager>,
     pub health_checker: Arc<RwLock<HealthChecker>>,
     pub metrics: Arc<Metrics>,
+    pub marketplace: Arc<MarketplaceManager>,
     pub node_id: String,
     pub data_dir: String,
     pub start_time: SystemTime,
@@ -106,6 +108,11 @@ pub async fn start_web_server(
             put(api_update_schedule).delete(api_delete_schedule),
         )
         .route("/api/v1/containers/{id}/schedules/{schedule_id}/trigger", post(api_trigger_schedule))
+        // ── Marketplace ─────────────────────────────────────────────
+        .route("/api/v1/marketplace/search", get(api_marketplace_search))
+        .route("/api/v1/marketplace/mods/{provider}/{mod_id}", get(api_marketplace_get_mod))
+        // ── Updates ─────────────────────────────────────────────────
+        .route("/api/v1/node/update-check", get(api_update_check))
         .with_state(shared);
 
     let addr: std::net::SocketAddr = bind_addr.parse()?;
@@ -789,6 +796,151 @@ async fn api_trigger_schedule(
         .await
         .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace API handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct MarketplaceSearchQuery {
+    q: String,
+    game: Option<String>,
+    provider: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct ModInfoJson {
+    id: String,
+    name: String,
+    description: String,
+    author: String,
+    provider: String,
+    game: String,
+    downloads: u64,
+    rating: Option<f32>,
+    latest_version: String,
+    url: String,
+}
+
+async fn api_marketplace_search(
+    State(s): State<S>,
+    Query(q): Query<MarketplaceSearchQuery>,
+) -> Result<Json<Vec<ModInfoJson>>, (StatusCode, Json<ApiError>)> {
+    let sort = match q.sort.as_deref() {
+        Some("updated") => SortOrder::Updated,
+        Some("created") => SortOrder::Created,
+        Some("name") => SortOrder::Name,
+        Some("rating") => SortOrder::Rating,
+        _ => SortOrder::Downloads,
+    };
+    let mut query = SearchQuery::new(&q.q).with_sort(sort).with_limit(q.limit.unwrap_or(24));
+    if let Some(game) = &q.game {
+        query = query.with_game(game);
+    }
+
+    let results = if let Some(provider) = &q.provider {
+        s.marketplace
+            .search(provider, &query)
+            .await
+            .map_err(|e| err_json(StatusCode::BAD_GATEWAY, e.to_string()))?
+    } else {
+        s.marketplace
+            .search_all(&query)
+            .await
+            .map_err(|e| err_json(StatusCode::BAD_GATEWAY, e.to_string()))?
+    };
+
+    Ok(Json(
+        results
+            .into_iter()
+            .map(|m| ModInfoJson {
+                id: m.id,
+                name: m.name,
+                description: m.description,
+                author: m.author,
+                provider: m.provider,
+                game: m.game,
+                downloads: m.downloads,
+                rating: m.rating,
+                latest_version: m.latest_version,
+                url: m.url,
+            })
+            .collect(),
+    ))
+}
+
+async fn api_marketplace_get_mod(
+    State(s): State<S>,
+    Path((provider, mod_id)): Path<(String, String)>,
+) -> Result<Json<ModInfoJson>, (StatusCode, Json<ApiError>)> {
+    let details = s
+        .marketplace
+        .get_mod(&provider, &mod_id)
+        .await
+        .map_err(|e| err_json(StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    Ok(Json(ModInfoJson {
+        id: details.info.id,
+        name: details.info.name,
+        description: details.full_description.unwrap_or(details.info.description),
+        author: details.info.author,
+        provider: details.info.provider,
+        game: details.info.game,
+        downloads: details.info.downloads,
+        rating: details.info.rating,
+        latest_version: details.info.latest_version,
+        url: details.info.url,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Update check API handler
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct UpdateCheckResponse {
+    current_version: String,
+    latest_version: String,
+    update_available: bool,
+}
+
+async fn api_update_check(
+    State(_s): State<S>,
+) -> Result<Json<UpdateCheckResponse>, (StatusCode, Json<ApiError>)> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+
+    // Check the latest release from the GitHub API
+    let latest = match reqwest::Client::new()
+        .get("https://api.github.com/repos/rifle-ak/nexus-panel/releases/latest")
+        .header("User-Agent", "nexus-panel")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                body["tag_name"]
+                    .as_str()
+                    .unwrap_or(&current)
+                    .trim_start_matches('v')
+                    .to_string()
+            } else {
+                current.clone()
+            }
+        }
+        Err(_) => current.clone(),
+    };
+
+    let update_available = latest != current && latest > current;
+
+    Ok(Json(UpdateCheckResponse {
+        current_version: current,
+        latest_version: latest,
+        update_available,
+    }))
 }
 
 // ---------------------------------------------------------------------------

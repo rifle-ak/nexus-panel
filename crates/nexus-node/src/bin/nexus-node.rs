@@ -252,6 +252,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
 
+    // Initialize mod marketplace
+    let marketplace = {
+        use nexus_marketplace::adapters::{UmodAdapter, CodeflingAdapter, LoneDesignAdapter};
+        let mut mgr = nexus_marketplace::MarketplaceManager::new();
+        mgr.register_adapter(UmodAdapter::new());
+        mgr.register_adapter(CodeflingAdapter::new());
+        mgr.register_adapter(LoneDesignAdapter::new());
+        Arc::new(mgr)
+    };
+
     // Spawn web panel server
     let web_server_handle = {
         let web_state = nexus_node::web::AppState {
@@ -260,6 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             schedule_manager: schedule_manager.clone(),
             health_checker: health_checker.clone(),
             metrics: metrics.clone(),
+            marketplace: marketplace.clone(),
             node_id: node_id.clone(),
             data_dir: data_dir.clone(),
             start_time: std::time::SystemTime::now(),

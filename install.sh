@@ -15,6 +15,15 @@ NEXUS_CONFIG="/etc/nexus-node"
 NEXUS_BIN="/usr/local/bin"
 NEXUS_LOG="/var/log/nexus-node"
 
+UPDATE_MODE=false
+
+# Parse flags
+for arg in "$@"; do
+    case "$arg" in
+        --update) UPDATE_MODE=true ;;
+    esac
+done
+
 # Defaults (can be overridden by env vars or interactive wizard)
 GRPC_BIND="${GRPC_BIND:-0.0.0.0:8080}"
 METRICS_BIND="${METRICS_BIND:-0.0.0.0:9090}"
@@ -345,6 +354,12 @@ Full build log: $build_log"
     # Verify binaries exist
     if [ ! -f target/release/nexus-node ]; then
         err "Build completed but nexus-node binary not found. Check build output."
+    fi
+
+    # Backup existing binary before replacing
+    if [ -f "$NEXUS_BIN/nexus-node" ]; then
+        cp "$NEXUS_BIN/nexus-node" "$NEXUS_BIN/nexus-node.bak"
+        info "Previous binary backed up to $NEXUS_BIN/nexus-node.bak"
     fi
 
     # Install binaries
@@ -695,6 +710,23 @@ main() {
     check_root
     detect_os
     detect_ip
+
+    if [ "$UPDATE_MODE" = true ]; then
+        info "Update mode — rebuilding and restarting nexus-node..."
+        install_system_deps
+        install_rust
+        build_nexus
+        info "Restarting nexus-node..."
+        systemctl restart nexus-node
+        sleep 2
+        if systemctl is-active --quiet nexus-node; then
+            ok "nexus-node updated and running"
+        else
+            warn "nexus-node may not have started cleanly. Check: journalctl -u nexus-node -n 20"
+            warn "To rollback: sudo cp $NEXUS_BIN/nexus-node.bak $NEXUS_BIN/nexus-node && sudo systemctl restart nexus-node"
+        fi
+        return
+    fi
 
     # Run interactive wizard unless NONINTERACTIVE is set
     if [ "${NONINTERACTIVE:-}" != "1" ]; then

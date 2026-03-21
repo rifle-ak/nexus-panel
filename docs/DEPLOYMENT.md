@@ -238,6 +238,78 @@ sudo cp ca.crt server.crt server.key /etc/nexus-node/
 sudo chmod 600 /etc/nexus-node/*.key
 ```
 
+## Updating Nexus Node
+
+### Quick Update (recommended)
+
+Re-run the installer — it detects an existing installation and only rebuilds/restarts:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s -- --update
+```
+
+Or from a local clone:
+
+```bash
+git pull origin main
+sudo bash install.sh --update
+```
+
+The `--update` flag skips the setup wizard and only:
+1. Updates system packages
+2. Updates the Rust toolchain
+3. Rebuilds the binary from the latest source
+4. Replaces the installed binary
+5. Restarts the `nexus-node` service
+
+Your configuration in `/etc/nexus-node/config.env` is preserved.
+
+### Manual Update
+
+```bash
+# 1. Pull latest source
+cd /path/to/nexus-panel
+git pull origin main
+
+# 2. Rebuild
+cargo build --release --workspace
+
+# 3. Stop the service
+sudo systemctl stop nexus-node
+
+# 4. Replace the binary
+sudo cp target/release/nexus-node /usr/local/bin/nexus-node
+
+# 5. Restart
+sudo systemctl start nexus-node
+sudo systemctl status nexus-node
+```
+
+### Update System Dependencies
+
+Keep containerd, runc, and OS packages up to date separately:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update && sudo apt-get upgrade -y containerd runc
+
+# RHEL/CentOS
+sudo dnf upgrade -y containerd runc
+
+# Update Rust toolchain
+rustup update stable
+```
+
+### Rollback
+
+If an update causes issues, restore the previous binary:
+
+```bash
+# The installer backs up the previous binary before replacing it
+sudo cp /usr/local/bin/nexus-node.bak /usr/local/bin/nexus-node
+sudo systemctl restart nexus-node
+```
+
 ## Pre-pull Game Images
 
 ```bash

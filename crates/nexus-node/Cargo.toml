@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # Local crates
 nexus-config = { path = "../nexus-config" }
+nexus-marketplace = { path = "../nexus-marketplace" }
 
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
