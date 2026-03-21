@@ -2,20 +2,29 @@
 set -e
 
 # Nexus Panel - One-Line Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+# Usage: curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
+#
+# Non-interactive mode (skip wizard, use defaults or env vars):
+#   curl -sSL ... | sudo NONINTERACTIVE=1 bash -s --
 #
 # Or if already cloned:
 #   sudo bash install.sh
 
-NEXUS_USER="${NEXUS_USER:-nexus}"
 NEXUS_DIR="/var/lib/nexus-node"
 NEXUS_CONFIG="/etc/nexus-node"
 NEXUS_BIN="/usr/local/bin"
 NEXUS_LOG="/var/log/nexus-node"
 
+# Defaults (can be overridden by env vars or interactive wizard)
 GRPC_BIND="${GRPC_BIND:-0.0.0.0:8080}"
 METRICS_BIND="${METRICS_BIND:-0.0.0.0:9090}"
+WEB_BIND="${WEB_BIND:-0.0.0.0:3000}"
 NODE_ID="${NODE_ID:-$(hostname)}"
+PANEL_DOMAIN="${PANEL_DOMAIN:-}"
+ENABLE_TLS="${ENABLE_TLS:-false}"
+ENABLE_AUTH="${ENABLE_AUTH:-false}"
+AUTH_PASSWORD="${AUTH_PASSWORD:-}"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,6 +34,36 @@ info()  { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 ok()    { echo -e "\033[1;32m[OK]\033[0m    $*"; }
 warn()  { echo -e "\033[1;33m[WARN]\033[0m  $*"; }
 err()   { echo -e "\033[1;31m[ERROR]\033[0m $*"; exit 1; }
+
+# Prompt with a default value. Usage: ask "Question" DEFAULT_VALUE
+# Sets REPLY to the user's answer (or default if empty).
+ask() {
+    local prompt="$1"
+    local default="$2"
+    if [ -n "$default" ]; then
+        printf "\033[1;36m  > \033[0m%s [\033[33m%s\033[0m]: " "$prompt" "$default"
+    else
+        printf "\033[1;36m  > \033[0m%s: " "$prompt"
+    fi
+    read -r REPLY </dev/tty || REPLY=""
+    REPLY="${REPLY:-$default}"
+}
+
+# Yes/no prompt. Usage: ask_yn "Question" [y|n]
+# Returns 0 for yes, 1 for no.
+ask_yn() {
+    local prompt="$1"
+    local default="${2:-n}"
+    local hint="y/N"
+    [ "$default" = "y" ] && hint="Y/n"
+    printf "\033[1;36m  > \033[0m%s [\033[33m%s\033[0m]: " "$prompt" "$hint"
+    read -r REPLY </dev/tty || REPLY=""
+    REPLY="${REPLY:-$default}"
+    case "$REPLY" in
+        [Yy]*) return 0 ;;
+        *)     return 1 ;;
+    esac
+}
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -54,6 +93,128 @@ detect_os() {
     esac
 
     info "Detected OS: $OS_ID $OS_VERSION (package manager: $PKG_MGR)"
+}
+
+detect_ip() {
+    # Try to detect the public IP
+    SERVER_IP=$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+                hostname -I 2>/dev/null | awk '{print $1}' || \
+                echo "unknown")
+}
+
+generate_password() {
+    # Generate a random 24-char password
+    tr -dc 'A-Za-z0-9!@#$%^&*' </dev/urandom 2>/dev/null | head -c 24 || openssl rand -base64 18
+}
+
+# ---------------------------------------------------------------------------
+# Interactive Setup Wizard
+# ---------------------------------------------------------------------------
+
+run_wizard() {
+    echo ""
+    echo -e "\033[1;36m  ┌──────────────────────────────────────────┐\033[0m"
+    echo -e "\033[1;36m  │         Nexus Panel Setup Wizard         │\033[0m"
+    echo -e "\033[1;36m  │     Answer a few questions to get        │\033[0m"
+    echo -e "\033[1;36m  │     your panel configured perfectly.     │\033[0m"
+    echo -e "\033[1;36m  │                                          │\033[0m"
+    echo -e "\033[1;36m  │  Press Enter to accept [defaults].       │\033[0m"
+    echo -e "\033[1;36m  └──────────────────────────────────────────┘\033[0m"
+    echo ""
+
+    # --- Node Identity ---
+    echo -e "\033[1;35m  ── Node Identity ──\033[0m"
+    ask "Node name" "$NODE_ID"
+    NODE_ID="$REPLY"
+    echo ""
+
+    # --- Domain / Access ---
+    echo -e "\033[1;35m  ── Panel Access ──\033[0m"
+    echo -e "  You can access the web panel via IP address or a domain name."
+    echo -e "  If you have a domain (e.g. \033[33mpanel.example.com\033[0m), enter it below."
+    echo -e "  The installer can automatically set up HTTPS with Let's Encrypt."
+    echo ""
+    ask "Domain name (or leave blank to use IP: $SERVER_IP)" ""
+    PANEL_DOMAIN="$REPLY"
+
+    if [ -n "$PANEL_DOMAIN" ]; then
+        echo ""
+        echo -e "  Domain: \033[1;32m$PANEL_DOMAIN\033[0m"
+        echo -e "  Make sure an \033[33mA record\033[0m points \033[33m$PANEL_DOMAIN\033[0m → \033[33m$SERVER_IP\033[0m"
+        echo ""
+
+        if ask_yn "Enable HTTPS with Let's Encrypt (free automatic TLS)?" "y"; then
+            ENABLE_TLS="true"
+            ask "Email for Let's Encrypt (for renewal notices)" ""
+            LETSENCRYPT_EMAIL="$REPLY"
+            if [ -z "$LETSENCRYPT_EMAIL" ]; then
+                warn "No email provided. Certbot will use --register-unsafely-without-email."
+            fi
+            # When using TLS via reverse proxy, web panel binds to localhost
+            WEB_BIND="127.0.0.1:3000"
+        fi
+    fi
+    echo ""
+
+    # --- Web Panel Port ---
+    if [ "$ENABLE_TLS" != "true" ]; then
+        ask "Web panel port" "3000"
+        WEB_BIND="0.0.0.0:$REPLY"
+    fi
+
+    # --- Authentication ---
+    echo -e "\033[1;35m  ── Security ──\033[0m"
+    if ask_yn "Enable panel authentication (recommended)?" "y"; then
+        ENABLE_AUTH="true"
+        local generated
+        generated=$(generate_password)
+        ask "Admin password (auto-generated if blank)" ""
+        if [ -z "$REPLY" ]; then
+            AUTH_PASSWORD="$generated"
+            echo -e "  Generated password: \033[1;33m$AUTH_PASSWORD\033[0m"
+            echo -e "  \033[1;31mSave this! It won't be shown again.\033[0m"
+        else
+            AUTH_PASSWORD="$REPLY"
+        fi
+    fi
+    echo ""
+
+    # --- gRPC / Metrics Ports ---
+    echo -e "\033[1;35m  ── Advanced (ports) ──\033[0m"
+    if ask_yn "Customize gRPC and metrics ports?" "n"; then
+        ask "gRPC bind address" "$GRPC_BIND"
+        GRPC_BIND="$REPLY"
+        ask "Metrics bind address" "$METRICS_BIND"
+        METRICS_BIND="$REPLY"
+    fi
+    echo ""
+
+    # --- Confirm ---
+    echo -e "\033[1;35m  ── Summary ──\033[0m"
+    echo -e "  Node name:      \033[1;37m$NODE_ID\033[0m"
+    if [ -n "$PANEL_DOMAIN" ]; then
+        if [ "$ENABLE_TLS" = "true" ]; then
+            echo -e "  Panel URL:      \033[1;37mhttps://$PANEL_DOMAIN\033[0m"
+        else
+            local port="${WEB_BIND##*:}"
+            echo -e "  Panel URL:      \033[1;37mhttp://$PANEL_DOMAIN:$port\033[0m"
+        fi
+    else
+        local port="${WEB_BIND##*:}"
+        echo -e "  Panel URL:      \033[1;37mhttp://$SERVER_IP:$port\033[0m"
+    fi
+    echo -e "  gRPC:           \033[1;37m$GRPC_BIND\033[0m"
+    echo -e "  Metrics:        \033[1;37m$METRICS_BIND\033[0m"
+    echo -e "  Authentication: \033[1;37m$([ "$ENABLE_AUTH" = "true" ] && echo "enabled" || echo "disabled")\033[0m"
+    echo -e "  TLS:            \033[1;37m$([ "$ENABLE_TLS" = "true" ] && echo "Let's Encrypt" || echo "disabled")\033[0m"
+    echo ""
+
+    if ! ask_yn "Proceed with installation?" "y"; then
+        echo "  Aborted."
+        exit 0
+    fi
+    echo ""
 }
 
 # ---------------------------------------------------------------------------
@@ -179,11 +340,11 @@ write_config() {
         return
     fi
 
-    info "Writing default configuration..."
+    info "Writing configuration..."
 
     cat > "$config_file" <<EOF
 # Nexus Node Configuration
-# See docs/ENTERPRISE.md for all available options
+# Generated by install.sh on $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 # gRPC server
 GRPC_BIND=$GRPC_BIND
@@ -192,7 +353,17 @@ GRPC_BIND=$GRPC_BIND
 METRICS_BIND=$METRICS_BIND
 
 # Web panel
-WEB_BIND=0.0.0.0:3000
+WEB_BIND=$WEB_BIND
+EOF
+
+    # Domain
+    if [ -n "$PANEL_DOMAIN" ]; then
+        cat >> "$config_file" <<EOF
+PANEL_DOMAIN=$PANEL_DOMAIN
+EOF
+    fi
+
+    cat >> "$config_file" <<EOF
 
 # Containerd
 CONTAINERD_SOCKET=/run/containerd/containerd.sock
@@ -211,24 +382,162 @@ MIN_MEMORY_BYTES=1073741824
 # Logging
 RUST_LOG=info
 LOG_FORMAT=json
+EOF
+
+    # TLS config
+    if [ "$ENABLE_TLS" = "true" ] && [ -n "$PANEL_DOMAIN" ]; then
+        cat >> "$config_file" <<EOF
+
+# TLS (managed by Let's Encrypt via Caddy)
+TLS_ENABLED=true
+TLS_CERT_PATH=/etc/nexus-node/tls/cert.pem
+TLS_KEY_PATH=/etc/nexus-node/tls/key.pem
+EOF
+    else
+        cat >> "$config_file" <<EOF
 
 # TLS (uncomment to enable)
 # TLS_ENABLED=true
 # TLS_CERT_PATH=$NEXUS_CONFIG/server.crt
 # TLS_KEY_PATH=$NEXUS_CONFIG/server.key
 # TLS_CA_CERT_PATH=$NEXUS_CONFIG/ca.crt
+EOF
+    fi
+
+    # Auth config
+    if [ "$ENABLE_AUTH" = "true" ]; then
+        cat >> "$config_file" <<EOF
+
+# Authentication
+AUTH_ENABLED=true
+AUTH_PASSWORD=$AUTH_PASSWORD
+EOF
+    else
+        cat >> "$config_file" <<EOF
 
 # Authentication (uncomment to enable)
 # AUTH_ENABLED=true
-# AUTH_API_KEYS=changeme
+# AUTH_PASSWORD=changeme
+EOF
+    fi
+
+    cat >> "$config_file" <<EOF
 
 # Audit logging (uncomment to enable)
 # AUDIT_ENABLED=true
 # AUDIT_LOG_FILE=$NEXUS_LOG/audit.log
 EOF
 
+    chmod 600 "$config_file"
     ok "Config written to $config_file"
 }
+
+# ---------------------------------------------------------------------------
+# TLS / Reverse Proxy (Caddy)
+# ---------------------------------------------------------------------------
+
+setup_tls() {
+    if [ "$ENABLE_TLS" != "true" ] || [ -z "$PANEL_DOMAIN" ]; then
+        return
+    fi
+
+    info "Setting up HTTPS with Caddy reverse proxy..."
+
+    # Install Caddy
+    if ! command -v caddy &> /dev/null; then
+        if [ "$PKG_MGR" = "apt-get" ]; then
+            apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https > /dev/null 2>&1
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+            apt-get update -qq > /dev/null 2>&1
+            apt-get install -y -qq caddy > /dev/null
+        else
+            dnf install -y -q 'dnf-command(copr)' > /dev/null 2>&1
+            dnf copr enable -y @caddy/caddy > /dev/null 2>&1
+            dnf install -y -q caddy > /dev/null
+        fi
+        ok "Caddy installed"
+    else
+        ok "Caddy already installed"
+    fi
+
+    # Write Caddyfile
+    local email_line=""
+    if [ -n "$LETSENCRYPT_EMAIL" ]; then
+        email_line="    tls $LETSENCRYPT_EMAIL"
+    else
+        email_line="    tls {
+        on_demand
+    }"
+    fi
+
+    cat > /etc/caddy/Caddyfile <<EOF
+# Nexus Panel - Auto-HTTPS reverse proxy
+# Managed by nexus-panel installer
+
+$PANEL_DOMAIN {
+$email_line
+
+    # Web panel
+    reverse_proxy localhost:3000
+
+    # gRPC (if clients connect via domain)
+    handle_path /grpc/* {
+        reverse_proxy h2c://localhost:8080
+    }
+
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}
+EOF
+
+    # Enable and start Caddy
+    systemctl enable caddy > /dev/null 2>&1
+    systemctl restart caddy
+
+    # Check if Caddy started
+    sleep 2
+    if systemctl is-active --quiet caddy; then
+        ok "Caddy running — HTTPS will be provisioned automatically for $PANEL_DOMAIN"
+    else
+        warn "Caddy may not have started cleanly. Check: journalctl -u caddy -n 20"
+        warn "Make sure port 80 and 443 are open, and DNS points to this server."
+    fi
+}
+
+setup_firewall() {
+    # Only configure firewall if ufw is available
+    if ! command -v ufw &> /dev/null; then
+        return
+    fi
+
+    info "Configuring firewall rules..."
+
+    if [ "$ENABLE_TLS" = "true" ]; then
+        ufw allow 80/tcp > /dev/null 2>&1   # ACME challenges
+        ufw allow 443/tcp > /dev/null 2>&1   # HTTPS
+    else
+        local port="${WEB_BIND##*:}"
+        ufw allow "$port/tcp" > /dev/null 2>&1
+    fi
+
+    # gRPC (only if not behind Caddy or binding externally)
+    if [ "$GRPC_BIND" != "127.0.0.1:8080" ]; then
+        local grpc_port="${GRPC_BIND##*:}"
+        ufw allow "$grpc_port/tcp" > /dev/null 2>&1
+    fi
+
+    ok "Firewall rules added"
+}
+
+# ---------------------------------------------------------------------------
+# Systemd Service
+# ---------------------------------------------------------------------------
 
 install_systemd_service() {
     info "Installing systemd service..."
@@ -280,40 +589,35 @@ start_service() {
 }
 
 # ---------------------------------------------------------------------------
-# Main
+# Final Summary
 # ---------------------------------------------------------------------------
 
-main() {
-    echo ""
-    echo "============================================"
-    echo "  Nexus Panel Installer"
-    echo "============================================"
-    echo ""
-
-    check_root
-    detect_os
-    install_system_deps
-    install_rust
-    setup_containerd
-    install_cni_plugins
-    setup_directories
-    build_nexus
-    write_config
-    install_systemd_service
-    start_service
-
+print_summary() {
     echo ""
     echo "============================================"
     echo "  Installation Complete"
     echo "============================================"
     echo ""
-    echo "  Nexus Node is running on this server."
-    echo ""
-    echo "  Web Panel: http://YOUR_IP:3000"
+
+    if [ -n "$PANEL_DOMAIN" ] && [ "$ENABLE_TLS" = "true" ]; then
+        echo -e "  Web Panel: \033[1;32mhttps://$PANEL_DOMAIN\033[0m"
+    elif [ -n "$PANEL_DOMAIN" ]; then
+        local port="${WEB_BIND##*:}"
+        echo -e "  Web Panel: \033[1;32mhttp://$PANEL_DOMAIN:$port\033[0m"
+    else
+        local port="${WEB_BIND##*:}"
+        echo -e "  Web Panel: \033[1;32mhttp://$SERVER_IP:$port\033[0m"
+    fi
+
+    if [ "$ENABLE_AUTH" = "true" ]; then
+        echo ""
+        echo -e "  Login password: \033[1;33m$AUTH_PASSWORD\033[0m"
+        echo -e "  \033[1;31m  ^ Save this now! It's stored in $NEXUS_CONFIG/config.env\033[0m"
+    fi
+
     echo ""
     echo "  Verify:"
     echo "    curl http://localhost:9090/health"
-    echo "    curl http://localhost:9090/metrics"
     echo "    systemctl status nexus-node"
     echo ""
     echo "  Manage:"
@@ -328,8 +632,63 @@ main() {
     echo "  CLI tool:"
     echo "    nexus-panel --help"
     echo ""
-    echo "  Docs: docs/DEPLOYMENT.md, docs/ENTERPRISE.md"
+
+    if [ "$ENABLE_TLS" = "true" ]; then
+        echo "  TLS:"
+        echo "    Caddy auto-manages your Let's Encrypt certificate."
+        echo "    Config: /etc/caddy/Caddyfile"
+        echo "    Logs:   journalctl -u caddy"
+        echo ""
+    fi
+
+    if [ -n "$PANEL_DOMAIN" ] && [ "$ENABLE_TLS" = "true" ]; then
+        echo -e "  \033[1;36mTip: If HTTPS isn't working yet, verify that:\033[0m"
+        echo "    1. DNS A record for $PANEL_DOMAIN points to $SERVER_IP"
+        echo "    2. Ports 80 and 443 are open in your VPS provider's firewall"
+        echo "    3. Caddy is running: systemctl status caddy"
+        echo ""
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
     echo ""
+    echo "============================================"
+    echo "  Nexus Panel Installer"
+    echo "============================================"
+    echo ""
+
+    check_root
+    detect_os
+    detect_ip
+
+    # Run interactive wizard unless NONINTERACTIVE is set
+    if [ "${NONINTERACTIVE:-}" != "1" ]; then
+        # Check if stdin is a terminal (piped installs need /dev/tty)
+        if [ -t 0 ] || [ -e /dev/tty ]; then
+            run_wizard
+        else
+            info "No terminal detected, using defaults. Set env vars to customize."
+        fi
+    else
+        info "Non-interactive mode, using defaults/env vars."
+    fi
+
+    install_system_deps
+    install_rust
+    setup_containerd
+    install_cni_plugins
+    setup_directories
+    build_nexus
+    write_config
+    setup_tls
+    setup_firewall
+    install_systemd_service
+    start_service
+    print_summary
 }
 
 main "$@"

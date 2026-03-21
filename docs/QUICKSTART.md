@@ -7,8 +7,12 @@ Get Nexus Panel running in minutes.
 One command installs all dependencies, builds the project, and starts the node as a systemd service:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
 ```
+
+The installer runs an **interactive setup wizard** that asks you to configure:
+- Node name, domain name (optional), HTTPS via Let's Encrypt, admin password, and ports.
+- Press Enter at each prompt to accept the defaults.
 
 Or if you've already cloned the repo:
 
@@ -16,7 +20,11 @@ Or if you've already cloned the repo:
 sudo bash install.sh
 ```
 
-The installer handles: Rust, containerd, protobuf compiler, CNI plugins, building both binaries, creating config files, and setting up the systemd service.
+To skip the wizard and use defaults (or env vars), set `NONINTERACTIVE=1`:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo NONINTERACTIVE=1 bash -s --
+```
 
 Once complete, verify:
 

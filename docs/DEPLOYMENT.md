@@ -7,10 +7,50 @@ Deploy Nexus Node in a production environment.
 The fastest way to get a production node running:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
 ```
 
-This installs all dependencies, builds the project, writes a default config to `/etc/nexus-node/config.env`, and starts `nexus-node` as a systemd service. Edit the config file afterwards to enable TLS, authentication, and other enterprise features.
+The installer launches an **interactive setup wizard** that walks you through:
+
+1. **Node name** — identify this server in multi-node setups
+2. **Domain name** — use `panel.example.com` instead of a raw IP (optional)
+3. **Automatic HTTPS** — free TLS via Let's Encrypt + Caddy reverse proxy (if using a domain)
+4. **Authentication** — set an admin password (auto-generates one if you skip)
+5. **Port configuration** — customize gRPC and metrics ports
+
+Just press Enter to accept sensible defaults at each step.
+
+### Non-interactive mode
+
+Skip the wizard entirely by setting `NONINTERACTIVE=1` and passing config via environment variables:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | \
+  sudo NONINTERACTIVE=1 \
+  PANEL_DOMAIN=panel.example.com \
+  ENABLE_TLS=true \
+  LETSENCRYPT_EMAIL=admin@example.com \
+  ENABLE_AUTH=true \
+  AUTH_PASSWORD=my-secure-password \
+  NODE_ID=prod-node-1 \
+  bash -s --
+```
+
+### Using a domain name
+
+If you own a domain, point an **A record** to your server's IP before running the installer:
+
+| Type | Name | Value |
+|------|------|-------|
+| A | panel.example.com | 203.0.113.42 |
+
+When the wizard asks for a domain, enter it and choose "yes" for Let's Encrypt. The installer will:
+- Install [Caddy](https://caddyserver.com) as a reverse proxy
+- Automatically obtain and renew TLS certificates
+- Serve your panel at `https://panel.example.com`
+- Open ports 80 (ACME challenges) and 443 (HTTPS) in the firewall
+
+No manual certificate management required — it just works.
 
 If you prefer manual control, follow the steps below.
 
