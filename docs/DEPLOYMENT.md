@@ -2,6 +2,18 @@
 
 Deploy Nexus Node in a production environment.
 
+## Automatic Install
+
+The fastest way to get a production node running:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+```
+
+This installs all dependencies, builds the project, writes a default config to `/etc/nexus-node/config.env`, and starts `nexus-node` as a systemd service. Edit the config file afterwards to enable TLS, authentication, and other enterprise features.
+
+If you prefer manual control, follow the steps below.
+
 ## System Requirements
 
 - **OS**: Linux 5.15+ (Ubuntu 22.04+, Debian 12+, RHEL 9+)
@@ -28,16 +40,20 @@ rustup update stable
 cargo --version
 ```
 
-### Containerd
+### System Packages
 
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install -y containerd runc
+sudo apt-get install -y containerd runc protobuf-compiler gcc g++ make
 
 # RHEL/CentOS
-sudo dnf install -y containerd runc
+sudo dnf install -y containerd runc protobuf-compiler gcc gcc-c++ make
+```
 
+### Containerd
+
+```bash
 # Configure
 sudo mkdir -p /etc/containerd
 containerd config default | sudo tee /etc/containerd/config.toml
@@ -59,7 +75,7 @@ curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_
 
 ```bash
 # Build
-cargo build --release
+cargo build --release --workspace
 
 # Install binary
 sudo cp target/release/nexus-node /usr/local/bin/

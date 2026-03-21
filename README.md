@@ -39,20 +39,25 @@ Ready-to-use blueprints for popular games in `/blueprints`:
 
 ## Quick Start
 
+One command installs everything (Rust, containerd, protobuf, CNI plugins) and starts the node:
+
 ```bash
-# Clone and build
-git clone https://github.com/rifle-ak/nexus-panel.git
-cd nexus-panel
-cargo build --release
-
-# Run the node daemon
-./target/release/nexus-node
-
-# Convert Pterodactyl eggs to blueprints
-./target/release/nexus-panel convert --input egg.json --output blueprint.yaml
+curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for detailed setup instructions.
+Or if you've already cloned the repo:
+
+```bash
+sudo bash install.sh
+```
+
+Once running, verify with:
+
+```bash
+curl http://localhost:9090/health
+```
+
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for manual setup or [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production configuration.
 
 ## Blueprint Format
 
