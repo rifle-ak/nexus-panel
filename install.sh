@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 # Nexus Panel - One-Line Installer
 # Usage: curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
@@ -228,13 +228,15 @@ install_system_deps() {
         apt-get update -qq
         apt-get install -y -qq \
             curl gcc g++ make pkg-config \
-            protobuf-compiler \
+            protobuf-compiler libprotobuf-dev \
+            libssl-dev \
             containerd runc \
             git > /dev/null
     else
         dnf install -y -q \
             curl gcc gcc-c++ make pkgconf-pkg-config \
-            protobuf-compiler \
+            protobuf-compiler protobuf-devel \
+            openssl-devel \
             containerd runc \
             git > /dev/null
     fi
@@ -297,27 +299,63 @@ install_cni_plugins() {
     ok "CNI plugins installed"
 }
 
+check_protoc() {
+    if ! command -v protoc &> /dev/null; then
+        err "protoc (protobuf compiler) not found. The system dependency install may have failed."
+    fi
+
+    local protoc_version
+    protoc_version=$(protoc --version 2>/dev/null | grep -oP '\d+\.\d+' | head -1)
+    info "protoc version: $protoc_version"
+}
+
 build_nexus() {
     local src_dir=""
+    local build_log="/tmp/nexus-build-$$.log"
+    local branch="${NEXUS_BRANCH:-main}"
 
     # If we're running from within the repo, use it
     if [ -f "Cargo.toml" ] && grep -q "nexus-panel" Cargo.toml 2>/dev/null; then
         src_dir="$(pwd)"
         info "Building from local source: $src_dir"
     else
-        info "Cloning nexus-panel..."
+        info "Cloning nexus-panel (branch: $branch)..."
         src_dir=$(mktemp -d)
-        git clone --depth 1 https://github.com/rifle-ak/nexus-panel.git "$src_dir" > /dev/null 2>&1
+        git clone --depth 1 --branch "$branch" https://github.com/rifle-ak/nexus-panel.git "$src_dir" > /dev/null 2>&1
     fi
+
+    check_protoc
 
     info "Building nexus-panel (this may take a few minutes)..."
     cd "$src_dir"
-    cargo build --release --workspace 2>&1 | tail -1
+
+    if ! cargo build --release --workspace > "$build_log" 2>&1; then
+        echo ""
+        err "Build failed. Last 40 lines of output:
+
+$(tail -40 "$build_log")
+
+Full build log: $build_log"
+    fi
+
+    # Show final status line
+    tail -1 "$build_log"
+    rm -f "$build_log"
+
+    # Verify binaries exist
+    if [ ! -f target/release/nexus-node ]; then
+        err "Build completed but nexus-node binary not found. Check build output."
+    fi
 
     # Install binaries
     cp target/release/nexus-node "$NEXUS_BIN/nexus-node"
-    cp target/release/nexus-panel "$NEXUS_BIN/nexus-panel"
-    chmod +x "$NEXUS_BIN/nexus-node" "$NEXUS_BIN/nexus-panel"
+    chmod +x "$NEXUS_BIN/nexus-node"
+
+    # nexus-panel CLI is optional (may not exist in all builds)
+    if [ -f target/release/nexus-panel ]; then
+        cp target/release/nexus-panel "$NEXUS_BIN/nexus-panel"
+        chmod +x "$NEXUS_BIN/nexus-panel"
+    fi
 
     ok "Binaries installed to $NEXUS_BIN"
 }
