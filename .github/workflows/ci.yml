@@ -47,8 +47,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.rust }}-
 
+      # Install only if not already restored from cache: the cache includes
+      # ~/.cargo/bin, and `cargo install` errors ("binary already exists")
+      # when the tool is already present.
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
 
       - name: Run cargo audit
         run: cargo audit --deny warnings
@@ -67,7 +70,7 @@ jobs:
       # percentage gate would flake the build without improving correctness.
       - name: Install cargo-tarpaulin
         if: matrix.rust == 'stable'
-        run: cargo install cargo-tarpaulin --version 0.27.0 --locked
+        run: command -v cargo-tarpaulin >/dev/null || cargo install cargo-tarpaulin --version 0.27.0 --locked
 
       - name: Generate test coverage
         if: matrix.rust == 'stable'
@@ -131,7 +134,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --locked
 
       # cargo-deny is the single advisory gate: it uses the RustSec database
       # (so it still fails on real vulnerabilities) and is configurable via
@@ -219,6 +222,6 @@ jobs:
       # and is prone to false positives that would block unrelated changes.
       - name: Check for broken links
         run: |
-          cargo install cargo-deadlinks --locked
+          command -v cargo-deadlinks >/dev/null || cargo install cargo-deadlinks --locked
           cargo deadlinks
         continue-on-error: true
