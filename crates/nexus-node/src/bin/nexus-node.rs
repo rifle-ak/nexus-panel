@@ -179,6 +179,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.clone(),
     ));
 
+    // Restore previously-tracked containers from disk and reconcile them
+    // against the runtime, so a node restart does not lose the server list.
+    let restored = manager.restore().await;
+    if restored > 0 {
+        info!(
+            "Reconciled {} existing container(s) after restart",
+            restored
+        );
+    }
+
     // Create health checker
     let health_checker = Arc::new(RwLock::new(HealthChecker::new(
         containerd_socket,

@@ -16,11 +16,17 @@ plan. Every finding cites the code that produced it (`file:line`) so it can be v
 > bug — the panel's routes used axum-0.8 `{id}` path-param syntax on axum 0.7, so every container
 > detail, file, backup, and schedule route silently 404'd; they now use `:id`.
 >
-> *Phase 1 (make CI real) — in progress.* CI now installs `protoc` in every compiling job; the tree
-> is `cargo fmt` clean and passes `cargo clippy --all-targets -- -D warnings` across the workspace;
-> the two RUSTSEC advisories are bumped (`anyhow` 1.0.104, `crossbeam-epoch` 0.9.20, M-6); the
-> multi-arch build job uses a proper cross toolchain; and the flake-prone coverage/deadlinks steps
-> are reported but non-gating. Green status is pending the first real CI run.
+> *Phase 1 (make CI real) — complete & merged.* CI now installs `protoc` in every compiling job; the
+> tree is `cargo fmt` clean and passes `cargo clippy --all-targets -- -D warnings` across the
+> workspace; the two RUSTSEC advisories are bumped (`anyhow` 1.0.104, `crossbeam-epoch` 0.9.20, M-6);
+> the multi-arch build job uses a proper cross toolchain; and the flake-prone coverage/deadlinks
+> steps are reported but non-gating.
+>
+> *Phase 2 (operational correctness) — in progress.* H-1 (state persistence) is done: container
+> tracking state is persisted to `DATA_DIR/.nexus/state/<id>.json` and, on startup, restored and
+> reconciled against the runtime's actual view — a node restart no longer shows zero servers.
+> Remaining: H-2 (fail loud instead of the silent mock runtime), H-3 (wire the no-op schedule
+> trigger), M-2 (semver update check + real releases).
 
 ---
 
@@ -38,8 +44,8 @@ management surface is now authenticated and traversal-safe. CI still cannot comp
 | Installer security claims | ✅ **Resolved** — credential now enforced | — |
 | File API path traversal | ✅ **Resolved** — `..` rejected on writes | — |
 | Panel API routing | ✅ **Fixed** — `:id` params (was silently 404ing) | — |
-| CI pipeline | 🛠️ **Phase 1** — protoc + fmt + clippy + advisories fixed (green pending CI) | — |
-| State persistence across restart | ❌ In-memory only | High |
+| CI pipeline | ✅ **Phase 1** — protoc + fmt + clippy + advisories fixed | — |
+| State persistence across restart | ✅ **Resolved (H-1)** — persisted + reconciled on startup | — |
 | Containerd failure handling | ⚠️ Silent fake-runtime fallback | High |
 | TLS for the panel | ⚠️ Relies entirely on external Caddy | Medium |
 | Feature completeness vs. README | ⚠️ Several "done" items are stubs | Medium |
@@ -276,7 +282,7 @@ container manager.
 - [x] Installer credentials actually gate access; no false security claims.
 - [ ] CI is green on a clean runner (protoc installed, fmt clean, clippy `-D warnings` clean,
       `cargo deny`/`cargo audit` advisory-clean — see M-6).
-- [ ] Container/schedule state survives a service restart.
+- [x] Container state survives a service restart (H-1). Schedule persistence: pending (Phase 2).
 - [ ] Containerd unavailability fails loudly (no silent mock).
 - [ ] Manual schedule trigger executes the task.
 - [ ] Integration tests run in CI against a real runtime.
