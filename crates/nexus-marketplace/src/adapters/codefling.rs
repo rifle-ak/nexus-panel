@@ -296,6 +296,18 @@ impl MarketplaceAdapter for CodeflingAdapter {
             });
         }
 
+        // Codefling's IPS API rejects unauthenticated requests with 401
+        // (`NO_API_KEY`); surface that as a clear auth error rather than a
+        // generic failure so the UI can prompt for a key.
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(MarketplaceError::AuthRequired {
+                provider: "codefling".to_string(),
+            });
+        }
+
         if !response.status().is_success() {
             return Err(MarketplaceError::ApiError {
                 provider: "codefling".to_string(),
@@ -377,6 +389,15 @@ impl MarketplaceAdapter for CodeflingAdapter {
             return Err(MarketplaceError::RateLimited {
                 provider: "codefling".to_string(),
                 retry_after_secs: retry_after,
+            });
+        }
+
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(MarketplaceError::AuthRequired {
+                provider: "codefling".to_string(),
             });
         }
 
