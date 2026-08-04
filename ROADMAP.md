@@ -9,7 +9,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Container create / start / stop / restart / delete | Done |
 | Container suspend / unsuspend | Done |
 | Console (xterm.js) — game-process stdin | Done |
-| **Real shell console (exec)** — run arbitrary commands (e.g. `npm`, shell) in the container, separate from the game-process/RCON console | Planned |
+| **Real shell console (exec)** — run arbitrary commands (e.g. `npm`, shell) in the container, separate from the game-process/RCON console | Done (UI + API; containerd exec pending real-runtime validation) |
 | File manager (browse, edit, create, delete, rename) | Done |
 | Backups (create, restore, delete) | Done |
 | Cron-based scheduling | Done |

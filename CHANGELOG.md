@@ -21,6 +21,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   advisories.
 
 ### Added
+- **Real shell console.** A new per-server "Shell" tab and `POST
+  /api/v1/containers/:id/exec` endpoint run a one-shot command as a separate
+  process inside the container (via `/bin/sh -c`), so operators can run
+  arbitrary tooling like `npm install` — distinct from the game console's
+  stdin/RCON. Fully working under the dev/mock runtime; the containerd
+  implementation (Exec/Start/Wait with FIFO capture, bounded by a timeout)
+  ships behind real-runtime validation.
 - Container state is persisted to `DATA_DIR/.nexus/state/<id>.json` and restored
   + reconciled against the runtime on startup, so a node restart no longer shows
   zero servers.

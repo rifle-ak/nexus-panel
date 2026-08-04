@@ -112,6 +112,7 @@ pub async fn start_web_server(
             post(api_unsuspend_container),
         )
         .route("/api/v1/containers/:id/command", post(api_send_command))
+        .route("/api/v1/containers/:id/exec", post(api_exec))
         // ── Files ────────────────────────────────────────────────────
         .route("/api/v1/containers/:id/files", get(api_list_files))
         .route("/api/v1/containers/:id/files/read", get(api_read_file))
@@ -735,6 +736,59 @@ async fn api_send_command(
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ExecReq {
+    /// The command line to run.
+    command: String,
+    /// When true, split `command` on whitespace and exec directly instead of
+    /// running it through `/bin/sh -c` (no shell features like pipes/globs).
+    #[serde(default)]
+    raw: bool,
+}
+
+#[derive(Serialize)]
+struct ExecResp {
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+}
+
+/// Run a one-shot command as a new process inside a running container (the
+/// shell console) and return its captured output. Unlike the game console
+/// (`/command`, which writes to the game process's stdin), this can run
+/// arbitrary tooling such as `npm` or a shell.
+async fn api_exec(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    Json(body): Json<ExecReq>,
+) -> Result<Json<ExecResp>, (StatusCode, Json<ApiError>)> {
+    if body.command.trim().is_empty() {
+        return Err(err_json(StatusCode::BAD_REQUEST, "Empty command"));
+    }
+
+    let argv: Vec<String> = if body.raw {
+        body.command.split_whitespace().map(String::from).collect()
+    } else {
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            body.command.clone(),
+        ]
+    };
+
+    let out = s
+        .manager
+        .exec_command(&id, &argv)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+
+    Ok(Json(ExecResp {
+        stdout: out.stdout,
+        stderr: out.stderr,
+        exit_code: out.exit_code,
+    }))
 }
 
 // ---------------------------------------------------------------------------

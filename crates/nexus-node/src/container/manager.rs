@@ -692,6 +692,33 @@ impl ContainerManager {
         self.runtime.send_command(container_id, command).await
     }
 
+    /// Execute a one-shot command as a new process inside a running container
+    /// (the shell console), returning its captured output. Unlike
+    /// [`send_command`](Self::send_command) — which writes to the game
+    /// process's stdin — this spawns a separate process, so it can run
+    /// arbitrary tooling (e.g. `npm`, a shell).
+    pub async fn exec_command(
+        &self,
+        container_id: &str,
+        command: &[String],
+    ) -> Result<crate::runtime::ExecOutput> {
+        {
+            let states = self.states.read().await;
+            let state = states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+
+            if !state.status.is_running() {
+                return Err(NodeError::InvalidInput(format!(
+                    "Container {} is not running",
+                    container_id
+                )));
+            }
+        }
+
+        self.runtime.exec(container_id, command).await
+    }
+
     /// Convert GameConfig to ContainerSpec
     fn config_to_spec(config: &GameConfig, server_dir: &std::path::Path) -> Result<ContainerSpec> {
         // Build command from startup config
@@ -1001,6 +1028,26 @@ security:
         let state = manager2.get_state("running-1").await.unwrap();
         assert_eq!(state.status, ContainerStatus::Stopped);
         assert!(state.pid.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_exec_command_requires_running_and_returns_output() {
+        let temp = TempDir::new().unwrap();
+        let manager = ContainerManager::new(temp.path().to_path_buf());
+        let config = create_test_config();
+        let id = manager.create_container(&config, Some("exec-1".to_string())).await.unwrap();
+
+        // Not running yet → rejected.
+        assert!(manager.exec_command(&id, &["ls".to_string()]).await.is_err());
+
+        // Once running, the mock runtime returns captured output.
+        manager.start_container(&id).await.unwrap();
+        let out = manager
+            .exec_command(&id, &["echo".to_string(), "hi".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, Some(0));
+        assert!(out.stdout.contains("echo hi"));
     }
 
     #[tokio::test]

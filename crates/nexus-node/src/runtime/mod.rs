@@ -35,6 +35,23 @@ pub trait ContainerRuntime: Send + Sync {
 
     /// Send a single command to container stdin
     async fn send_command(&self, id: &str, command: &str) -> Result<()>;
+
+    /// Execute a one-shot command as a new process inside a running container
+    /// and return its captured output. This is distinct from `send_command`
+    /// (which writes to the game process's stdin / RCON): `exec` spawns a
+    /// separate process, so it can run arbitrary tooling (e.g. `npm`, a shell).
+    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput>;
+}
+
+/// Result of a one-shot `exec` inside a container.
+#[derive(Debug, Clone)]
+pub struct ExecOutput {
+    /// Captured standard output.
+    pub stdout: String,
+    /// Captured standard error.
+    pub stderr: String,
+    /// Process exit code (`None` if it could not be determined).
+    pub exit_code: Option<i32>,
 }
 
 /// Container specification

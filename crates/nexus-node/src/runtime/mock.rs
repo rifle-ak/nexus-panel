@@ -167,6 +167,33 @@ impl ContainerRuntime for MockRuntime {
         tracing::debug!("[MOCK] Command received: {}", command);
         Ok(())
     }
+
+    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+        tracing::info!("[MOCK] Exec in container {}: {:?}", id, command);
+
+        let containers = self.containers.read().await;
+        let container =
+            containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+
+        if container.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running",
+                id
+            )));
+        }
+
+        if command.is_empty() {
+            return Err(NodeError::InvalidInput("Empty command".to_string()));
+        }
+
+        // Simulate execution: echo back the command so the shell UI is usable
+        // in development (NEXUS_DEV_MODE) without a real containerd runtime.
+        Ok(ExecOutput {
+            stdout: format!("[mock] executed: {}\n", command.join(" ")),
+            stderr: String::new(),
+            exit_code: Some(0),
+        })
+    }
 }
 
 pub struct MockConsoleStream {
