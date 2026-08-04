@@ -22,12 +22,21 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RUSTSEC-2026-0097).
 
 ### Added
+- **Carbon framework support.** Rust servers can run [Carbon](https://github.com/CarbonCommunity/Carbon)
+  as an Oxide-compatible alternative. `ModLoader::Carbon` is a first-class loader,
+  the mod-install flow gains an Oxide/Carbon picker (installing to `oxide/plugins`
+  or `carbon/plugins` accordingly), and a new `blueprints/rust-carbon.yaml`
+  ships a ready-to-use Carbon blueprint.
+- **DepotDownloader as a SteamCMD alternative.** `UpdateCheck`/`UpdateApply` gain
+  `depot_downloader` variants so blueprints can install/update game files with
+  [SteamRE DepotDownloader](https://github.com/SteamRE/DepotDownloader) — useful
+  when SteamCMD's download/validation is flaky. The Carbon blueprint uses it.
 - **One-click mod install.** `POST /api/v1/containers/:id/mods/install` downloads a
   marketplace mod (fetch + checksum-verify) and installs it into the server's mods
   directory, with the target path jail-checked like the rest of the file API; the
-  marketplace UI's mod detail view gains an "Install to server" action (pick a server
-  and target folder). Installing end-to-end depends on the provider adapter parsing
-  its API correctly (see ROADMAP note on adapter drift).
+  marketplace UI's mod detail view gains an "Install to server" action (pick a server,
+  framework, and target folder). Installing end-to-end depends on the provider adapter
+  parsing its API correctly (see ROADMAP note on adapter drift).
 - **Real shell console.** A new per-server "Shell" tab and `POST
   /api/v1/containers/:id/exec` endpoint run a one-shot command as a separate
   process inside the container (via `/bin/sh -c`), so operators can run

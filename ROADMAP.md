@@ -27,6 +27,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Feature | Status |
 |---------|--------|
 | Per-game YAML configs (Minecraft, Rust, Valheim, CS2, Palworld) | Done |
+| Rust (Carbon framework, DepotDownloader install) blueprint | Done (`blueprints/rust-carbon.yaml`) |
 | Blueprint selection auto-populates create form | Done |
 | Custom YAML editor | Done |
 | Blueprint import from Pterodactyl eggs | Planned |
@@ -38,6 +39,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Unified search across providers (Umod, Codefling, Lone.Design) | Backend (adapters need updating for current provider APIs) |
 | Mod detail view | Done (UI) |
 | One-click mod install to running server | Done (API + UI) |
+| Framework selection for Rust mods (Oxide **or** Carbon) | Done (installs to `oxide/plugins` or `carbon/plugins`) |
 | Mod update checking for installed mods | Planned |
 | Dependency resolution | Backend Ready |
 
@@ -102,6 +104,6 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Auto-scaling (player count / CPU / memory) | Planned |
 | JVM performance tuning (Aikar's flags) | Done (in YAML) |
 | Kernel parameter tuning | Planned |
-| Update detection (SteamCMD, HTTP, Docker) | Planned |
+| Update detection (SteamCMD, DepotDownloader, HTTP, Docker) | Backend Ready (config schema; blueprint-declared) |
 | Database / Redis auto-provisioning | Planned |
 | Multi-instance clustering | Planned |

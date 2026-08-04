@@ -1192,17 +1192,29 @@ NX.viewMod = async function(provider, modId) {
     const section = document.getElementById('mod-install-section');
     let servers = [];
     try { servers = await api('/containers'); } catch (_) { servers = []; }
-    const defaultDir = (mod.game === 'minecraft') ? 'plugins' : 'oxide/plugins';
+    // Rust servers run either Oxide or Carbon, which use different plugin
+    // folders. Minecraft-style mods just drop into /plugins.
+    const rustLike = mod.game !== 'minecraft';
+    const defaultDir = rustLike ? 'oxide/plugins' : 'plugins';
     if (!servers.length) {
       section.innerHTML = '<p class="text-muted text-sm">Create a server first to install this mod.</p>';
     } else {
       const options = servers.map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.status)})</option>`).join('');
+      const frameworkRow = rustLike ? `
+        <div class="form-group">
+          <label class="form-label">Framework</label>
+          <select id="install-framework" class="form-input" style="width:100%" onchange="NX.onFrameworkChange()">
+            <option value="oxide">Oxide / uMod (oxide/plugins)</option>
+            <option value="carbon">Carbon (carbon/plugins)</option>
+          </select>
+        </div>` : '';
       section.innerHTML = `
         <h4 style="margin-bottom:0.75rem">Install to server</h4>
         <div class="form-group">
           <label class="form-label">Server</label>
           <select id="install-server" class="form-input" style="width:100%">${options}</select>
         </div>
+        ${frameworkRow}
         <div class="form-group">
           <label class="form-label">Install folder</label>
           <input id="install-dir" class="form-input" style="width:100%" value="${esc(defaultDir)}">
@@ -1213,18 +1225,33 @@ NX.viewMod = async function(provider, modId) {
   } catch (e) { toast(e.message, 'error'); }
 };
 
+// Keep the install-folder input in sync when the operator switches framework,
+// unless they've hand-edited it to something non-default.
+NX.onFrameworkChange = function() {
+  const fw = document.getElementById('install-framework')?.value;
+  const dirEl = document.getElementById('install-dir');
+  if (!fw || !dirEl) return;
+  const known = ['oxide/plugins', 'carbon/plugins'];
+  if (known.includes(dirEl.value.trim())) {
+    dirEl.value = fw === 'carbon' ? 'carbon/plugins' : 'oxide/plugins';
+  }
+};
+
 NX.installMod = async function(provider, modId) {
   const server = document.getElementById('install-server')?.value;
   const dir = (document.getElementById('install-dir')?.value || '').trim();
+  const framework = document.getElementById('install-framework')?.value;
   const status = document.getElementById('install-status');
   const btn = document.getElementById('install-btn');
   if (!server) { status.innerHTML = '<span class="text-danger">Select a server.</span>'; return; }
   status.innerHTML = '<span class="text-muted">Installing…</span>';
   btn.disabled = true;
   try {
+    const body = { provider, mod_id: modId, target_dir: dir };
+    if (framework) body.framework = framework;
     const res = await api(`/containers/${encodeURIComponent(server)}/mods/install`, {
       method: 'POST',
-      body: JSON.stringify({ provider, mod_id: modId, target_dir: dir }),
+      body: JSON.stringify(body),
     });
     status.innerHTML = `<span class="text-success">Installed → ${esc(res.file_path)} (${fmtBytes(res.file_size)})</span>`;
     toast('Mod installed', 'success');

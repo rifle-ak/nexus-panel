@@ -565,6 +565,9 @@ pub struct ModSupport {
 pub enum ModLoader {
     /// Umod/Oxide for Rust, 7DTD, etc.
     Oxide,
+    /// Carbon for Rust — an Oxide-compatible alternative framework whose
+    /// plugins live under `carbon/plugins` instead of `oxide/plugins`.
+    Carbon,
     /// Forge for Minecraft
     Forge,
     /// Fabric for Minecraft
@@ -603,19 +606,58 @@ pub struct Updates {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UpdateCheck {
-    SteamCmd { app_id: u32 },
-    Http { url: String, version_path: String },
-    Docker { track_tag: String },
-    Command { command: String, parse: String },
+    SteamCmd {
+        app_id: u32,
+    },
+    /// SteamRE DepotDownloader — a SteamCMD alternative that avoids some of
+    /// SteamCMD's download/validation flakiness.
+    DepotDownloader {
+        app_id: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        depot_id: Option<u32>,
+    },
+    Http {
+        url: String,
+        version_path: String,
+    },
+    Docker {
+        track_tag: String,
+    },
+    Command {
+        command: String,
+        parse: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UpdateApply {
-    SteamCmd { app_id: u32, beta: Option<String> },
-    Download { url: String },
-    Docker { pull: bool },
-    Command { command: String },
+    SteamCmd {
+        app_id: u32,
+        beta: Option<String>,
+    },
+    /// SteamRE DepotDownloader — a SteamCMD alternative that avoids some of
+    /// SteamCMD's download/validation flakiness. `depot_id`/`manifest` pin a
+    /// specific depot/manifest; `branch` selects a (possibly password-gated)
+    /// Steam branch, analogous to SteamCmd's `beta`.
+    DepotDownloader {
+        app_id: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        depot_id: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        manifest: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+    },
+    Download {
+        url: String,
+    },
+    Docker {
+        pull: bool,
+    },
+    Command {
+        command: String,
+    },
 }
 
 /// Service dependency
@@ -1059,5 +1101,53 @@ mod tests {
         assert!(flags.contains(&"-Xmx4G".to_string()));
         assert!(flags.contains(&"-XX:+UseG1GC".to_string()));
         assert!(flags.contains(&"-XX:MaxGCPauseMillis=200".to_string())); // Aikar flag
+    }
+
+    #[test]
+    fn carbon_loader_roundtrips() {
+        // Carbon is a first-class loader alongside Oxide.
+        let loader: ModLoader = serde_yaml::from_str("carbon").unwrap();
+        assert!(matches!(loader, ModLoader::Carbon));
+        assert_eq!(serde_yaml::to_string(&loader).unwrap().trim(), "carbon");
+    }
+
+    #[test]
+    fn depot_downloader_update_check_roundtrips() {
+        let yaml = "type: depot_downloader\napp_id: 258550\ndepot_id: 258551\n";
+        let check: UpdateCheck = serde_yaml::from_str(yaml).unwrap();
+        match check {
+            UpdateCheck::DepotDownloader { app_id, depot_id } => {
+                assert_eq!(app_id, 258550);
+                assert_eq!(depot_id, Some(258551));
+            }
+            _ => panic!("expected DepotDownloader"),
+        }
+        // depot_id is optional.
+        let minimal: UpdateCheck =
+            serde_yaml::from_str("type: depot_downloader\napp_id: 258550\n").unwrap();
+        assert!(matches!(
+            minimal,
+            UpdateCheck::DepotDownloader { depot_id: None, .. }
+        ));
+    }
+
+    #[test]
+    fn depot_downloader_update_apply_roundtrips() {
+        let yaml = "type: depot_downloader\napp_id: 258550\nbranch: staging\n";
+        let apply: UpdateApply = serde_yaml::from_str(yaml).unwrap();
+        match apply {
+            UpdateApply::DepotDownloader {
+                app_id,
+                branch,
+                depot_id,
+                manifest,
+            } => {
+                assert_eq!(app_id, 258550);
+                assert_eq!(branch, Some("staging".to_string()));
+                assert_eq!(depot_id, None);
+                assert_eq!(manifest, None);
+            }
+            _ => panic!("expected DepotDownloader"),
+        }
     }
 }
