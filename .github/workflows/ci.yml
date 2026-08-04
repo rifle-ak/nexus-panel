@@ -81,6 +81,45 @@ jobs:
           file: ./cobertura.xml
           fail_ci_if_error: false
 
+  integration:
+    name: Integration (containerd)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc and containerd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler containerd
+          sudo systemctl enable --now containerd
+          # Wait for the containerd socket to appear.
+          for _ in $(seq 1 30); do
+            [ -S /run/containerd/containerd.sock ] && break
+            sleep 1
+          done
+          sudo ctr version
+          # Let the (unprivileged) test process reach the root-owned socket.
+          sudo chmod 666 /run/containerd/containerd.sock
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run containerd integration test
+        env:
+          NEXUS_IT_CONTAINERD: "1"
+        run: cargo test -p nexus-node --test containerd_integration -- --nocapture
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

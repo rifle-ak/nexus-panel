@@ -239,8 +239,14 @@ container manager.
   `xdp_firewall.rs`). Clean up so `-D warnings` can be enforced.
 - **L-3. Missing project-governance files:** no `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, issue/PR templates, or `CHANGELOG.md`.
-- **L-4. Integration tests are all `#[ignore]`d** (11 tests) and never run in CI because they need a
-  live containerd. Add a CI job with containerd (or a nerdctl/dind service) to exercise them.
+- **L-4. No integration test exercised the real containerd runtime.** *(Correction: the "11 ignored"
+  figure in an earlier draft was a misread — those are illustrative ```` ```ignore ```` doc-example
+  blocks, not `#[ignore]`d containerd tests; there were no hidden integration tests.)* The genuine
+  gap was that nothing validated the containerd connection path in CI. **Resolved:** a gated
+  integration test (`crates/nexus-node/tests/containerd_integration.rs`, behind `NEXUS_IT_CONTAINERD=1`)
+  connects to a live containerd and asserts a round-trip RPC behaves; a dedicated CI job installs and
+  starts containerd to run it. The default test suite still skips it, staying fast and
+  dependency-free.
 
 ---
 
@@ -300,6 +306,6 @@ container manager.
 - [x] Container state survives a service restart (H-1). Schedule persistence: pending (Phase 2).
 - [x] Containerd unavailability fails loudly (no silent mock) — H-2.
 - [x] Manual schedule trigger executes the task — H-3.
-- [ ] Integration tests run in CI against a real runtime (L-4 — still open).
+- [x] An integration test runs in CI against a real containerd runtime (L-4).
 - [x] Env file is `0600` root-owned (installer); documented in `SECURITY.md` — M-3.
 - [x] README reflects real feature status; `SECURITY.md` present with disclosure process — M-1/L-3.
