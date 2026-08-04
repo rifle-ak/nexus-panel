@@ -336,6 +336,18 @@ impl MarketplaceAdapter for LoneDesignAdapter {
             });
         }
 
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            // Lone.Design sits behind Cloudflare's bot challenge, which returns
+            // a 403 "Just a moment..." interstitial to non-browser clients.
+            return Err(MarketplaceError::ApiError {
+                provider: "lone_design".to_string(),
+                message: "Blocked by Cloudflare bot protection (403). Lone.Design is not \
+                          reachable from a plain HTTP client without a browser/JS challenge."
+                    .to_string(),
+                status_code: Some(403),
+            });
+        }
+
         if !response.status().is_success() {
             return Err(MarketplaceError::ApiError {
                 provider: "lone_design".to_string(),

@@ -21,6 +21,22 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (0.8.7 / 0.9.5) to clear RUSTSEC advisories (the latter for
   RUSTSEC-2026-0097).
 
+### Fixed
+- **Umod marketplace adapter refreshed for the current API.** umod.org's
+  responses had drifted (display name moved to `title`, `downloads_total` →
+  `downloads`, `category` → `category_tags`, `games` → `games_detail`, and the
+  details endpoint dropped the `releases[]` history in favor of inline latest-
+  release fields), which made search/detail/install fail to parse. The adapter
+  now parses the current schema, prefers the RFC3339 `*_atom` timestamps, builds
+  the version from the inline latest release, verifies integrity against umod's
+  **SHA-1** checksum (the old code compared a SHA-256 to it and always failed),
+  and writes the class-named `.cs` file so Oxide/Carbon load it. Verified
+  end-to-end against the live API.
+- **Codefling** now returns a clear "authentication required" error when its
+  Invision Community API rejects unauthenticated requests (`401 NO_API_KEY`),
+  and **Lone.Design** reports when it is blocked by Cloudflare's bot challenge
+  (`403`), instead of surfacing an opaque failure.
+
 ### Added
 - **Carbon framework support.** Rust servers can run [Carbon](https://github.com/CarbonCommunity/Carbon)
   as an Oxide-compatible alternative. `ModLoader::Carbon` is a first-class loader,

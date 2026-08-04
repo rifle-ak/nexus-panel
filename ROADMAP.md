@@ -36,19 +36,27 @@ Current status of all features. Items marked **Done** are functional in the web 
 
 | Feature | Status |
 |---------|--------|
-| Unified search across providers (Umod, Codefling, Lone.Design) | Backend (adapters need updating for current provider APIs) |
+| Umod search / detail / install | **Done** (live-verified against the current umod.org API) |
+| Codefling search / detail / install | Backend (requires a Codefling API key; unauthenticated requests 401) |
+| Lone.Design search / detail / install | Backend (blocked by Cloudflare bot protection for non-browser clients) |
 | Mod detail view | Done (UI) |
 | One-click mod install to running server | Done (API + UI) |
 | Framework selection for Rust mods (Oxide **or** Carbon) | Done (installs to `oxide/plugins` or `carbon/plugins`) |
 | Mod update checking for installed mods | Planned |
 | Dependency resolution | Backend Ready |
 
-> **Note:** the marketplace adapters were written against earlier provider APIs;
-> some responses have since drifted (e.g. Umod now returns `title`/`category_tags`
-> rather than `name`/`category`), so live search/detail may fail to parse until the
-> adapters are refreshed. The install pipeline (download → checksum → place in the
-> server's mods directory) and its API/UI are complete and work against any adapter
-> that parses correctly.
+> **Provider status.** The **Umod** adapter has been refreshed for the current
+> umod.org API (which now returns `title`/`downloads`/`category_tags`/
+> `games_detail` and RFC3339 `*_atom` timestamps) and is verified end-to-end:
+> search → detail → download (SHA-1 verified, class-named `.cs` file). **Codefling**
+> uses the Invision Community REST API and rejects unauthenticated requests with
+> `401 NO_API_KEY`, so it needs a configured API key; the adapter now surfaces that
+> as a clear "authentication required" error. **Lone.Design** sits behind
+> Cloudflare's bot challenge and returns a `403` interstitial to plain HTTP clients,
+> so it isn't reachable without a browser/JS-challenge path; the adapter now reports
+> that explicitly. The install pipeline (download → checksum → place in the server's
+> mods directory) and its API/UI are complete and work against any adapter that
+> parses correctly.
 
 ## Monitoring & Analytics
 
