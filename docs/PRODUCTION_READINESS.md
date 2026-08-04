@@ -8,23 +8,31 @@ This document is the single source of truth for *what it takes to ship Nexus Pan
 It records what is genuinely done, the concrete blockers, and a prioritized, actionable remediation
 plan. Every finding cites the code that produced it (`file:line`) so it can be verified and fixed.
 
+> **Remediation progress — Phase 0 complete (2026-08-04).** The security blockers below have been
+> fixed and verified end-to-end: the web panel now requires authentication (C-1), the installer's
+> credential actually gates access (C-2), the file-API traversal hole is closed (C-3), and all
+> services default to loopback (M-4). Verification also uncovered and fixed a latent routing bug —
+> the panel's routes used axum-0.8 `{id}` path-param syntax on axum 0.7, so every container detail,
+> file, backup, and schedule route silently 404'd; they now use `:id` and work. Phase 1 (make CI
+> real) is next.
+
 ---
 
 ## 1. Verdict
 
-**Not production ready.** The codebase compiles, all 156 unit tests pass, and the architecture is
-sound — but the primary management surface (the web panel and its REST API) ships **with no
-authentication at all**, the installer tells operators they are protected when they are not, and
-the CI pipeline cannot compile the project. These are shipping blockers, not polish items.
+**Phase 0 security blockers resolved; not yet production ready.** The remaining work is Phase 1–3
+(CI, operational correctness, polish). The codebase compiles, 164 unit tests pass, and the primary
+management surface is now authenticated and traversal-safe. CI still cannot compile (Phase 1).
 
 | Area | State | Blocker? |
 |------|-------|----------|
 | Builds from clean checkout | ✅ Works (needs `protoc`) | — |
-| Unit tests | ✅ 156 pass, 11 integration ignored | — |
-| **Web panel / REST API auth** | ❌ **None — fully open** | **Yes** |
-| **Installer security claims** | ❌ **False sense of protection** | **Yes** |
-| **File API path traversal** | ❌ **Escapable on writes** | **Yes** |
-| **CI pipeline** | ❌ **Cannot compile; fmt + clippy red** | **Yes** |
+| Unit tests | ✅ 164 pass, 11 integration ignored | — |
+| Web panel / REST API auth | ✅ **Resolved** — login + session middleware | — |
+| Installer security claims | ✅ **Resolved** — credential now enforced | — |
+| File API path traversal | ✅ **Resolved** — `..` rejected on writes | — |
+| Panel API routing | ✅ **Fixed** — `:id` params (was silently 404ing) | — |
+| **CI pipeline** | ❌ **Cannot compile; fmt + clippy red** | **Yes (Phase 1)** |
 | State persistence across restart | ❌ In-memory only | High |
 | Containerd failure handling | ⚠️ Silent fake-runtime fallback | High |
 | TLS for the panel | ⚠️ Relies entirely on external Caddy | Medium |
@@ -255,11 +263,11 @@ container manager.
 
 ## 8. Pre-launch checklist
 
-- [ ] Web panel requires authentication; verified an unauthenticated request to
+- [x] Web panel requires authentication; verified an unauthenticated request to
       `/api/v1/containers` returns 401.
-- [ ] All services bind to loopback by default; public exposure is deliberate and TLS-terminated.
-- [ ] File API rejects `../` on write/mkdir/rename (test included).
-- [ ] Installer credentials actually gate access; no false security claims.
+- [x] All services bind to loopback by default; public exposure is deliberate and TLS-terminated.
+- [x] File API rejects `../` on write/mkdir/rename (test included).
+- [x] Installer credentials actually gate access; no false security claims.
 - [ ] CI is green on a clean runner (protoc installed, fmt clean, clippy `-D warnings` clean,
       `cargo deny`/`cargo audit` advisory-clean — see M-6).
 - [ ] Container/schedule state survives a service restart.

@@ -5,6 +5,19 @@
 
 const API = '/api/v1';
 
+// ── Auth / session token ──────────────────────────────────────────
+
+const TOKEN_KEY = 'nexus_token';
+
+const Auth = {
+  get token() { return localStorage.getItem(TOKEN_KEY) || ''; },
+  set token(v) {
+    if (v) localStorage.setItem(TOKEN_KEY, v);
+    else localStorage.removeItem(TOKEN_KEY);
+  },
+  clear() { localStorage.removeItem(TOKEN_KEY); },
+};
+
 // ── Global state ──────────────────────────────────────────────────
 
 const NX = window.NX = {
@@ -330,10 +343,18 @@ function toast(msg, type = 'info') {
 // ── API helpers ───────────────────────────────────────────────────
 
 async function api(path, opts = {}) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    ...opts,
-  });
+  const headers = { 'Content-Type': 'application/json', ...opts.headers };
+  if (Auth.token) headers['Authorization'] = 'Bearer ' + Auth.token;
+
+  const res = await fetch(API + path, { headers, ...opts });
+
+  // Session expired or missing — drop the token and show the login screen.
+  if (res.status === 401) {
+    Auth.clear();
+    showLogin('Your session expired. Please sign in again.');
+    throw new Error('Authentication required');
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error || res.statusText);
@@ -1216,7 +1237,124 @@ function fmtDuration(secs) {
   return `${m}m`;
 }
 
+// ── Login / boot ──────────────────────────────────────────────────
+
+function showLogin(message) {
+  document.body.classList.add('login-mode');
+  let overlay = document.getElementById('login-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'login-overlay';
+    overlay.className = 'login-overlay';
+    overlay.innerHTML = `
+      <div class="login-stars"></div>
+      <div class="login-card">
+        <div class="login-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="40" height="40">
+            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+            <polyline points="22 8.5 12 15.5 2 8.5"/><line x1="12" y1="2" x2="12" y2="8.5"/>
+          </svg>
+        </div>
+        <h1 class="login-title">Nexus Panel</h1>
+        <p class="login-sub">Sign in to your control panel</p>
+        <form id="login-form" class="login-form" autocomplete="off">
+          <input type="password" id="login-password" class="login-input" placeholder="Admin password" autofocus>
+          <button type="submit" class="btn btn-primary login-btn">Sign In</button>
+          <div id="login-error" class="login-error"></div>
+        </form>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#login-form').addEventListener('submit', submitLogin);
+  }
+  overlay.style.display = 'flex';
+  const err = overlay.querySelector('#login-error');
+  err.textContent = message || '';
+  const input = overlay.querySelector('#login-password');
+  input.value = '';
+  input.focus();
+}
+
+function hideLogin() {
+  document.body.classList.remove('login-mode');
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function submitLogin(e) {
+  e.preventDefault();
+  const input = document.getElementById('login-password');
+  const err = document.getElementById('login-error');
+  const btn = e.target.querySelector('button[type=submit]');
+  err.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const res = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: input.value }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(body.error || 'Invalid credentials');
+    }
+    const data = await res.json();
+    Auth.token = data.token;
+    hideLogin();
+    route();
+  } catch (ex) {
+    err.textContent = ex.message || 'Sign in failed';
+    input.focus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(API + '/auth/logout', {
+      method: 'POST',
+      headers: Auth.token ? { 'Authorization': 'Bearer ' + Auth.token } : {},
+    });
+  } catch (_) { /* best effort */ }
+  Auth.clear();
+  showLogin('You have been signed out.');
+}
+NX.logout = logout;
+
+async function boot() {
+  // Ask the node whether authentication is required.
+  let authRequired = false;
+  try {
+    const cfg = await (await fetch(API + '/auth/config')).json();
+    authRequired = !!cfg.auth_required;
+  } catch (_) {
+    authRequired = false;
+  }
+
+  if (authRequired && !Auth.token) {
+    showLogin();
+    return;
+  }
+
+  if (authRequired && Auth.token) {
+    // Validate the stored token with a cheap protected call.
+    try {
+      await api('/node/info');
+    } catch (_) {
+      // api() already surfaced the login screen on 401.
+      return;
+    }
+  }
+
+  hideLogin();
+  route();
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 
-window.addEventListener('hashchange', route);
-document.addEventListener('DOMContentLoaded', route);
+window.addEventListener('hashchange', () => {
+  if (!document.body.classList.contains('login-mode')) route();
+});
+document.addEventListener('DOMContentLoaded', boot);

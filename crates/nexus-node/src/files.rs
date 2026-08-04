@@ -56,23 +56,59 @@ impl FileManager {
         }
     }
 
-    /// Validate and sanitize a path to prevent directory traversal
+    /// Validate and sanitize a path to prevent directory traversal.
+    ///
+    /// This rejects any `..` (parent-dir), absolute-root, or prefix components
+    /// *lexically*, before touching the filesystem. That is essential because
+    /// [`Path::canonicalize`] fails for paths that do not exist yet (creating a
+    /// new file, making a directory, or the destination of a rename), and a
+    /// canonicalize-or-fall-back approach would let `../` escape the jail on
+    /// exactly those write operations. As defense in depth we then resolve the
+    /// nearest existing ancestor through symlinks and confirm it is still
+    /// contained within the (canonicalized) server directory.
     fn sanitize_path(&self, path: &str) -> Result<PathBuf> {
-        // Remove leading slashes
-        let path = path.trim_start_matches('/');
+        use std::path::Component;
 
-        // Build the full path
-        let full_path = self.server_dir.join(path);
+        // Strip leading slashes so the input is always treated as relative.
+        let rel = path.trim_start_matches('/');
 
-        // Canonicalize to resolve any .. or symlinks
-        let canonical = full_path.canonicalize().unwrap_or_else(|_| full_path.clone());
+        // Rebuild the path from only "normal" components. Any attempt to
+        // ascend (`..`), anchor to root, or use a Windows prefix is rejected
+        // outright — this is what makes the check safe for non-existent targets.
+        let mut normalized = PathBuf::new();
+        for component in Path::new(rel).components() {
+            match component {
+                Component::Normal(c) => normalized.push(c),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(NodeError::InvalidInput(format!(
+                        "Path traversal attempt detected: {}",
+                        path
+                    )));
+                }
+            }
+        }
 
-        // Ensure the path is within the server directory
-        if !canonical.starts_with(&self.server_dir) {
-            return Err(NodeError::InvalidInput(format!(
-                "Path traversal attempt detected: {}",
-                path
-            )));
+        let full_path = self.server_dir.join(&normalized);
+
+        // Defense in depth against symlinks: resolve the path (or, if it does
+        // not exist yet, its nearest existing ancestor) and require the
+        // resolved location to stay inside the server directory.
+        let base = self.server_dir.canonicalize().unwrap_or_else(|_| self.server_dir.clone());
+
+        let resolved = if full_path.exists() {
+            full_path.canonicalize().ok()
+        } else {
+            full_path.ancestors().find(|p| p.exists()).and_then(|p| p.canonicalize().ok())
+        };
+
+        if let Some(resolved) = resolved {
+            if !resolved.starts_with(&base) {
+                return Err(NodeError::InvalidInput(format!(
+                    "Path traversal attempt detected: {}",
+                    path
+                )));
+            }
         }
 
         Ok(full_path)
@@ -598,6 +634,33 @@ mod tests {
         // Path traversal should fail
         let result = manager.sanitize_path("../../../etc/passwd");
         assert!(result.is_err());
+
+        // Traversal must also be rejected when the target does NOT exist yet
+        // (this is the write / mkdir / rename-destination case that a
+        // canonicalize-or-fall-back check would let through).
+        assert!(manager.sanitize_path("../../../../etc/cron.d/pwned").is_err());
+        assert!(manager.sanitize_path("subdir/../../escape.txt").is_err());
+        assert!(manager.sanitize_path("/../../escape.txt").is_err());
+
+        // A nested path under the jail that does not exist yet is still allowed.
+        assert!(manager.sanitize_path("logs/latest/server.log").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write_rejects_traversal_to_nonexistent_target() {
+        let temp = TempDir::new().unwrap();
+        let manager = FileManager::new("test-container", temp.path());
+        fs::create_dir_all(&manager.server_dir).await.unwrap();
+
+        // Attempt to write outside the jail via a non-existent target path.
+        let result = manager
+            .write_file("../../../../tmp/nexus-escape-test.txt", b"pwned", true)
+            .await;
+        assert!(result.is_err(), "traversal write should be rejected");
+
+        // And mkdir must be rejected too.
+        let result = manager.create_directory("../../escape-dir", true).await;
+        assert!(result.is_err(), "traversal mkdir should be rejected");
     }
 
     #[tokio::test]

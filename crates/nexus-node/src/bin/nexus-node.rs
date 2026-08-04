@@ -60,10 +60,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Configuration from environment variables
+    // All services default to loopback. Exposing the panel or gRPC API to a
+    // network is a deliberate act: set the corresponding *_BIND env var (and
+    // make sure authentication is configured first).
     let grpc_bind = std::env::var("GRPC_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     let metrics_bind =
         std::env::var("METRICS_BIND").unwrap_or_else(|_| "127.0.0.1:9090".to_string());
-    let web_bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+    let web_bind = std::env::var("WEB_BIND").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     let containerd_socket = std::env::var("CONTAINERD_SOCKET")
         .unwrap_or_else(|_| "/run/containerd/containerd.sock".to_string());
     let containerd_namespace =
@@ -254,13 +257,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize mod marketplace
     let marketplace = {
-        use nexus_marketplace::adapters::{UmodAdapter, CodeflingAdapter, LoneDesignAdapter};
+        use nexus_marketplace::adapters::{CodeflingAdapter, LoneDesignAdapter, UmodAdapter};
         let mut mgr = nexus_marketplace::MarketplaceManager::new();
         mgr.register_adapter(UmodAdapter::new());
         mgr.register_adapter(CodeflingAdapter::new());
         mgr.register_adapter(LoneDesignAdapter::new());
         Arc::new(mgr)
     };
+
+    // Web panel authentication (shares AUTH_ENABLED / AUTH_PASSWORD /
+    // AUTH_API_KEYS with the gRPC auth stack).
+    let web_auth_config = nexus_node::web::auth::WebAuthConfig::from_env();
+    info!(
+        "  Web Panel Auth: {}",
+        if web_auth_config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    if web_auth_config.enabled && !web_auth_config.has_credentials() {
+        warn!(
+            "AUTH_ENABLED=true but neither AUTH_PASSWORD nor AUTH_API_KEYS is set — \
+             the web panel will reject all API requests until a credential is configured"
+        );
+    }
+    let web_sessions = Arc::new(nexus_node::web::auth::SessionStore::new(
+        web_auth_config.session_ttl,
+    ));
+    let web_auth_config = Arc::new(web_auth_config);
 
     // Spawn web panel server
     let web_server_handle = {
@@ -274,6 +299,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             node_id: node_id.clone(),
             data_dir: data_dir.clone(),
             start_time: std::time::SystemTime::now(),
+            auth: web_auth_config.clone(),
+            sessions: web_sessions.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

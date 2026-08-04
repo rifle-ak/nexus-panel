@@ -187,6 +187,16 @@ run_wizard() {
             AUTH_PASSWORD="$REPLY"
         fi
     fi
+
+    # Safety guard: never expose an unauthenticated panel to a network. If the
+    # operator declined auth but the panel would bind to all interfaces, force
+    # it back to loopback so the open panel is only reachable locally.
+    if [ "$ENABLE_AUTH" != "true" ] && [ "${WEB_BIND%%:*}" = "0.0.0.0" ]; then
+        local port="${WEB_BIND##*:}"
+        WEB_BIND="127.0.0.1:$port"
+        warn "Authentication is disabled — binding the panel to 127.0.0.1 only."
+        warn "Enable authentication (AUTH_ENABLED/AUTH_PASSWORD) before exposing it to a network."
+    fi
     echo ""
 
     # --- gRPC / Metrics Ports ---
@@ -657,8 +667,14 @@ print_summary() {
 
     if [ "$ENABLE_AUTH" = "true" ]; then
         echo ""
+        echo -e "  Log in to the panel with this password:"
         echo -e "  Login password: \033[1;33m$AUTH_PASSWORD\033[0m"
-        echo -e "  \033[1;31m  ^ Save this now! It's stored in $NEXUS_CONFIG/config.env\033[0m"
+        echo -e "  \033[1;31m  ^ Save this now! It's stored (mode 0600) in $NEXUS_CONFIG/config.env\033[0m"
+    else
+        echo ""
+        echo -e "  \033[1;31mAuthentication is DISABLED — the panel is bound to localhost only.\033[0m"
+        echo -e "  Set AUTH_ENABLED=true and AUTH_PASSWORD in $NEXUS_CONFIG/config.env,"
+        echo -e "  then set WEB_BIND to 0.0.0.0 before exposing it to a network."
     fi
 
     echo ""
