@@ -1038,8 +1038,12 @@ struct InstallModReq {
     /// Specific version to install; defaults to the latest.
     version: Option<String>,
     /// Directory within the server to install into (e.g. "oxide/plugins",
-    /// "plugins"). Defaults to a per-provider guess when omitted.
+    /// "plugins"). Defaults to a per-framework/provider guess when omitted.
     target_dir: Option<String>,
+    /// Rust modding framework the target server runs ("oxide" or "carbon").
+    /// Selects `oxide/plugins` vs `carbon/plugins` when `target_dir` is
+    /// omitted; ignored when `target_dir` is set explicitly.
+    framework: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1056,6 +1060,17 @@ fn default_mods_dir(provider: &str) -> &'static str {
     match provider {
         "umod" | "codefling" | "lone_design" => "oxide/plugins",
         _ => "plugins",
+    }
+}
+
+/// Resolve the install directory when the caller didn't set `target_dir`.
+/// An explicit `framework` wins (Rust servers can run Oxide *or* Carbon, which
+/// use different plugin folders); otherwise fall back to a per-provider guess.
+fn mods_dir_for(framework: Option<&str>, provider: &str) -> String {
+    match framework.map(str::trim).filter(|f| !f.is_empty()) {
+        Some(f) if f.eq_ignore_ascii_case("carbon") => "carbon/plugins".to_string(),
+        Some(f) if f.eq_ignore_ascii_case("oxide") => "oxide/plugins".to_string(),
+        _ => default_mods_dir(provider).to_string(),
     }
 }
 
@@ -1076,7 +1091,7 @@ async fn api_install_mod(
     let subdir = body
         .target_dir
         .filter(|d| !d.trim().is_empty())
-        .unwrap_or_else(|| default_mods_dir(&body.provider).to_string());
+        .unwrap_or_else(|| mods_dir_for(body.framework.as_deref(), &body.provider));
 
     // Resolve the install directory safely inside the container's files.
     let fm = file_manager(&s, &id);
@@ -1340,7 +1355,7 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_mods_dir, is_newer};
+    use super::{default_mods_dir, is_newer, mods_dir_for};
 
     #[test]
     fn mods_dir_defaults_per_provider() {
@@ -1348,6 +1363,18 @@ mod tests {
         assert_eq!(default_mods_dir("codefling"), "oxide/plugins");
         assert_eq!(default_mods_dir("lone_design"), "oxide/plugins");
         assert_eq!(default_mods_dir("spigot"), "plugins");
+    }
+
+    #[test]
+    fn mods_dir_honors_framework() {
+        // Framework selects the plugin folder for Rust servers...
+        assert_eq!(mods_dir_for(Some("carbon"), "umod"), "carbon/plugins");
+        assert_eq!(mods_dir_for(Some("Carbon"), "umod"), "carbon/plugins");
+        assert_eq!(mods_dir_for(Some("oxide"), "umod"), "oxide/plugins");
+        // ...and falls back to the provider guess when absent/blank/unknown.
+        assert_eq!(mods_dir_for(None, "umod"), "oxide/plugins");
+        assert_eq!(mods_dir_for(Some("  "), "codefling"), "oxide/plugins");
+        assert_eq!(mods_dir_for(Some("bogus"), "spigot"), "plugins");
     }
 
     #[test]

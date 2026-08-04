@@ -30,7 +30,7 @@ Nexus uses **Blueprints** - a superior alternative to Pterodactyl eggs with feat
 | Mod Support | Basic | Built-in marketplace integration |
 | Health Checks | Basic | TCP, HTTP, RCON, Game Query protocols |
 | Metrics | No | Player count, TPS, custom metrics |
-| Update Detection | No | SteamCMD, HTTP, Docker tracking |
+| Update Detection | No | SteamCMD, DepotDownloader, HTTP, Docker tracking |
 | Backup Config | No | Paths, exclusions, retention, scheduling |
 | Clustering | No | Multi-instance load balancing |
 | Dependencies | No | Database, Redis auto-provisioning |
@@ -41,6 +41,7 @@ Ready-to-use blueprints for popular games in `/blueprints`:
 
 - **minecraft-paper.yaml** - Paper server with Aikar's flags, auto-scaling
 - **rust.yaml** - Rust with Oxide support, DDoS protection
+- **rust-carbon.yaml** - Rust with the Carbon framework, installed via DepotDownloader
 - **valheim.yaml** - Valheim with BepInEx mod support
 - **cs2.yaml** - Counter-Strike 2 with GSLT, competitive configs
 - **palworld.yaml** - Palworld with optimized settings
