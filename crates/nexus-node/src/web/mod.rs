@@ -149,6 +149,8 @@ pub async fn start_web_server(
             "/api/v1/containers/:id/schedules/:schedule_id/trigger",
             post(api_trigger_schedule),
         )
+        // ── Mods (install to a server) ───────────────────────────────
+        .route("/api/v1/containers/:id/mods/install", post(api_install_mod))
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
         .route(
@@ -1026,6 +1028,89 @@ async fn api_trigger_schedule(
 }
 
 // ---------------------------------------------------------------------------
+// Mod install handler
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct InstallModReq {
+    provider: String,
+    mod_id: String,
+    /// Specific version to install; defaults to the latest.
+    version: Option<String>,
+    /// Directory within the server to install into (e.g. "oxide/plugins",
+    /// "plugins"). Defaults to a per-provider guess when omitted.
+    target_dir: Option<String>,
+}
+
+#[derive(Serialize)]
+struct InstallModResp {
+    /// Installed file path, relative to the server root.
+    file_path: String,
+    file_size: u64,
+    checksum: String,
+}
+
+/// Sensible default mods directory for a provider when the caller doesn't
+/// specify one. The Rust marketplaces install Oxide plugins.
+fn default_mods_dir(provider: &str) -> &'static str {
+    match provider {
+        "umod" | "codefling" | "lone_design" => "oxide/plugins",
+        _ => "plugins",
+    }
+}
+
+/// Download a marketplace mod and install it into a running server's mods
+/// directory. The download itself (fetch + checksum verify) lives in the
+/// marketplace adapter; here we resolve a jail-safe target path and stream it in.
+async fn api_install_mod(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    Json(body): Json<InstallModReq>,
+) -> Result<Json<InstallModResp>, (StatusCode, Json<ApiError>)> {
+    // Container must exist.
+    s.manager
+        .get_state(&id)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+
+    let subdir = body
+        .target_dir
+        .filter(|d| !d.trim().is_empty())
+        .unwrap_or_else(|| default_mods_dir(&body.provider).to_string());
+
+    // Resolve the install directory safely inside the container's files.
+    let fm = file_manager(&s, &id);
+    let target = fm
+        .resolve_path(&subdir)
+        .map_err(|e| err_json(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let result = s
+        .marketplace
+        .download_mod(
+            &body.provider,
+            &body.mod_id,
+            body.version.as_deref(),
+            &target,
+        )
+        .await
+        .map_err(|e| err_json(StatusCode::BAD_GATEWAY, e.to_string()))?;
+
+    // Report the path relative to the server root so the UI can show it.
+    let rel = result
+        .file_path
+        .strip_prefix(fm.server_dir())
+        .unwrap_or(&result.file_path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(Json(InstallModResp {
+        file_path: rel,
+        file_size: result.file_size,
+        checksum: result.checksum,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Marketplace API handlers
 // ---------------------------------------------------------------------------
 
@@ -1255,7 +1340,15 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::is_newer;
+    use super::{default_mods_dir, is_newer};
+
+    #[test]
+    fn mods_dir_defaults_per_provider() {
+        assert_eq!(default_mods_dir("umod"), "oxide/plugins");
+        assert_eq!(default_mods_dir("codefling"), "oxide/plugins");
+        assert_eq!(default_mods_dir("lone_design"), "oxide/plugins");
+        assert_eq!(default_mods_dir("spigot"), "plugins");
+    }
 
     #[test]
     fn semver_update_comparison() {
