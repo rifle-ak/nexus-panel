@@ -38,6 +38,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`403`), instead of surfacing an opaque failure.
 
 ### Added
+- **On-demand game-file update executor.** A new per-server "Update" tab and
+  `POST /api/v1/containers/:id/update` endpoint turn the blueprint `updates`
+  strategy into an action: pick SteamCMD or DepotDownloader (with app id,
+  branch/beta, depot), and Nexus builds the corresponding command and runs it
+  inside the running container. Because game downloads take minutes, it runs as
+  a background job (one per server) with a long timeout; the client polls
+  `GET .../update` for status/output. The install directory is shell-quoted,
+  and the Docker "pull a new image" strategy is rejected (it's a host concern).
+  The runtime `exec` now takes a caller-supplied timeout so long updates aren't
+  cut off by the interactive shell's 60s bound.
 - **Carbon framework support.** Rust servers can run [Carbon](https://github.com/CarbonCommunity/Carbon)
   as an Oxide-compatible alternative. `ModLoader::Carbon` is a first-class loader,
   the mod-install flow gains an Oxide/Carbon picker (installing to `oxide/plugins`

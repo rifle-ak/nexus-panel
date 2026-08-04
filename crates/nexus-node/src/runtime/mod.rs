@@ -40,8 +40,20 @@ pub trait ContainerRuntime: Send + Sync {
     /// and return its captured output. This is distinct from `send_command`
     /// (which writes to the game process's stdin / RCON): `exec` spawns a
     /// separate process, so it can run arbitrary tooling (e.g. `npm`, a shell).
-    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput>;
+    ///
+    /// The whole call is bounded by `timeout`; callers pass a short bound for
+    /// interactive use (the shell console) and a long one for background jobs
+    /// (a game-file update that can run for many minutes).
+    async fn exec(
+        &self,
+        id: &str,
+        command: &[String],
+        timeout: std::time::Duration,
+    ) -> Result<ExecOutput>;
 }
+
+/// Default timeout for interactive `exec` calls (the shell console).
+pub const DEFAULT_EXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Result of a one-shot `exec` inside a container.
 #[derive(Debug, Clone)]

@@ -52,6 +52,7 @@ pub struct AppState {
     pub start_time: SystemTime,
     pub auth: Arc<auth::WebAuthConfig>,
     pub sessions: Arc<auth::SessionStore>,
+    pub update_jobs: crate::update::SharedUpdateJobStore,
 }
 
 type S = Arc<AppState>;
@@ -151,6 +152,11 @@ pub async fn start_web_server(
         )
         // ── Mods (install to a server) ───────────────────────────────
         .route("/api/v1/containers/:id/mods/install", post(api_install_mod))
+        // ── Game-file update (SteamCMD / DepotDownloader) ────────────
+        .route(
+            "/api/v1/containers/:id/update",
+            get(api_update_status).post(api_start_update),
+        )
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
         .route(
@@ -782,7 +788,7 @@ async fn api_exec(
 
     let out = s
         .manager
-        .exec_command(&id, &argv)
+        .exec_command(&id, &argv, crate::runtime::DEFAULT_EXEC_TIMEOUT)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
 
@@ -1123,6 +1129,94 @@ async fn api_install_mod(
         file_size: result.file_size,
         checksum: result.checksum,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Game-file update executor
+// ---------------------------------------------------------------------------
+
+/// Request to run a game-file update. The body carries an `UpdateApply`
+/// strategy (tagged by `type`, e.g. `steam_cmd` / `depot_downloader`) plus an
+/// optional install directory.
+#[derive(Deserialize)]
+struct StartUpdateReq {
+    #[serde(flatten)]
+    apply: nexus_config::UpdateApply,
+    /// Directory inside the container to install into. Defaults to the
+    /// blueprint working dir (`/home/container`).
+    install_dir: Option<String>,
+}
+
+/// Kick off a game-file update for a server. The update runs as a background
+/// job (downloads can take many minutes); this returns immediately with the
+/// job snapshot, and the client polls `GET .../update` for progress.
+async fn api_start_update(
+    State(s): State<S>,
+    Path(id): Path<String>,
+    Json(body): Json<StartUpdateReq>,
+) -> Result<Json<crate::update::UpdateJob>, (StatusCode, Json<ApiError>)> {
+    // Container must exist and be running to exec into it.
+    let state = s
+        .manager
+        .get_state(&id)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    if !state.status.is_running() {
+        return Err(err_json(
+            StatusCode::CONFLICT,
+            "server must be running to apply an update",
+        ));
+    }
+
+    let install_dir = body
+        .install_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .unwrap_or(crate::update::DEFAULT_INSTALL_DIR)
+        .to_string();
+
+    let command = crate::update::build_update_command(&body.apply, &install_dir)
+        .map_err(|e| err_json(StatusCode::BAD_REQUEST, e))?;
+
+    // Register the job (rejects if one is already running for this server).
+    let job = s
+        .update_jobs
+        .start(&id, command.clone())
+        .await
+        .map_err(|e| err_json(StatusCode::CONFLICT, e))?;
+
+    // Run the update detached; the client polls for completion.
+    let manager = s.manager.clone();
+    let jobs = s.update_jobs.clone();
+    let container_id = id.clone();
+    tokio::spawn(async move {
+        let argv = vec!["/bin/sh".to_string(), "-c".to_string(), command];
+        match manager.exec_command(&container_id, &argv, crate::update::UPDATE_TIMEOUT).await {
+            Ok(out) => {
+                jobs.finish(&container_id, out.stdout, out.stderr, out.exit_code).await;
+            }
+            Err(e) => {
+                jobs.fail(&container_id, e.to_string()).await;
+            }
+        }
+    });
+
+    Ok(Json(job))
+}
+
+/// Return the current/most-recent update job for a server.
+async fn api_update_status(
+    State(s): State<S>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::update::UpdateJob>, (StatusCode, Json<ApiError>)> {
+    match s.update_jobs.get(&id).await {
+        Some(job) => Ok(Json(job)),
+        None => Err(err_json(
+            StatusCode::NOT_FOUND,
+            "no update has been run for this server",
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------

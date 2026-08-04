@@ -701,6 +701,7 @@ impl ContainerManager {
         &self,
         container_id: &str,
         command: &[String],
+        timeout: std::time::Duration,
     ) -> Result<crate::runtime::ExecOutput> {
         {
             let states = self.states.read().await;
@@ -716,7 +717,7 @@ impl ContainerManager {
             }
         }
 
-        self.runtime.exec(container_id, command).await
+        self.runtime.exec(container_id, command, timeout).await
     }
 
     /// Convert GameConfig to ContainerSpec
@@ -1038,12 +1039,23 @@ security:
         let id = manager.create_container(&config, Some("exec-1".to_string())).await.unwrap();
 
         // Not running yet → rejected.
-        assert!(manager.exec_command(&id, &["ls".to_string()]).await.is_err());
+        assert!(manager
+            .exec_command(
+                &id,
+                &["ls".to_string()],
+                crate::runtime::DEFAULT_EXEC_TIMEOUT
+            )
+            .await
+            .is_err());
 
         // Once running, the mock runtime returns captured output.
         manager.start_container(&id).await.unwrap();
         let out = manager
-            .exec_command(&id, &["echo".to_string(), "hi".to_string()])
+            .exec_command(
+                &id,
+                &["echo".to_string(), "hi".to_string()],
+                crate::runtime::DEFAULT_EXEC_TIMEOUT,
+            )
             .await
             .unwrap();
         assert_eq!(out.exit_code, Some(0));

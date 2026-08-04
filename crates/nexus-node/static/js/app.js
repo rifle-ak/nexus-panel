@@ -618,6 +618,92 @@ NX.switchTab = function(tab) {
   if (tab === 'backups') loadBackups();
   if (tab === 'schedules') loadSchedules();
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
+  if (tab === 'update') NX.refreshUpdateStatus();
+};
+
+// ── Update game files ─────────────────────────────────────────────
+
+NX.onUpdateMethodChange = function() {
+  const method = document.getElementById('update-method')?.value;
+  // DepotDownloader exposes a depot id; SteamCMD does not.
+  const depotGroup = document.getElementById('update-depot-group');
+  if (depotGroup) depotGroup.style.display = method === 'depot_downloader' ? '' : 'none';
+};
+
+NX.startUpdate = async function() {
+  if (!NX.currentServer) return;
+  const method = document.getElementById('update-method').value;
+  const appId = parseInt(document.getElementById('update-appid').value.trim(), 10);
+  const branch = document.getElementById('update-branch')?.value.trim();
+  const depot = document.getElementById('update-depot')?.value.trim();
+  const dir = document.getElementById('update-dir').value.trim();
+  const status = document.getElementById('update-status');
+  const btn = document.getElementById('update-run');
+  if (!Number.isFinite(appId)) {
+    status.innerHTML = '<span class="text-danger">Enter a valid Steam App ID.</span>';
+    return;
+  }
+  const body = { type: method, app_id: appId };
+  if (dir) body.install_dir = dir;
+  if (method === 'steam_cmd' && branch) body.beta = branch;
+  if (method === 'depot_downloader') {
+    if (branch) body.branch = branch;
+    if (depot) body.depot_id = parseInt(depot, 10);
+  }
+  status.innerHTML = '<span class="text-muted">Starting update…</span>';
+  btn.disabled = true;
+  try {
+    await api(`/containers/${NX.currentServer}/update`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    toast('Update started', 'success');
+    NX.pollUpdate();
+  } catch (e) {
+    status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
+    btn.disabled = false;
+  }
+};
+
+NX.refreshUpdateStatus = async function() {
+  if (!NX.currentServer) return;
+  try {
+    const job = await api(`/containers/${NX.currentServer}/update`);
+    NX.renderUpdateJob(job);
+    if (job.status === 'running') NX.pollUpdate();
+  } catch (_) {
+    // No update run yet — leave the form ready.
+  }
+};
+
+NX.renderUpdateJob = function(job) {
+  const status = document.getElementById('update-status');
+  const out = document.getElementById('update-output');
+  const btn = document.getElementById('update-run');
+  if (!status) return;
+  const badge = {
+    running: '<span class="badge badge-warning">Running…</span>',
+    succeeded: '<span class="badge badge-success">Succeeded</span>',
+    failed: '<span class="badge badge-danger">Failed</span>',
+  }[job.status] || esc(job.status);
+  let line = `${badge} <code class="text-sm">${esc(job.command)}</code>`;
+  if (job.exit_code !== null && job.exit_code !== undefined) line += ` <span class="text-muted text-sm">(exit ${job.exit_code})</span>`;
+  status.innerHTML = line;
+  const text = [job.stdout, job.stderr, job.error ? `error: ${job.error}` : ''].filter(Boolean).join('\n');
+  if (text) { out.textContent = text; out.classList.remove('hidden'); out.scrollTop = out.scrollHeight; }
+  btn.disabled = job.status === 'running';
+};
+
+NX.pollUpdate = function() {
+  clearTimeout(NX.updatePollTimer);
+  NX.updatePollTimer = setTimeout(async () => {
+    if (!NX.currentServer) return;
+    try {
+      const job = await api(`/containers/${NX.currentServer}/update`);
+      NX.renderUpdateJob(job);
+      if (job.status === 'running') NX.pollUpdate();
+    } catch (_) {}
+  }, 2000);
 };
 
 // ── Shell (container exec) ────────────────────────────────────────
