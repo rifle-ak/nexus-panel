@@ -4,13 +4,19 @@ A high-performance game server control panel built in Rust with security and per
 
 ## Features
 
-- **Built-in Web Panel**: Beautiful dark-themed admin UI — no separate frontend, no PHP, no MySQL
+- **Built-in Web Panel**: Dark-themed admin UI — no separate frontend, no PHP, no MySQL
 - **Single Binary**: Panel + node + API all compiled into one binary via `install.sh`
-- **High Performance**: Rust-based daemon with sub-100ms command execution
-- **Security First**: XDP firewall, secrets management, sandboxed execution
-- **Blueprints**: Superior game server configs with performance tuning, auto-scaling, mod support
-- **Mod Marketplace**: Unified interface for Umod, Codefling, Lone.Design
-- **WHMCS Integration**: Full billing and provisioning support
+- **High Performance**: Rust-based daemon
+- **Authenticated by default**: The panel requires a login (password or API key) and binds to
+  loopback unless you deliberately expose it — see [SECURITY.md](SECURITY.md)
+- **Blueprints**: Game server configs with performance tuning and mod support
+- **Mod Marketplace**: Unified search across Umod, Codefling, and Lone.Design
+- **WHMCS Integration**: Billing/provisioning integration (backend implemented; see the roadmap)
+
+> **Status:** Nexus is under active development. Some features listed below are implemented and
+> wired into the UI; others are backend-only or planned. See **[ROADMAP.md](ROADMAP.md)** for the
+> authoritative, per-feature status, and **[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)**
+> for what remains before a production deployment.
 
 ## Blueprints vs Eggs
 
@@ -163,7 +169,7 @@ Convert existing Pterodactyl eggs with automatic enhancements:
 
 ```
 ┌─────────────────────────────────────┐
-│  Panel (Rust + React)               │
+│  Panel (Rust + embedded web UI)     │
 │  - API Gateway                      │
 │  - Auth (JWT + RBAC)                │
 │  - Marketplace Aggregator           │
@@ -181,16 +187,20 @@ Convert existing Pterodactyl eggs with automatic enhancements:
 
 ## Project Status
 
-All core functionality is implemented:
+Core subsystems are implemented and covered by tests:
 
-| Phase | Description | Status |
+| Area | Description | Status |
 |-------|-------------|--------|
-| 1 | Egg Importer | Complete |
-| 2 | Container Runtime | Complete |
-| 3 | gRPC API | Complete |
-| 4 | Marketplace | Complete |
-| 5 | File/Backup/Schedule | Complete |
-| 6 | WHMCS Integration | Complete |
+| 1 | Egg Importer | Implemented |
+| 2 | Container Runtime (containerd) | Implemented |
+| 3 | gRPC API | Implemented |
+| 4 | Marketplace | Implemented |
+| 5 | File / Backup / Schedule | Implemented |
+| 6 | WHMCS Integration | Backend implemented |
+
+For a feature-by-feature breakdown (Done / Backend Ready / Planned) see
+[ROADMAP.md](ROADMAP.md); for the path to a production deployment see
+[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md).
 
 ## Documentation
 

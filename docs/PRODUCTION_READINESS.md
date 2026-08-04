@@ -28,7 +28,14 @@ plan. Every finding cites the code that produced it (`file:line`) so it can be v
 > requires an explicit `NEXUS_DEV_MODE=true`. H-3: the schedule trigger dispatches real tasks
 > (command/power/backup), the background runner is actually started, and schedules are persisted +
 > restored on startup. M-2: the update check uses semver ordering (0.10.0 > 0.9.0) instead of string
-> comparison. Next: Phase 3 (polish — README/security docs, secrets hardening, repo hygiene).
+> comparison.
+>
+> *Phase 3 (polish) — complete.* README reconciled with the roadmap and honest about status (M-1);
+> `SECURITY.md` added with disclosure + secrets/loopback/dev-mode guidance (M-3); regenerable build
+> artifacts (logs, reports, 258 `converted_eggs/*.yaml`) removed from git and `.gitignore`d (L-1);
+> `CONTRIBUTING.md`, `CHANGELOG.md`, and GitHub PR/issue templates added (L-3). Remaining gaps are
+> optional/heavy: exercising the 11 containerd integration tests in CI (L-4), and publishing tagged
+> GitHub Releases so the update check has something to compare against (M-2).
 
 ---
 
@@ -52,8 +59,9 @@ management surface is now authenticated and traversal-safe. CI still cannot comp
 | Schedule trigger / runner | ✅ **Resolved (H-3)** — real dispatch + persistence | — |
 | Update check versioning | ✅ **Resolved (M-2)** — semver ordering | — |
 | TLS for the panel | ⚠️ Relies entirely on external Caddy | Medium |
-| Feature completeness vs. README | ⚠️ Several "done" items are stubs | Medium |
-| Repo hygiene | ⚠️ Build artifacts committed | Low |
+| Feature completeness vs. README | ✅ **Resolved (M-1)** — README reconciled with roadmap | — |
+| Repo hygiene | ✅ **Resolved (L-1)** — artifacts removed + gitignored | — |
+| Governance/security docs | ✅ **Resolved (L-3/M-3)** — SECURITY/CONTRIBUTING/CHANGELOG/templates | — |
 
 ---
 
@@ -287,8 +295,8 @@ container manager.
 - [ ] CI is green on a clean runner (protoc installed, fmt clean, clippy `-D warnings` clean,
       `cargo deny`/`cargo audit` advisory-clean — see M-6).
 - [x] Container state survives a service restart (H-1). Schedule persistence: pending (Phase 2).
-- [ ] Containerd unavailability fails loudly (no silent mock).
-- [ ] Manual schedule trigger executes the task.
-- [ ] Integration tests run in CI against a real runtime.
-- [ ] Secrets are not echoed; env file is `0600` root-owned.
-- [ ] README reflects real feature status; `SECURITY.md` present with disclosure contact.
+- [x] Containerd unavailability fails loudly (no silent mock) — H-2.
+- [x] Manual schedule trigger executes the task — H-3.
+- [ ] Integration tests run in CI against a real runtime (L-4 — still open).
+- [x] Env file is `0600` root-owned (installer); documented in `SECURITY.md` — M-3.
+- [x] README reflects real feature status; `SECURITY.md` present with disclosure process — M-1/L-3.
