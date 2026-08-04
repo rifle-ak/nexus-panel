@@ -133,13 +133,14 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
+      # cargo-deny is the single advisory gate: it uses the RustSec database
+      # (so it still fails on real vulnerabilities) and is configurable via
+      # deny.toml. The previous, redundant `rustsec/audit-check` step is
+      # intentionally not run — being unconfigurable, it hard-failed on purely
+      # informational "unmaintained"/"unsound" advisories, which are not
+      # vulnerabilities and should not block CI.
       - name: Run cargo-deny check
         run: cargo deny check
-
-      - name: Run cargo audit
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build

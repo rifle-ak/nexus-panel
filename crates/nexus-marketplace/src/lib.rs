@@ -64,8 +64,8 @@ impl MarketplaceManager {
             }
         }
 
-        // Sort by download count (popularity)
-        results.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+        // Sort by download count (popularity), descending.
+        results.sort_by_key(|m| std::cmp::Reverse(m.downloads));
 
         Ok(results)
     }
