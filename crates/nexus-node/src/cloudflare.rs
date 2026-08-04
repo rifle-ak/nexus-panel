@@ -1010,8 +1010,10 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = CloudflareConfig::default();
-        config.enabled = true;
+        let mut config = CloudflareConfig {
+            enabled: true,
+            ..Default::default()
+        };
 
         // Should fail without API token
         assert!(config.validate().is_err());

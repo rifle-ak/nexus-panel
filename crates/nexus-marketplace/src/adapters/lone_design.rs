@@ -3,6 +3,11 @@
 //! Lone.Design is a marketplace for Rust game plugins and resources,
 //! offering both free and premium content.
 
+// The response/DTO structs below mirror the upstream Lone.Design JSON schema
+// so serde can deserialize it. Some fields are retained for schema fidelity
+// and future use even though the adapter does not surface them yet.
+#![allow(dead_code)]
+
 use crate::error::{MarketplaceError, Result};
 use crate::models::*;
 use crate::MarketplaceAdapter;

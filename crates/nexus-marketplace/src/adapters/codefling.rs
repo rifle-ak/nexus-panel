@@ -3,6 +3,11 @@
 //! Codefling is a premium marketplace for Rust game plugins,
 //! offering both free and paid plugins.
 
+// The `*Response`/`*Dto` structs below mirror the upstream Codefling JSON
+// schema so serde can deserialize it. Some fields are retained for schema
+// fidelity and future use even though the adapter does not surface them yet.
+#![allow(dead_code)]
+
 use crate::error::{MarketplaceError, Result};
 use crate::models::*;
 use crate::MarketplaceAdapter;

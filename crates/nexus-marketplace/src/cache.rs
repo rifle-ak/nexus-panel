@@ -106,7 +106,7 @@ impl Default for MetadataCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ModInfo, VersionInfo};
+    use crate::models::ModInfo;
     use chrono::Utc;
 
     fn create_test_mod_details(id: &str) -> ModDetails {
