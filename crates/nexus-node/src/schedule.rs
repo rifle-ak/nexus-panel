@@ -5,17 +5,24 @@
 //! - Power actions (start, stop, restart)
 //! - Backup creation
 
+use crate::backup::BackupManager;
+use crate::container::ContainerManager;
 use crate::error::{NodeError, Result};
 use cron::Schedule;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+/// Subdirectory of `DATA_DIR` where schedules are persisted.
+const SCHEDULE_SUBDIR: &str = ".nexus/schedules";
+
 /// Schedule task type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScheduleTaskType {
     Command,
     Power,
@@ -42,7 +49,7 @@ impl ScheduleTaskType {
 }
 
 /// Schedule task definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleTask {
     pub task_type: ScheduleTaskType,
     pub time_offset: u32, // Seconds after schedule triggers
@@ -50,7 +57,7 @@ pub struct ScheduleTask {
 }
 
 /// Schedule information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleInfo {
     pub id: String,
     pub container_id: String,
@@ -68,6 +75,45 @@ pub type ScheduleCallback = Arc<
     dyn Fn(&str, &ScheduleTask) -> futures::future::BoxFuture<'static, Result<()>> + Send + Sync,
 >;
 
+/// Build the callback that dispatches schedule tasks to real node subsystems
+/// (container commands / power actions / backups). Shared by the background
+/// runner and the manual-trigger endpoint so both do the same thing.
+pub fn dispatch_callback(
+    manager: Arc<ContainerManager>,
+    backup_manager: Arc<BackupManager>,
+) -> ScheduleCallback {
+    Arc::new(move |container_id: &str, task: &ScheduleTask| {
+        let manager = manager.clone();
+        let backup_manager = backup_manager.clone();
+        let container_id = container_id.to_string();
+        let task = task.clone();
+        Box::pin(async move {
+            match task.task_type {
+                ScheduleTaskType::Command => {
+                    manager.send_command(&container_id, &task.payload).await
+                }
+                ScheduleTaskType::Power => match task.payload.trim().to_lowercase().as_str() {
+                    "start" => manager.start_container(&container_id).await,
+                    "stop" => manager.stop_container(&container_id, None).await,
+                    "restart" => manager.restart_container(&container_id).await,
+                    other => Err(NodeError::InvalidInput(format!(
+                        "Unknown power action: {}",
+                        other
+                    ))),
+                },
+                ScheduleTaskType::Backup => {
+                    let name = if task.payload.is_empty() {
+                        format!("scheduled-{}", chrono::Utc::now().timestamp())
+                    } else {
+                        task.payload.clone()
+                    };
+                    backup_manager.create_backup(&container_id, &name, &[], &[]).await.map(|_| ())
+                }
+            }
+        })
+    })
+}
+
 /// Schedule manager
 pub struct ScheduleManager {
     /// Schedules by container_id -> schedule_id -> ScheduleInfo
@@ -75,15 +121,117 @@ pub struct ScheduleManager {
 
     /// Shutdown signal
     shutdown: Arc<RwLock<bool>>,
+
+    /// Data directory for persistence (None = in-memory only, e.g. tests).
+    data_dir: Option<PathBuf>,
 }
 
 impl ScheduleManager {
-    /// Create a new schedule manager
+    /// Create a new in-memory schedule manager (no persistence).
     pub fn new() -> Self {
         Self {
             schedules: Arc::new(RwLock::new(HashMap::new())),
             shutdown: Arc::new(RwLock::new(false)),
+            data_dir: None,
         }
+    }
+
+    /// Create a schedule manager that persists schedules under `data_dir`.
+    pub fn with_data_dir(data_dir: PathBuf) -> Self {
+        Self {
+            schedules: Arc::new(RwLock::new(HashMap::new())),
+            shutdown: Arc::new(RwLock::new(false)),
+            data_dir: Some(data_dir),
+        }
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────────
+
+    fn schedule_dir(&self) -> Option<PathBuf> {
+        self.data_dir.as_ref().map(|d| d.join(SCHEDULE_SUBDIR))
+    }
+
+    /// Write a schedule to disk (best-effort; failures are logged, not fatal).
+    async fn persist(&self, schedule: &ScheduleInfo) {
+        let Some(dir) = self.schedule_dir() else {
+            return;
+        };
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            warn!("Failed to create schedule dir {:?}: {}", dir, e);
+            return;
+        }
+        match serde_json::to_vec_pretty(schedule) {
+            Ok(bytes) => {
+                let path = dir.join(format!("{}.json", schedule.id));
+                if let Err(e) = tokio::fs::write(&path, bytes).await {
+                    warn!("Failed to persist schedule {}: {}", schedule.id, e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize schedule {}: {}", schedule.id, e),
+        }
+    }
+
+    /// Remove a schedule's persisted file.
+    async fn remove_persisted(&self, schedule_id: &str) {
+        if let Some(dir) = self.schedule_dir() {
+            let _ = tokio::fs::remove_file(dir.join(format!("{}.json", schedule_id))).await;
+        }
+    }
+
+    /// Load persisted schedules from disk on startup, recomputing the next run
+    /// time from each cron expression. Returns the number restored.
+    pub async fn restore(&self) -> usize {
+        let Some(dir) = self.schedule_dir() else {
+            return 0;
+        };
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return 0,
+        };
+
+        let mut restored = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("Failed to read schedule file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+            let mut schedule: ScheduleInfo = match serde_json::from_slice(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Skipping unreadable schedule file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            // Recompute the next run from the cron expression.
+            schedule.next_run_at = if schedule.is_active {
+                Schedule::from_str(&schedule.cron_expression)
+                    .ok()
+                    .and_then(|s| s.upcoming(chrono::Utc).next())
+                    .map(|dt| dt.timestamp())
+            } else {
+                None
+            };
+
+            let mut schedules = self.schedules.write().await;
+            schedules
+                .entry(schedule.container_id.clone())
+                .or_default()
+                .insert(schedule.id.clone(), schedule);
+            restored += 1;
+        }
+
+        if restored > 0 {
+            info!("Restored {} schedule(s) from disk", restored);
+        }
+        restored
     }
 
     /// Validate a cron expression
@@ -137,6 +285,8 @@ impl ScheduleManager {
                 schedules.entry(container_id.to_string()).or_insert_with(HashMap::new);
             container_schedules.insert(schedule_id.clone(), schedule_info.clone());
         }
+
+        self.persist(&schedule_info).await;
 
         info!(
             "Created schedule {} '{}' for container {} ({})",
@@ -228,12 +378,16 @@ impl ScheduleManager {
             schedule.next_run_at = None;
         }
 
+        let updated = schedule.clone();
+        drop(schedules);
+        self.persist(&updated).await;
+
         info!(
             "Updated schedule {} for container {}",
             schedule_id, container_id
         );
 
-        Ok(schedule.clone())
+        Ok(updated)
     }
 
     /// Delete a schedule
@@ -242,6 +396,8 @@ impl ScheduleManager {
 
         if let Some(container_schedules) = schedules.get_mut(container_id) {
             if container_schedules.remove(schedule_id).is_some() {
+                drop(schedules);
+                self.remove_persisted(schedule_id).await;
                 info!(
                     "Deleted schedule {} for container {}",
                     schedule_id, container_id
@@ -278,13 +434,18 @@ impl ScheduleManager {
         }
 
         // Update last_run_at
-        {
+        let updated = {
             let mut schedules = self.schedules.write().await;
-            if let Some(container_schedules) = schedules.get_mut(container_id) {
-                if let Some(schedule) = container_schedules.get_mut(schedule_id) {
+            schedules
+                .get_mut(container_id)
+                .and_then(|cs| cs.get_mut(schedule_id))
+                .map(|schedule| {
                     schedule.last_run_at = Some(chrono::Utc::now().timestamp());
-                }
-            }
+                    schedule.clone()
+                })
+        };
+        if let Some(updated) = updated {
+            self.persist(&updated).await;
         }
 
         Ok(())
@@ -471,5 +632,80 @@ mod tests {
         // Verify it's gone
         let schedules = manager.list_schedules("container-1").await.unwrap();
         assert!(schedules.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_persists_and_restores() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dir = temp.path().to_path_buf();
+
+        // Manager A creates a schedule, then goes away.
+        {
+            let manager = ScheduleManager::with_data_dir(dir.clone());
+            manager
+                .create_schedule(
+                    "container-1",
+                    "Nightly Backup",
+                    "0 0 4 * * *",
+                    true,
+                    vec![ScheduleTask {
+                        task_type: ScheduleTaskType::Backup,
+                        time_offset: 0,
+                        payload: String::new(),
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+
+        // A fresh manager restores from disk.
+        let manager2 = ScheduleManager::with_data_dir(dir);
+        assert!(manager2.list_schedules("container-1").await.unwrap().is_empty());
+
+        assert_eq!(manager2.restore().await, 1);
+
+        let schedules = manager2.list_schedules("container-1").await.unwrap();
+        assert_eq!(schedules.len(), 1);
+        assert_eq!(schedules[0].name, "Nightly Backup");
+        // next_run_at was recomputed from the cron expression on restore.
+        assert!(schedules[0].next_run_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_delete_removes_persisted_schedule() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dir = temp.path().to_path_buf();
+        let manager = ScheduleManager::with_data_dir(dir.clone());
+
+        let schedule = manager
+            .create_schedule("container-1", "Test", "0 0 * * * *", true, vec![])
+            .await
+            .unwrap();
+        manager.delete_schedule("container-1", &schedule.id).await.unwrap();
+
+        // A fresh manager finds nothing to restore.
+        let manager2 = ScheduleManager::with_data_dir(dir);
+        assert_eq!(manager2.restore().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_callback_rejects_unknown_power_action() {
+        use crate::backup::BackupManager;
+        use crate::container::ContainerManager;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let manager = Arc::new(ContainerManager::new(temp.path().to_path_buf()));
+        let backup = Arc::new(BackupManager::new(temp.path()));
+        let cb = dispatch_callback(manager, backup);
+
+        // An unrecognized power action is reported as an error rather than
+        // silently succeeding (the old no-op behavior).
+        let task = ScheduleTask {
+            task_type: ScheduleTaskType::Power,
+            time_offset: 0,
+            payload: "frobnicate".to_string(),
+        };
+        let result = cb("container-1", &task).await;
+        assert!(result.is_err());
     }
 }

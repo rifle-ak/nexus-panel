@@ -961,13 +961,11 @@ async fn api_trigger_schedule(
     State(s): State<S>,
     Path((id, schedule_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    // Create a no-op callback for manual triggers via the web API.
-    // In production, the schedule runner provides the real callback that
-    // dispatches commands to the container manager.
-    let noop: crate::schedule::ScheduleCallback =
-        Arc::new(|_container_id, _task| Box::pin(async { Ok(()) }));
+    // Dispatch the schedule's tasks for real (container command / power /
+    // backup), the same way the background runner does.
+    let callback = crate::schedule::dispatch_callback(s.manager.clone(), s.backup_manager.clone());
     s.schedule_manager
-        .trigger_schedule(&id, &schedule_id, &noop)
+        .trigger_schedule(&id, &schedule_id, &callback)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -1109,13 +1107,26 @@ async fn api_update_check(
         Err(_) => current.clone(),
     };
 
-    let update_available = latest != current && latest > current;
+    let update_available = is_newer(&latest, &current);
 
     Ok(Json(UpdateCheckResponse {
         current_version: current,
         latest_version: latest,
         update_available,
     }))
+}
+
+/// Whether `latest` is a strictly newer release than `current`, compared with
+/// semantic-version ordering (so 0.10.0 correctly beats 0.9.0). Falls back to a
+/// plain string inequality only if either value is not valid semver.
+fn is_newer(latest: &str, current: &str) -> bool {
+    match (
+        semver::Version::parse(latest),
+        semver::Version::parse(current),
+    ) {
+        (Ok(l), Ok(c)) => l > c,
+        _ => latest != current,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,5 +1196,22 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
         },
         payload: t.payload,
         time_offset: t.time_offset,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer;
+
+    #[test]
+    fn semver_update_comparison() {
+        // The bug this replaces: string comparison ranked 0.9.0 above 0.10.0.
+        assert!(is_newer("0.10.0", "0.9.0"));
+        assert!(!is_newer("0.9.0", "0.10.0"));
+        assert!(is_newer("1.0.0", "0.1.0"));
+        assert!(!is_newer("0.1.0", "0.1.0"));
+        assert!(!is_newer("0.1.0", "0.2.0"));
+        // Non-semver values fall back to inequality (no false "update").
+        assert!(!is_newer("unknown", "unknown"));
     }
 }

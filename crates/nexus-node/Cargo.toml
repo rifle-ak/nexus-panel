@@ -102,6 +102,9 @@ rand = "0.8"
 # System information
 sysinfo = "0.31"
 
+# Semantic version comparison (update checks)
+semver = "1.0"
+
 [build-dependencies]
 tonic-build = "0.12"
 

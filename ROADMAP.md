@@ -8,10 +8,19 @@ Current status of all features. Items marked **Done** are functional in the web 
 |---------|--------|
 | Container create / start / stop / restart / delete | Done |
 | Container suspend / unsuspend | Done |
-| Console (xterm.js) | Done |
+| Console (xterm.js) — game-process stdin | Done |
+| **Real shell console (exec)** — run arbitrary commands (e.g. `npm`, shell) in the container, separate from the game-process/RCON console | Planned |
 | File manager (browse, edit, create, delete, rename) | Done |
 | Backups (create, restore, delete) | Done |
 | Cron-based scheduling | Done |
+| State persistence + reconciliation across restarts | Done |
+
+> **Planned differentiator — real shell console.** Pterodactyl and Pelican pipe
+> console input to the game process's stdin (often just an RCON bridge), so you
+> can't run arbitrary commands like `npm install` in the container. containerd
+> supports exec'ing a new process inside a running task, so Nexus can offer a
+> genuine shell console alongside the game console — a real gap in existing
+> panels.
 
 ## Blueprints
 
