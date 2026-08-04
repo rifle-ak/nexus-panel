@@ -3,6 +3,8 @@
 //! Serves the admin panel UI and REST API on a configurable HTTP port.
 //! All static assets are compiled into the binary via include_str!().
 
+pub mod auth;
+
 use crate::backup::BackupManager;
 use crate::container::ContainerManager;
 use crate::error::NodeError;
@@ -11,20 +13,20 @@ use crate::health::HealthChecker;
 use crate::metrics::Metrics;
 use crate::schedule::{ScheduleManager, ScheduleTask, ScheduleTaskType};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{header, StatusCode},
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
 use nexus_marketplace::{MarketplaceManager, SearchQuery, SortOrder};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // ---------------------------------------------------------------------------
 // Static assets (compiled into binary)
@@ -48,6 +50,8 @@ pub struct AppState {
     pub node_id: String,
     pub data_dir: String,
     pub start_time: SystemTime,
+    pub auth: Arc<auth::WebAuthConfig>,
+    pub sessions: Arc<auth::SessionStore>,
 }
 
 type S = Arc<AppState>;
@@ -62,57 +66,105 @@ pub async fn start_web_server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let shared = Arc::new(state);
 
-    let app = Router::new()
-        // ── Static assets ────────────────────────────────────────────
-        .route("/", get(serve_index))
-        .route("/css/style.css", get(serve_css))
-        .route("/js/app.js", get(serve_js))
+    if shared.auth.enabled && !shared.auth.has_credentials() {
+        error!(
+            "AUTH_ENABLED=true but no AUTH_PASSWORD or AUTH_API_KEYS configured — \
+             the panel will reject every API request until a credential is set"
+        );
+    }
+    if !shared.auth.enabled {
+        warn!(
+            "Web panel authentication is DISABLED (AUTH_ENABLED is not true). \
+             Do not expose this port to untrusted networks."
+        );
+    }
+
+    // Protected API routes — everything that can read or mutate node state.
+    // The auth middleware runs for every route registered before `route_layer`.
+    let protected = Router::new()
         // ── Node API ─────────────────────────────────────────────────
         .route("/api/v1/node/info", get(api_node_info))
         .route("/api/v1/node/health", get(api_node_health))
         .route("/api/v1/node/metrics", get(api_node_metrics))
+        .route("/api/v1/node/update-check", get(api_update_check))
         // ── Container CRUD ───────────────────────────────────────────
         .route(
             "/api/v1/containers",
             get(api_list_containers).post(api_create_container),
         )
-        .route("/api/v1/containers/{id}", get(api_get_container).delete(api_delete_container))
-        .route("/api/v1/containers/{id}/start", post(api_start_container))
-        .route("/api/v1/containers/{id}/stop", post(api_stop_container))
-        .route("/api/v1/containers/{id}/restart", post(api_restart_container))
-        .route("/api/v1/containers/{id}/kill", post(api_kill_container))
-        .route("/api/v1/containers/{id}/suspend", post(api_suspend_container))
-        .route("/api/v1/containers/{id}/unsuspend", post(api_unsuspend_container))
-        .route("/api/v1/containers/{id}/command", post(api_send_command))
+        .route(
+            "/api/v1/containers/:id",
+            get(api_get_container).delete(api_delete_container),
+        )
+        .route("/api/v1/containers/:id/start", post(api_start_container))
+        .route("/api/v1/containers/:id/stop", post(api_stop_container))
+        .route(
+            "/api/v1/containers/:id/restart",
+            post(api_restart_container),
+        )
+        .route("/api/v1/containers/:id/kill", post(api_kill_container))
+        .route(
+            "/api/v1/containers/:id/suspend",
+            post(api_suspend_container),
+        )
+        .route(
+            "/api/v1/containers/:id/unsuspend",
+            post(api_unsuspend_container),
+        )
+        .route("/api/v1/containers/:id/command", post(api_send_command))
         // ── Files ────────────────────────────────────────────────────
-        .route("/api/v1/containers/{id}/files", get(api_list_files))
-        .route("/api/v1/containers/{id}/files/read", get(api_read_file))
-        .route("/api/v1/containers/{id}/files/write", post(api_write_file))
-        .route("/api/v1/containers/{id}/files/delete", post(api_delete_files))
-        .route("/api/v1/containers/{id}/files/rename", post(api_rename_file))
-        .route("/api/v1/containers/{id}/files/mkdir", post(api_create_dir))
+        .route("/api/v1/containers/:id/files", get(api_list_files))
+        .route("/api/v1/containers/:id/files/read", get(api_read_file))
+        .route("/api/v1/containers/:id/files/write", post(api_write_file))
+        .route(
+            "/api/v1/containers/:id/files/delete",
+            post(api_delete_files),
+        )
+        .route("/api/v1/containers/:id/files/rename", post(api_rename_file))
+        .route("/api/v1/containers/:id/files/mkdir", post(api_create_dir))
         // ── Backups ──────────────────────────────────────────────────
         .route(
-            "/api/v1/containers/{id}/backups",
+            "/api/v1/containers/:id/backups",
             get(api_list_backups).post(api_create_backup),
         )
-        .route("/api/v1/containers/{id}/backups/{backup_id}/restore", post(api_restore_backup))
-        .route("/api/v1/containers/{id}/backups/{backup_id}", delete(api_delete_backup))
+        .route(
+            "/api/v1/containers/:id/backups/:backup_id/restore",
+            post(api_restore_backup),
+        )
+        .route(
+            "/api/v1/containers/:id/backups/:backup_id",
+            delete(api_delete_backup),
+        )
         // ── Schedules ────────────────────────────────────────────────
         .route(
-            "/api/v1/containers/{id}/schedules",
+            "/api/v1/containers/:id/schedules",
             get(api_list_schedules).post(api_create_schedule),
         )
         .route(
-            "/api/v1/containers/{id}/schedules/{schedule_id}",
+            "/api/v1/containers/:id/schedules/:schedule_id",
             put(api_update_schedule).delete(api_delete_schedule),
         )
-        .route("/api/v1/containers/{id}/schedules/{schedule_id}/trigger", post(api_trigger_schedule))
+        .route(
+            "/api/v1/containers/:id/schedules/:schedule_id/trigger",
+            post(api_trigger_schedule),
+        )
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
-        .route("/api/v1/marketplace/mods/{provider}/{mod_id}", get(api_marketplace_get_mod))
-        // ── Updates ─────────────────────────────────────────────────
-        .route("/api/v1/node/update-check", get(api_update_check))
+        .route(
+            "/api/v1/marketplace/mods/:provider/:mod_id",
+            get(api_marketplace_get_mod),
+        )
+        .route_layer(middleware::from_fn_with_state(shared.clone(), require_auth));
+
+    // Public routes — static assets and the auth endpoints needed to log in.
+    let app = Router::new()
+        .route("/", get(serve_index))
+        .route("/css/style.css", get(serve_css))
+        .route("/js/app.js", get(serve_js))
+        .route("/api/v1/auth/config", get(api_auth_config))
+        .route("/api/v1/auth/login", post(api_login))
+        .route("/api/v1/auth/logout", post(api_logout))
+        .merge(protected)
         .with_state(shared);
 
     let addr: std::net::SocketAddr = bind_addr.parse()?;
@@ -123,6 +175,124 @@ pub async fn start_web_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Authentication middleware + handlers
+// ---------------------------------------------------------------------------
+
+/// Middleware that gates protected routes behind a valid session token or key.
+async fn require_auth(State(s): State<S>, req: Request, next: Next) -> Response {
+    // Auth disabled: allow through (intended only for loopback/dev use).
+    if !s.auth.enabled {
+        return next.run(req).await;
+    }
+
+    // Fail closed if enabled without any configured credential.
+    if !s.auth.has_credentials() {
+        return err_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Authentication is enabled but no credential is configured on the node",
+        )
+        .into_response();
+    }
+
+    let headers = req.headers();
+
+    // Accept a bearer session token, a session cookie, or a raw API key.
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::bearer_from_header);
+
+    if let Some(token) = bearer {
+        if s.sessions.validate(token).await || s.auth.verify_api_key(token) {
+            return next.run(req).await;
+        }
+    }
+
+    if let Some(token) = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::session_from_cookie)
+    {
+        if s.sessions.validate(token).await {
+            return next.run(req).await;
+        }
+    }
+
+    if let Some(key) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
+        if s.auth.verify_api_key(key) {
+            return next.run(req).await;
+        }
+    }
+
+    err_json(StatusCode::UNAUTHORIZED, "Authentication required").into_response()
+}
+
+#[derive(Serialize)]
+struct AuthConfigResponse {
+    auth_required: bool,
+}
+
+/// Public endpoint so the UI knows whether to show the login screen.
+async fn api_auth_config(State(s): State<S>) -> impl IntoResponse {
+    Json(AuthConfigResponse {
+        auth_required: s.auth.enabled,
+    })
+}
+
+#[derive(Deserialize)]
+struct LoginReq {
+    password: Option<String>,
+    api_key: Option<String>,
+}
+
+#[derive(Serialize)]
+struct LoginResponse {
+    token: String,
+    expires_in_secs: u64,
+}
+
+/// Exchange a password or API key for a session token.
+async fn api_login(
+    State(s): State<S>,
+    Json(body): Json<LoginReq>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    // If auth is disabled there is nothing to log in to; report success with
+    // an empty token so the UI can proceed without a login screen.
+    if !s.auth.enabled {
+        return Ok(Json(LoginResponse {
+            token: String::new(),
+            expires_in_secs: 0,
+        }));
+    }
+
+    let ok = body.password.as_deref().map(|p| s.auth.verify_password(p)).unwrap_or(false)
+        || body.api_key.as_deref().map(|k| s.auth.verify_api_key(k)).unwrap_or(false);
+
+    if !ok {
+        return Err(err_json(StatusCode::UNAUTHORIZED, "Invalid credentials"));
+    }
+
+    let token = s.sessions.create().await;
+    Ok(Json(LoginResponse {
+        token,
+        expires_in_secs: s.sessions.ttl_secs(),
+    }))
+}
+
+/// Revoke the caller's session token.
+async fn api_logout(State(s): State<S>, req: Request) -> impl IntoResponse {
+    if let Some(token) = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::bearer_from_header)
+    {
+        s.sessions.revoke(token).await;
+    }
+    Json(serde_json::json!({ "ok": true }))
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +318,10 @@ async fn serve_css() -> impl IntoResponse {
 async fn serve_js() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         APP_JS,
     )
 }
@@ -360,7 +533,10 @@ async fn api_node_info(State(s): State<S>) -> impl IntoResponse {
 
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let (total_disk, used_disk) = disks.list().iter().fold((0u64, 0u64), |(t, u), d| {
-        (t + d.total_space(), u + (d.total_space() - d.available_space()))
+        (
+            t + d.total_space(),
+            u + (d.total_space() - d.available_space()),
+        )
     });
 
     Json(NodeInfo {
@@ -434,7 +610,7 @@ async fn api_node_metrics(State(s): State<S>) -> impl IntoResponse {
 
 async fn api_list_containers(State(s): State<S>) -> impl IntoResponse {
     let containers = s.manager.list_containers().await;
-    let out: Vec<ContainerJson> = containers.iter().map(|c| container_to_json(c)).collect();
+    let out: Vec<ContainerJson> = containers.iter().map(container_to_json).collect();
     Json(out)
 }
 
@@ -579,7 +755,7 @@ async fn api_list_files(
     let files = fm
         .list_files(path)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
 
     Ok(Json(
         files
@@ -608,7 +784,7 @@ async fn api_read_file(
     let (data, _size, _mime) = fm
         .read_file(path, None, None)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok((
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/octet-stream")],
@@ -625,7 +801,7 @@ async fn api_write_file(
     let bytes_written = fm
         .write_file(&body.path, body.content.as_bytes(), true)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "bytes_written": bytes_written })))
 }
 
@@ -638,7 +814,7 @@ async fn api_delete_files(
     let deleted = fm
         .delete(&body.paths, body.recursive.unwrap_or(false))
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
@@ -650,7 +826,7 @@ async fn api_rename_file(
     let fm = file_manager(&s, &id);
     fm.rename(&body.old_path, &body.new_path)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -662,7 +838,7 @@ async fn api_create_dir(
     let fm = file_manager(&s, &id);
     fm.create_directory(&body.path, body.recursive.unwrap_or(true))
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -678,7 +854,7 @@ async fn api_list_backups(
         .backup_manager
         .list_backups(&id)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(backups.into_iter().map(backup_to_json).collect()))
 }
 
@@ -693,7 +869,7 @@ async fn api_create_backup(
         .backup_manager
         .create_backup(&id, &name, &include, &[])
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok((StatusCode::CREATED, Json(backup_to_json(info))))
 }
 
@@ -704,7 +880,7 @@ async fn api_restore_backup(
     s.backup_manager
         .restore_backup(&id, &backup_id, false)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -715,7 +891,7 @@ async fn api_delete_backup(
     s.backup_manager
         .delete_backup(&id, &backup_id)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -731,7 +907,7 @@ async fn api_list_schedules(
         .schedule_manager
         .list_schedules(&id)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(schedules.into_iter().map(schedule_to_json).collect()))
 }
 
@@ -745,7 +921,7 @@ async fn api_create_schedule(
         .schedule_manager
         .create_schedule(&id, &body.name, &body.cron_expression, true, tasks)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok((StatusCode::CREATED, Json(schedule_to_json(info))))
 }
 
@@ -766,7 +942,7 @@ async fn api_update_schedule(
             tasks,
         )
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(schedule_to_json(info)))
 }
 
@@ -777,7 +953,7 @@ async fn api_delete_schedule(
     s.schedule_manager
         .delete_schedule(&id, &schedule_id)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -788,13 +964,12 @@ async fn api_trigger_schedule(
     // Create a no-op callback for manual triggers via the web API.
     // In production, the schedule runner provides the real callback that
     // dispatches commands to the container manager.
-    let noop: crate::schedule::ScheduleCallback = Arc::new(|_container_id, _task| {
-        Box::pin(async { Ok(()) })
-    });
+    let noop: crate::schedule::ScheduleCallback =
+        Arc::new(|_container_id, _task| Box::pin(async { Ok(()) }));
     s.schedule_manager
         .trigger_schedule(&id, &schedule_id, &noop)
         .await
-        .map_err(|e| err_json(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

@@ -40,10 +40,7 @@ impl ContainerdRuntime {
         );
 
         // Strip any "unix://" prefix to get the raw filesystem path
-        let socket_path = self
-            .socket_path
-            .strip_prefix("unix://")
-            .unwrap_or(&self.socket_path);
+        let socket_path = self.socket_path.strip_prefix("unix://").unwrap_or(&self.socket_path);
 
         // Use the containerd-client crate's connect helper which properly
         // creates a Unix domain socket connection via tower::service_fn
