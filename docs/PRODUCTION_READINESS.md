@@ -22,11 +22,13 @@ plan. Every finding cites the code that produced it (`file:line`) so it can be v
 > the multi-arch build job uses a proper cross toolchain; and the flake-prone coverage/deadlinks
 > steps are reported but non-gating.
 >
-> *Phase 2 (operational correctness) — in progress.* H-1 (state persistence) is done: container
-> tracking state is persisted to `DATA_DIR/.nexus/state/<id>.json` and, on startup, restored and
-> reconciled against the runtime's actual view — a node restart no longer shows zero servers.
-> Remaining: H-2 (fail loud instead of the silent mock runtime), H-3 (wire the no-op schedule
-> trigger), M-2 (semver update check + real releases).
+> *Phase 2 (operational correctness) — complete.* H-1: container state is persisted to
+> `DATA_DIR/.nexus/state/<id>.json` and reconciled against the runtime on startup — a restart no
+> longer shows zero servers. H-2: a containerd connection failure is now fatal; the fake mock runtime
+> requires an explicit `NEXUS_DEV_MODE=true`. H-3: the schedule trigger dispatches real tasks
+> (command/power/backup), the background runner is actually started, and schedules are persisted +
+> restored on startup. M-2: the update check uses semver ordering (0.10.0 > 0.9.0) instead of string
+> comparison. Next: Phase 3 (polish — README/security docs, secrets hardening, repo hygiene).
 
 ---
 
@@ -46,7 +48,9 @@ management surface is now authenticated and traversal-safe. CI still cannot comp
 | Panel API routing | ✅ **Fixed** — `:id` params (was silently 404ing) | — |
 | CI pipeline | ✅ **Phase 1** — protoc + fmt + clippy + advisories fixed | — |
 | State persistence across restart | ✅ **Resolved (H-1)** — persisted + reconciled on startup | — |
-| Containerd failure handling | ⚠️ Silent fake-runtime fallback | High |
+| Containerd failure handling | ✅ **Resolved (H-2)** — fatal unless `NEXUS_DEV_MODE` | — |
+| Schedule trigger / runner | ✅ **Resolved (H-3)** — real dispatch + persistence | — |
+| Update check versioning | ✅ **Resolved (M-2)** — semver ordering | — |
 | TLS for the panel | ⚠️ Relies entirely on external Caddy | Medium |
 | Feature completeness vs. README | ⚠️ Several "done" items are stubs | Medium |
 | Repo hygiene | ⚠️ Build artifacts committed | Low |

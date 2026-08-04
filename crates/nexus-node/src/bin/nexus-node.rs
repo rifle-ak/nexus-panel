@@ -148,25 +148,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         containerd_namespace.clone(),
     ));
 
-    let use_mock_runtime = match runtime.connect().await {
+    // The in-memory mock runtime pretends to run containers and exists ONLY
+    // for development/testing. In normal operation a containerd connection
+    // failure is fatal — silently switching to a fake runtime would make the
+    // panel report servers as "running" when nothing is actually running.
+    let dev_mode = std::env::var("NEXUS_DEV_MODE")
+        .map(|v| {
+            let v = v.to_lowercase();
+            v == "true" || v == "1"
+        })
+        .unwrap_or(false);
+
+    let runtime: Arc<dyn nexus_node::ContainerRuntime> = match runtime.connect().await {
         Ok(_) => {
             info!("Successfully connected to Containerd");
-            false
+            runtime
+        }
+        Err(e) if dev_mode => {
+            error!("Failed to connect to Containerd: {}", e);
+            warn!(
+                "NEXUS_DEV_MODE is set — using the in-memory MOCK runtime. \
+                 Containers are NOT real; never use this in production."
+            );
+            use nexus_node::runtime::mock::MockRuntime;
+            Arc::new(MockRuntime::new())
         }
         Err(e) => {
-            error!("Failed to connect to Containerd: {}", e);
-            warn!("Falling back to mock runtime for development");
-            // In production, you might want to exit here
-            // For development, we'll use mock runtime
-            true
+            error!(
+                "Failed to connect to Containerd at {}: {}",
+                containerd_socket, e
+            );
+            error!(
+                "Containerd is required. Ensure it is running (or fix CONTAINERD_SOCKET), \
+                 or set NEXUS_DEV_MODE=true to run with the mock runtime for development."
+            );
+            return Err(format!("containerd connection failed: {}", e).into());
         }
-    };
-
-    let runtime: Arc<dyn nexus_node::ContainerRuntime> = if use_mock_runtime {
-        use nexus_node::runtime::mock::MockRuntime;
-        Arc::new(MockRuntime::new())
-    } else {
-        runtime
     };
 
     // Create metrics instance
@@ -232,8 +249,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backup_manager = Arc::new(BackupManager::new(&PathBuf::from(data_dir.clone())));
     backup_manager.init().await?;
 
-    // Initialize schedule manager
-    let schedule_manager = Arc::new(ScheduleManager::new());
+    // Initialize schedule manager (persists schedules under DATA_DIR).
+    let schedule_manager = Arc::new(ScheduleManager::with_data_dir(PathBuf::from(
+        data_dir.clone(),
+    )));
+    let restored_schedules = schedule_manager.restore().await;
+    if restored_schedules > 0 {
+        info!("Restored {} schedule(s) after restart", restored_schedules);
+    }
+
+    // Start the background schedule runner with a callback that dispatches
+    // tasks to the container manager / backup manager for real.
+    schedule_manager
+        .start_runner(nexus_node::schedule::dispatch_callback(
+            manager.clone(),
+            backup_manager.clone(),
+        ))
+        .await;
 
     // Create gRPC service with enterprise components
     let node_service = NodeServiceImpl::with_enterprise(
