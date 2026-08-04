@@ -34,8 +34,11 @@ plan. Every finding cites the code that produced it (`file:line`) so it can be v
 > `SECURITY.md` added with disclosure + secrets/loopback/dev-mode guidance (M-3); regenerable build
 > artifacts (logs, reports, 258 `converted_eggs/*.yaml`) removed from git and `.gitignore`d (L-1);
 > `CONTRIBUTING.md`, `CHANGELOG.md`, and GitHub PR/issue templates added (L-3). Remaining gaps are
-> optional/heavy: exercising the 11 containerd integration tests in CI (L-4), and publishing tagged
-> GitHub Releases so the update check has something to compare against (M-2).
+> optional/heavy: exercising the containerd runtime in CI (L-4), and publishing tagged GitHub
+> Releases so the update check has something to compare against (M-2).
+>
+> *Follow-ups (post-plan).* Release automation: a tag-triggered workflow builds the cross binaries and
+> publishes a GitHub Release, so cutting `v0.1.0` gives the semver update check something to find.
 
 ---
 
