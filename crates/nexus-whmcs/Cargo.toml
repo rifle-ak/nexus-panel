@@ -11,7 +11,7 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 
 # HTTP client/server
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 axum = { version = "0.7", features = ["json"] }
 
 # Serialization
