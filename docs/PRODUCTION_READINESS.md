@@ -183,6 +183,14 @@ container manager.
 - **M-5. Dead-code warnings signal unfinished wiring.** Numerous `field is never read` errors in the
   marketplace and WHMCS crates (surfaced by clippy) indicate response models that are parsed but never
   surfaced — a sign features are partially plumbed.
+- **M-6. Known-vulnerable dependencies in the lock file.** `cargo deny check` fails on two RUSTSEC
+  advisories (confirmed by the Security Scan CI job):
+  - `crossbeam-epoch 0.9.18` — **RUSTSEC-2026-0204** (invalid pointer dereference); fix:
+    `cargo update -p crossbeam-epoch` (→ ≥ 0.9.20). Pulled in via `criterion` (dev-dependency).
+  - `anyhow 1.0.102` — advisory [dtolnay/anyhow#451]; fix: `cargo update -p anyhow` (→ ≥ 1.0.103).
+
+  Note the CI `cargo audit` step is `continue-on-error: true` (`.github/workflows/ci.yml:49`), so audit
+  never gates — only `cargo deny` does. Keep both hard-failing and refresh dependencies regularly.
 
 ---
 
@@ -252,7 +260,8 @@ container manager.
 - [ ] All services bind to loopback by default; public exposure is deliberate and TLS-terminated.
 - [ ] File API rejects `../` on write/mkdir/rename (test included).
 - [ ] Installer credentials actually gate access; no false security claims.
-- [ ] CI is green on a clean runner (protoc installed, fmt clean, clippy `-D warnings` clean).
+- [ ] CI is green on a clean runner (protoc installed, fmt clean, clippy `-D warnings` clean,
+      `cargo deny`/`cargo audit` advisory-clean — see M-6).
 - [ ] Container/schedule state survives a service restart.
 - [ ] Containerd unavailability fails loudly (no silent mock).
 - [ ] Manual schedule trigger executes the task.
