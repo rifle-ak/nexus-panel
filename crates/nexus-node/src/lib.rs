@@ -50,6 +50,7 @@ pub mod metrics_server;
 pub mod runtime;
 pub mod schedule;
 pub mod secrets;
+pub mod update;
 
 // Management modules
 pub mod allocation;

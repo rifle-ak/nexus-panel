@@ -343,6 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             start_time: std::time::SystemTime::now(),
             auth: web_auth_config.clone(),
             sessions: web_sessions.clone(),
+            update_jobs: Arc::new(nexus_node::update::UpdateJobStore::new()),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

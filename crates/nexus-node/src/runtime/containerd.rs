@@ -18,10 +18,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-/// Hard cap on how long a one-shot `exec` may run before we give up and return
-/// what we have. Prevents a stuck exec from hanging the node.
-const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Containerd container runtime implementation
 pub struct ContainerdRuntime {
     channel: Arc<RwLock<Option<Channel>>>,
@@ -474,7 +470,7 @@ impl ContainerRuntime for ContainerdRuntime {
         Ok(())
     }
 
-    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+    async fn exec(&self, id: &str, command: &[String], timeout: Duration) -> Result<ExecOutput> {
         info!("[Containerd] Exec in container {}: {:?}", id, command);
 
         if command.is_empty() {
@@ -490,14 +486,14 @@ impl ContainerRuntime for ContainerdRuntime {
             )));
         }
 
-        // The whole exec is bounded by EXEC_TIMEOUT so a stuck process (or a
+        // The whole exec is bounded by `timeout` so a stuck process (or a
         // FIFO that never receives a writer) can never hang the node.
-        match tokio::time::timeout(EXEC_TIMEOUT, self.exec_inner(id, command)).await {
+        match tokio::time::timeout(timeout, self.exec_inner(id, command)).await {
             Ok(result) => result,
             Err(_) => Err(NodeError::Internal(format!(
                 "exec in container {} timed out after {}s",
                 id,
-                EXEC_TIMEOUT.as_secs()
+                timeout.as_secs()
             ))),
         }
     }

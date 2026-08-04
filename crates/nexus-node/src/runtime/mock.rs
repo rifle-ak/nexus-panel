@@ -168,7 +168,12 @@ impl ContainerRuntime for MockRuntime {
         Ok(())
     }
 
-    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+    async fn exec(
+        &self,
+        id: &str,
+        command: &[String],
+        _timeout: std::time::Duration,
+    ) -> Result<ExecOutput> {
         tracing::info!("[MOCK] Exec in container {}: {:?}", id, command);
 
         let containers = self.containers.read().await;

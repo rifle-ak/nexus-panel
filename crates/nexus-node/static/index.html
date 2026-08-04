@@ -139,6 +139,7 @@
       <button class="tab" data-tab="files" onclick="NX.switchTab('files')">Files</button>
       <button class="tab" data-tab="backups" onclick="NX.switchTab('backups')">Backups</button>
       <button class="tab" data-tab="schedules" onclick="NX.switchTab('schedules')">Schedules</button>
+      <button class="tab" data-tab="update" onclick="NX.switchTab('update')">Update</button>
       <button class="tab" data-tab="settings" onclick="NX.switchTab('settings')">Settings</button>
     </div>
     <div class="tab-content" id="tab-console">
@@ -209,6 +210,41 @@
           <tbody id="schedule-table-body"></tbody>
         </table>
       </div>
+    </div>
+    <div class="tab-content hidden" id="tab-update">
+      <div class="card-header" style="padding:0 0 1rem 0">
+        <h3>Update game files</h3>
+      </div>
+      <p class="text-muted text-sm" style="margin-bottom:1rem">
+        Re-run the game-file install/update for this server. The server must be running;
+        the update runs inside the container and can take several minutes.
+      </p>
+      <div class="form-group">
+        <label class="form-label">Method</label>
+        <select id="update-method" class="form-input" style="max-width:320px" onchange="NX.onUpdateMethodChange()">
+          <option value="steam_cmd">SteamCMD</option>
+          <option value="depot_downloader">DepotDownloader</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Steam App ID</label>
+        <input id="update-appid" class="form-input" style="max-width:320px" placeholder="258550">
+      </div>
+      <div class="form-group" id="update-branch-group">
+        <label class="form-label">Branch / beta <span class="text-muted text-sm">(optional)</span></label>
+        <input id="update-branch" class="form-input" style="max-width:320px" placeholder="public">
+      </div>
+      <div class="form-group" id="update-depot-group" style="display:none">
+        <label class="form-label">Depot ID <span class="text-muted text-sm">(optional)</span></label>
+        <input id="update-depot" class="form-input" style="max-width:320px" placeholder="258551">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Install folder</label>
+        <input id="update-dir" class="form-input" style="max-width:320px" value="/home/container">
+      </div>
+      <button class="btn btn-primary" id="update-run" onclick="NX.startUpdate()">Run update</button>
+      <div id="update-status" class="text-sm" style="margin-top:1rem"></div>
+      <pre id="update-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
     </div>
     <div class="tab-content hidden" id="tab-settings">
       <div class="card" style="padding:1.5rem">

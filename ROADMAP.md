@@ -13,6 +13,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | File manager (browse, edit, create, delete, rename) | Done |
 | Backups (create, restore, delete) | Done |
 | Cron-based scheduling | Done |
+| On-demand game-file update (SteamCMD / DepotDownloader) | Done (UI + API; runs as a background job) |
 | State persistence + reconciliation across restarts | Done |
 
 > **Planned differentiator — real shell console.** Pterodactyl and Pelican pipe
@@ -113,5 +114,6 @@ Current status of all features. Items marked **Done** are functional in the web 
 | JVM performance tuning (Aikar's flags) | Done (in YAML) |
 | Kernel parameter tuning | Planned |
 | Update detection (SteamCMD, DepotDownloader, HTTP, Docker) | Backend Ready (config schema; blueprint-declared) |
+| Per-server update executor (run SteamCMD/DepotDownloader on demand) | Done (API + UI; background job) |
 | Database / Redis auto-provisioning | Planned |
 | Multi-instance clustering | Planned |
