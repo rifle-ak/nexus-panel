@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(ip, "192.168.1.0".parse::<IpAddr>().unwrap());
         assert_eq!(prefix, 24);
 
-        let (ip, prefix) = parse_cidr("10.0.0.0/8").unwrap();
+        let (_ip, prefix) = parse_cidr("10.0.0.0/8").unwrap();
         assert_eq!(prefix, 8);
     }
 

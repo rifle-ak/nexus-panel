@@ -10,7 +10,6 @@ use crate::error::{Result, WhmcsError};
 use crate::{ClientInfo, ServiceInfo, ServiceStatus, WhmcsConfig};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use std::collections::HashMap;
 use tracing::{debug, info};
 

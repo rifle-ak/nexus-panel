@@ -98,6 +98,7 @@ impl SsoManager {
     }
 
     /// Generate an SSO token for a client
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_token(
         &self,
         client_id: u64,

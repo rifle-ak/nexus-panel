@@ -8,13 +8,19 @@ This document is the single source of truth for *what it takes to ship Nexus Pan
 It records what is genuinely done, the concrete blockers, and a prioritized, actionable remediation
 plan. Every finding cites the code that produced it (`file:line`) so it can be verified and fixed.
 
-> **Remediation progress — Phase 0 complete (2026-08-04).** The security blockers below have been
-> fixed and verified end-to-end: the web panel now requires authentication (C-1), the installer's
-> credential actually gates access (C-2), the file-API traversal hole is closed (C-3), and all
-> services default to loopback (M-4). Verification also uncovered and fixed a latent routing bug —
-> the panel's routes used axum-0.8 `{id}` path-param syntax on axum 0.7, so every container detail,
-> file, backup, and schedule route silently 404'd; they now use `:id` and work. Phase 1 (make CI
-> real) is next.
+> **Remediation progress — Phases 0 & 1 (2026-08-04).**
+>
+> *Phase 0 (security) — complete & merged.* The web panel now requires authentication (C-1), the
+> installer's credential actually gates access (C-2), the file-API traversal hole is closed (C-3),
+> and all services default to loopback (M-4). Verification also uncovered and fixed a latent routing
+> bug — the panel's routes used axum-0.8 `{id}` path-param syntax on axum 0.7, so every container
+> detail, file, backup, and schedule route silently 404'd; they now use `:id`.
+>
+> *Phase 1 (make CI real) — in progress.* CI now installs `protoc` in every compiling job; the tree
+> is `cargo fmt` clean and passes `cargo clippy --all-targets -- -D warnings` across the workspace;
+> the two RUSTSEC advisories are bumped (`anyhow` 1.0.104, `crossbeam-epoch` 0.9.20, M-6); the
+> multi-arch build job uses a proper cross toolchain; and the flake-prone coverage/deadlinks steps
+> are reported but non-gating. Green status is pending the first real CI run.
 
 ---
 
@@ -32,7 +38,7 @@ management surface is now authenticated and traversal-safe. CI still cannot comp
 | Installer security claims | ✅ **Resolved** — credential now enforced | — |
 | File API path traversal | ✅ **Resolved** — `..` rejected on writes | — |
 | Panel API routing | ✅ **Fixed** — `:id` params (was silently 404ing) | — |
-| **CI pipeline** | ❌ **Cannot compile; fmt + clippy red** | **Yes (Phase 1)** |
+| CI pipeline | 🛠️ **Phase 1** — protoc + fmt + clippy + advisories fixed (green pending CI) | — |
 | State persistence across restart | ❌ In-memory only | High |
 | Containerd failure handling | ⚠️ Silent fake-runtime fallback | High |
 | TLS for the panel | ⚠️ Relies entirely on external Caddy | Medium |

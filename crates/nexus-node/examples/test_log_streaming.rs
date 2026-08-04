@@ -1,5 +1,4 @@
 use nexus_node::{ContainerManager, MockRuntime};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 

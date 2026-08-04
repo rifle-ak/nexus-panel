@@ -574,9 +574,7 @@ mod tests {
         let breaker = CircuitBreaker::new("test", CircuitBreakerConfig::default());
 
         let result: Result<i32, CircuitBreakerError> = breaker
-            .execute(|| async {
-                Err::<i32, _>(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
-            })
+            .execute(|| async { Err::<i32, _>(std::io::Error::other("test error")) })
             .await;
 
         assert!(result.is_err());

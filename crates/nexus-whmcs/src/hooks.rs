@@ -115,7 +115,7 @@ impl WebhookHandler {
 
     /// Register a callback for an event
     pub fn on<C: WebhookCallback + 'static>(&mut self, event: WebhookEvent, callback: C) {
-        self.callbacks.entry(event).or_insert_with(Vec::new).push(Box::new(callback));
+        self.callbacks.entry(event).or_default().push(Box::new(callback));
     }
 
     /// Verify webhook signature
