@@ -952,3 +952,17 @@ body.login-mode .main { filter: blur(2px); pointer-events: none; }
   .main { margin-left: 60px; padding: 1rem; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Shell (container exec) output ───────────────────────────── */
+
+.shell-output {
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin: 0;
+  background: #000;
+}

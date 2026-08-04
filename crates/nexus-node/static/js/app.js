@@ -617,6 +617,38 @@ NX.switchTab = function(tab) {
   if (tab === 'files') loadFiles('/');
   if (tab === 'backups') loadBackups();
   if (tab === 'schedules') loadSchedules();
+  if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
+};
+
+// ── Shell (container exec) ────────────────────────────────────────
+
+NX.runShell = async function() {
+  const input = document.getElementById('shell-input');
+  const out = document.getElementById('shell-output');
+  const btn = document.getElementById('shell-run');
+  const cmd = input.value.trim();
+  if (!cmd || !NX.currentServer) return;
+  input.value = '';
+
+  out.textContent += `$ ${cmd}\n`;
+  btn.disabled = true;
+  try {
+    const res = await api(`/containers/${NX.currentServer}/exec`, {
+      method: 'POST',
+      body: JSON.stringify({ command: cmd }),
+    });
+    if (res.stdout) out.textContent += res.stdout;
+    if (res.stderr) out.textContent += res.stderr;
+    if (res.exit_code !== null && res.exit_code !== 0) {
+      out.textContent += `[exit code ${res.exit_code}]\n`;
+    }
+  } catch (e) {
+    out.textContent += `error: ${e.message}\n`;
+  } finally {
+    btn.disabled = false;
+    out.scrollTop = out.scrollHeight;
+    input.focus();
+  }
 };
 
 // ── Console ───────────────────────────────────────────────────────

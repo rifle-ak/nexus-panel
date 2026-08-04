@@ -135,6 +135,7 @@
     <div class="detail-status-bar" id="detail-status-bar"></div>
     <div class="tabs" id="detail-tabs">
       <button class="tab active" data-tab="console" onclick="NX.switchTab('console')">Console</button>
+      <button class="tab" data-tab="shell" onclick="NX.switchTab('shell')">Shell</button>
       <button class="tab" data-tab="files" onclick="NX.switchTab('files')">Files</button>
       <button class="tab" data-tab="backups" onclick="NX.switchTab('backups')">Backups</button>
       <button class="tab" data-tab="schedules" onclick="NX.switchTab('schedules')">Schedules</button>
@@ -147,6 +148,20 @@
           <span class="console-prompt">$</span>
           <input type="text" id="console-input" class="console-input" placeholder="Type a command..." onkeydown="if(event.key==='Enter')NX.sendCommand()">
           <button class="btn btn-sm btn-primary" onclick="NX.sendCommand()">Send</button>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content hidden" id="tab-shell">
+      <p class="text-muted text-sm" style="margin-bottom:0.75rem">
+        Run a one-shot command inside the container (e.g. <code>npm install</code>, <code>ls -la</code>).
+        This spawns a real process via <code>/bin/sh -c</code> — separate from the game console above.
+      </p>
+      <div class="console-container">
+        <pre id="shell-output" class="terminal-box shell-output"></pre>
+        <div class="console-input-row">
+          <span class="console-prompt">$</span>
+          <input type="text" id="shell-input" class="console-input" placeholder="npm install" onkeydown="if(event.key==='Enter')NX.runShell()">
+          <button class="btn btn-sm btn-primary" id="shell-run" onclick="NX.runShell()">Run</button>
         </div>
       </div>
     </div>

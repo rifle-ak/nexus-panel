@@ -5,15 +5,22 @@ use containerd_client::{
     services::v1::{
         containers_client::ContainersClient, images_client::ImagesClient,
         tasks_client::TasksClient, Container as ContainerdContainer, CreateContainerRequest,
-        CreateTaskRequest, DeleteContainerRequest, DeleteTaskRequest, GetContainerRequest,
-        GetImageRequest, KillRequest, ListTasksRequest, StartRequest,
+        CreateTaskRequest, DeleteContainerRequest, DeleteProcessRequest, DeleteTaskRequest,
+        ExecProcessRequest, GetContainerRequest, GetImageRequest, KillRequest, ListTasksRequest,
+        StartRequest, WaitRequest,
     },
     tonic::{transport::Channel, Request},
     with_namespace,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
+
+/// Hard cap on how long a one-shot `exec` may run before we give up and return
+/// what we have. Prevents a stuck exec from hanging the node.
+const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Containerd container runtime implementation
 pub struct ContainerdRuntime {
@@ -466,6 +473,180 @@ impl ContainerRuntime for ContainerdRuntime {
         info!("Successfully sent command to container {}", id);
         Ok(())
     }
+
+    async fn exec(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+        info!("[Containerd] Exec in container {}: {:?}", id, command);
+
+        if command.is_empty() {
+            return Err(NodeError::InvalidInput("Empty command".to_string()));
+        }
+
+        // Container must be running to exec into it.
+        let info = self.inspect(id).await?;
+        if info.status != "running" {
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is not running (status: {})",
+                id, info.status
+            )));
+        }
+
+        // The whole exec is bounded by EXEC_TIMEOUT so a stuck process (or a
+        // FIFO that never receives a writer) can never hang the node.
+        match tokio::time::timeout(EXEC_TIMEOUT, self.exec_inner(id, command)).await {
+            Ok(result) => result,
+            Err(_) => Err(NodeError::Internal(format!(
+                "exec in container {} timed out after {}s",
+                id,
+                EXEC_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+}
+
+impl ContainerdRuntime {
+    /// Inner exec implementation (wrapped in a timeout by `exec`).
+    ///
+    /// Spawns a new process in the running task via the containerd Exec API,
+    /// capturing stdout/stderr through FIFOs, and waits for the exit code.
+    async fn exec_inner(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+        let mut tasks_client = self.tasks_client().await?;
+        let exec_id = format!("exec-{}", Uuid::new_v4());
+
+        // Create a private FIFO directory for this exec's stdio.
+        let fifo_dir = std::env::temp_dir().join(format!("nexus-exec-{}", exec_id));
+        std::fs::create_dir_all(&fifo_dir)
+            .map_err(|e| NodeError::Internal(format!("Failed to create exec fifo dir: {}", e)))?;
+        let stdout_path = fifo_dir.join("stdout");
+        let stderr_path = fifo_dir.join("stderr");
+        mkfifo(&stdout_path)?;
+        mkfifo(&stderr_path)?;
+
+        // OCI runtime-spec Process describing the command to run. containerd
+        // decodes this Any via its typeurl registration for runtime-spec types.
+        let process = serde_json::json!({
+            "terminal": false,
+            "cwd": "/",
+            "args": command,
+            "env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+        });
+        let spec = prost_types::Any {
+            type_url: "types.containerd.io/opencontainers/runtime-spec/1/Process".to_string(),
+            value: serde_json::to_vec(&process).map_err(|e| {
+                NodeError::Internal(format!("Failed to encode process spec: {}", e))
+            })?,
+        };
+
+        // Reader tasks block on opening the FIFO until containerd's shim opens
+        // the write end at Start; spawning them first avoids a lost-output race.
+        let out_reader = spawn_fifo_reader(stdout_path.clone());
+        let err_reader = spawn_fifo_reader(stderr_path.clone());
+
+        // Register the exec process.
+        let req = with_namespace!(
+            ExecProcessRequest {
+                container_id: id.to_string(),
+                exec_id: exec_id.clone(),
+                terminal: false,
+                stdin: String::new(),
+                stdout: stdout_path.to_string_lossy().to_string(),
+                stderr: stderr_path.to_string_lossy().to_string(),
+                spec: Some(spec),
+            },
+            &self.namespace
+        );
+        tasks_client
+            .exec(req)
+            .await
+            .map_err(|e| NodeError::ContainerdError(format!("Failed to create exec: {}", e)))?;
+
+        // Start it.
+        let req = with_namespace!(
+            StartRequest {
+                container_id: id.to_string(),
+                exec_id: exec_id.clone(),
+            },
+            &self.namespace
+        );
+        tasks_client
+            .start(req)
+            .await
+            .map_err(|e| NodeError::ContainerdError(format!("Failed to start exec: {}", e)))?;
+
+        // Wait for completion and collect the exit code.
+        let req = with_namespace!(
+            WaitRequest {
+                container_id: id.to_string(),
+                exec_id: exec_id.clone(),
+            },
+            &self.namespace
+        );
+        let exit_code = match tasks_client.wait(req).await {
+            Ok(resp) => Some(resp.into_inner().exit_status as i32),
+            Err(e) => {
+                warn!("exec wait failed for {}: {}", exec_id, e);
+                None
+            }
+        };
+
+        // Collect captured output (readers finish at process EOF).
+        let mut stdout = String::new();
+        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(2), out_reader).await {
+            stdout = bytes;
+        }
+        let mut stderr = String::new();
+        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(2), err_reader).await {
+            stderr = bytes;
+        }
+
+        // Best-effort cleanup of the exec process record and FIFOs.
+        let req = with_namespace!(
+            DeleteProcessRequest {
+                container_id: id.to_string(),
+                exec_id: exec_id.clone(),
+            },
+            &self.namespace
+        );
+        let _ = tasks_client.delete_process(req).await;
+        let _ = std::fs::remove_dir_all(&fifo_dir);
+
+        Ok(ExecOutput {
+            stdout,
+            stderr,
+            exit_code,
+        })
+    }
+}
+
+/// Create a FIFO (named pipe) at `path`.
+fn mkfifo(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|e| NodeError::Internal(format!("Invalid fifo path: {}", e)))?;
+    // 0o600: owner read/write only.
+    let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+    if rc != 0 {
+        return Err(NodeError::Internal(format!(
+            "mkfifo({:?}) failed: {}",
+            path,
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Spawn a task that reads a FIFO to EOF and returns its contents as a String.
+fn spawn_fifo_reader(path: std::path::PathBuf) -> tokio::task::JoinHandle<String> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        match tokio::fs::File::open(&path).await {
+            Ok(mut file) => {
+                let mut buf = Vec::new();
+                let _ = file.read_to_end(&mut buf).await;
+                String::from_utf8_lossy(&buf).to_string()
+            }
+            Err(_) => String::new(),
+        }
+    })
 }
 
 // Helper functions for converting between our types and Containerd types
