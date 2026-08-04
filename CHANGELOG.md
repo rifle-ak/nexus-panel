@@ -17,8 +17,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before touching the filesystem (previously escapable on writes to
   not-yet-existing paths), with symlink containment as defense in depth.
 - All services (`WEB_BIND`, `GRPC_BIND`, `METRICS_BIND`) default to `127.0.0.1`.
-- Bumped `anyhow` (1.0.104) and `crossbeam-epoch` (0.9.20) to clear RUSTSEC
-  advisories.
+- Bumped `anyhow` (1.0.104), `crossbeam-epoch` (0.9.20), and `rand`
+  (0.8.7 / 0.9.5) to clear RUSTSEC advisories (the latter for
+  RUSTSEC-2026-0097).
 
 ### Added
 - **Real shell console.** A new per-server "Shell" tab and `POST

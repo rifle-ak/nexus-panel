@@ -742,13 +742,13 @@ impl Blueprint {
                                 ));
                             }
                         }
-                        ValidationRule::Regex { pattern } => {
-                            if regex::Regex::new(pattern).is_err() {
-                                errors.push(format!(
-                                    "  • Variable '{}': invalid regex pattern '{}'",
-                                    var.name, pattern
-                                ));
-                            }
+                        ValidationRule::Regex { pattern }
+                            if regex::Regex::new(pattern).is_err() =>
+                        {
+                            errors.push(format!(
+                                "  • Variable '{}': invalid regex pattern '{}'",
+                                var.name, pattern
+                            ));
                         }
                         _ => {}
                     }

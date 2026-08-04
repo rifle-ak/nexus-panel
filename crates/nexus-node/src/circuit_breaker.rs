@@ -468,7 +468,7 @@ impl CircuitBreakerRegistry {
     /// Force open all circuit breakers
     pub fn force_open_all(&self) {
         let breakers = self.breakers.read();
-        for (_, breaker) in breakers.iter() {
+        for breaker in breakers.values() {
             breaker.force_open();
         }
     }
@@ -476,7 +476,7 @@ impl CircuitBreakerRegistry {
     /// Force close all circuit breakers
     pub fn force_close_all(&self) {
         let breakers = self.breakers.read();
-        for (_, breaker) in breakers.iter() {
+        for breaker in breakers.values() {
             breaker.force_close();
         }
     }

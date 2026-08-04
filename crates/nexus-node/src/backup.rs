@@ -248,7 +248,7 @@ impl BackupManager {
 
         if let Some(container_backups) = backups.get(container_id) {
             let mut list: Vec<BackupInfo> = container_backups.values().cloned().collect();
-            list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            list.sort_by_key(|b| std::cmp::Reverse(b.created_at));
             Ok(list)
         } else {
             Ok(Vec::new())
