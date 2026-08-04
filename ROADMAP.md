@@ -35,11 +35,18 @@ Current status of all features. Items marked **Done** are functional in the web 
 
 | Feature | Status |
 |---------|--------|
-| Unified search across providers (Umod, Codefling, Lone.Design) | Done |
-| Mod detail view | Done |
-| One-click mod install to running server | Planned |
+| Unified search across providers (Umod, Codefling, Lone.Design) | Backend (adapters need updating for current provider APIs) |
+| Mod detail view | Done (UI) |
+| One-click mod install to running server | Done (API + UI) |
 | Mod update checking for installed mods | Planned |
 | Dependency resolution | Backend Ready |
+
+> **Note:** the marketplace adapters were written against earlier provider APIs;
+> some responses have since drifted (e.g. Umod now returns `title`/`category_tags`
+> rather than `name`/`category`), so live search/detail may fail to parse until the
+> adapters are refreshed. The install pipeline (download → checksum → place in the
+> server's mods directory) and its API/UI are complete and work against any adapter
+> that parses correctly.
 
 ## Monitoring & Analytics
 

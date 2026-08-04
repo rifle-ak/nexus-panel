@@ -1183,10 +1183,56 @@ NX.viewMod = async function(provider, modId) {
       <div class="kv-row" style="margin-top:1rem"><span class="kv-key">Latest Version</span><span class="kv-value">${esc(mod.latest_version)}</span></div>
       <div class="kv-row"><span class="kv-key">Downloads</span><span class="kv-value">${Number(mod.downloads).toLocaleString()}</span></div>
       ${mod.rating ? `<div class="kv-row"><span class="kv-key">Rating</span><span class="kv-value">${mod.rating.toFixed(1)} / 5</span></div>` : ''}
-      ${mod.url ? `<div style="margin-top:1rem"><a href="${esc(mod.url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm">View on ${esc(mod.provider)}</a></div>` : ''}
+      ${mod.url ? `<div style="margin-top:1rem"><a href="${esc(mod.url)}" target="_blank" rel="noopener" class="btn btn-sm">View on ${esc(mod.provider)}</a></div>` : ''}
+      <div id="mod-install-section" style="margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem"></div>
     `;
     document.getElementById('modal-overlay').classList.remove('hidden');
+
+    // Populate the "Install to server" section with the current server list.
+    const section = document.getElementById('mod-install-section');
+    let servers = [];
+    try { servers = await api('/containers'); } catch (_) { servers = []; }
+    const defaultDir = (mod.game === 'minecraft') ? 'plugins' : 'oxide/plugins';
+    if (!servers.length) {
+      section.innerHTML = '<p class="text-muted text-sm">Create a server first to install this mod.</p>';
+    } else {
+      const options = servers.map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.status)})</option>`).join('');
+      section.innerHTML = `
+        <h4 style="margin-bottom:0.75rem">Install to server</h4>
+        <div class="form-group">
+          <label class="form-label">Server</label>
+          <select id="install-server" class="form-input" style="width:100%">${options}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Install folder</label>
+          <input id="install-dir" class="form-input" style="width:100%" value="${esc(defaultDir)}">
+        </div>
+        <button class="btn btn-primary" id="install-btn" onclick="NX.installMod('${esc(mod.provider)}','${esc(mod.id)}')">Install</button>
+        <div id="install-status" class="text-sm" style="margin-top:0.6rem"></div>`;
+    }
   } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.installMod = async function(provider, modId) {
+  const server = document.getElementById('install-server')?.value;
+  const dir = (document.getElementById('install-dir')?.value || '').trim();
+  const status = document.getElementById('install-status');
+  const btn = document.getElementById('install-btn');
+  if (!server) { status.innerHTML = '<span class="text-danger">Select a server.</span>'; return; }
+  status.innerHTML = '<span class="text-muted">Installing…</span>';
+  btn.disabled = true;
+  try {
+    const res = await api(`/containers/${encodeURIComponent(server)}/mods/install`, {
+      method: 'POST',
+      body: JSON.stringify({ provider, mod_id: modId, target_dir: dir }),
+    });
+    status.innerHTML = `<span class="text-success">Installed → ${esc(res.file_path)} (${fmtBytes(res.file_size)})</span>`;
+    toast('Mod installed', 'success');
+  } catch (e) {
+    status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 // ── Update check ─────────────────────────────────────────────────

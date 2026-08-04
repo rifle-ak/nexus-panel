@@ -114,6 +114,13 @@ impl FileManager {
         Ok(full_path)
     }
 
+    /// Resolve a caller-supplied relative path to a jail-safe absolute path
+    /// inside this container's directory. Rejects traversal the same way the
+    /// rest of the file API does; does not require the path to exist yet.
+    pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
+        self.sanitize_path(path)
+    }
+
     /// List files in a directory
     pub async fn list_files(&self, path: &str) -> Result<Vec<FileInfo>> {
         let dir_path = self.sanitize_path(path)?;
