@@ -1,7 +1,9 @@
-use crate::container::state::ContainerState;
+use crate::container::state::{ContainerState, ContainerStatus};
 use crate::error::{NodeError, Result};
 use crate::metrics::Metrics;
-use crate::runtime::{ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits};
+use crate::runtime::{
+    ContainerInfo, ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits,
+};
 use nexus_config::GameConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +12,11 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
+
+/// Subdirectory of `DATA_DIR` where container tracking state is persisted.
+/// Kept separate from the per-container data directories so it never appears
+/// in the file manager or inside a container's bind mount.
+const STATE_SUBDIR: &str = ".nexus/state";
 
 /// Manages container lifecycle and state
 pub struct ContainerManager {
@@ -60,6 +67,115 @@ impl ContainerManager {
     /// Get metrics instance
     pub fn metrics(&self) -> &Arc<Metrics> {
         &self.metrics
+    }
+
+    // ── State persistence ────────────────────────────────────────────────
+
+    /// Directory holding per-container persisted state files.
+    fn state_dir(&self) -> PathBuf {
+        self.data_dir.join(STATE_SUBDIR)
+    }
+
+    /// Path of the persisted state file for a container.
+    fn state_path(&self, id: &str) -> PathBuf {
+        self.state_dir().join(format!("{}.json", id))
+    }
+
+    /// Write a container's state to disk (best-effort; failures are logged,
+    /// not fatal — an unwritable state file must not break live operations).
+    async fn persist_state(&self, state: &ContainerState) {
+        let dir = self.state_dir();
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            warn!("Failed to create state dir {:?}: {}", dir, e);
+            return;
+        }
+        match serde_json::to_vec_pretty(state) {
+            Ok(bytes) => {
+                let path = self.state_path(&state.id);
+                if let Err(e) = tokio::fs::write(&path, bytes).await {
+                    warn!("Failed to persist state for {}: {}", state.id, e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize state for {}: {}", state.id, e),
+        }
+    }
+
+    /// Insert or replace a container's in-memory state and persist it to disk.
+    async fn set_state(&self, state: ContainerState) {
+        self.persist_state(&state).await;
+        let mut states = self.states.write().await;
+        states.insert(state.id.clone(), state);
+    }
+
+    /// Remove a container's in-memory state and its persisted file.
+    async fn remove_state(&self, id: &str) {
+        {
+            let mut states = self.states.write().await;
+            states.remove(id);
+        }
+        let _ = tokio::fs::remove_file(self.state_path(id)).await;
+    }
+
+    /// Restore persisted container state from disk and reconcile it against the
+    /// runtime's actual view, so the panel reflects reality after a node
+    /// restart (containerd keeps running the containers across our restarts).
+    ///
+    /// Returns the number of containers restored.
+    pub async fn restore(&self) -> usize {
+        let dir = self.state_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return 0, // No state dir yet — nothing to restore.
+        };
+
+        let mut restored = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("Failed to read state file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+            let mut state: ContainerState = match serde_json::from_slice(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Skipping unreadable state file {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            // Reconcile against what the runtime actually reports.
+            match self.runtime.inspect(&state.id).await {
+                Ok(info) => reconcile_state(&mut state, &info),
+                Err(_) => {
+                    // The runtime no longer knows this container, so it cannot
+                    // be running. Keep our metadata but clear the running view.
+                    if state.status.is_running() {
+                        state.status = ContainerStatus::Stopped;
+                        state.pid = None;
+                    }
+                }
+            }
+
+            {
+                let mut states = self.states.write().await;
+                states.insert(state.id.clone(), state.clone());
+            }
+            self.persist_state(&state).await;
+            restored += 1;
+        }
+
+        if restored > 0 {
+            info!("Restored {} container(s) from disk", restored);
+            self.update_container_count_metrics().await;
+        }
+        restored
     }
 
     /// Create a new container from a Nexus config
@@ -130,11 +246,8 @@ impl ContainerManager {
             config.container.image.clone(),
         );
 
-        // Store state
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.clone(), state);
-        }
+        // Store state (in memory + on disk)
+        self.set_state(state).await;
 
         // Update metrics
         self.metrics.record_container_operation("create", "success", start.elapsed());
@@ -184,11 +297,8 @@ impl ContainerManager {
 
         state.mark_started(pid);
 
-        // Update state
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.to_string(), state);
-        }
+        // Update state (in memory + on disk)
+        self.set_state(state).await;
 
         // Update metrics
         self.metrics.record_container_operation("start", "success", start.elapsed());
@@ -239,11 +349,8 @@ impl ContainerManager {
 
         state.mark_stopped(exit_code);
 
-        // Update state
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.to_string(), state);
-        }
+        // Update state (in memory + on disk)
+        self.set_state(state).await;
 
         // Update metrics
         self.metrics.record_container_operation("stop", "success", start.elapsed());
@@ -262,14 +369,11 @@ impl ContainerManager {
         self.stop_container(container_id, Some(10)).await?;
         self.start_container(container_id).await?;
 
-        // Increment restart count
-        {
-            let mut states = self.states.write().await;
-            if let Some(state) = states.get_mut(container_id) {
-                state.mark_restarted();
-                // Record restart metric
-                self.metrics.record_container_restart(&state.id, &state.name);
-            }
+        // Increment restart count (in memory + on disk)
+        if let Ok(mut state) = self.get_state(container_id).await {
+            state.mark_restarted();
+            self.metrics.record_container_restart(&state.id, &state.name);
+            self.set_state(state).await;
         }
 
         self.metrics.record_container_operation("restart", "success", start.elapsed());
@@ -325,11 +429,8 @@ impl ContainerManager {
             })?;
         }
 
-        // Remove from state
-        {
-            let mut states = self.states.write().await;
-            states.remove(container_id);
-        }
+        // Remove from state (in memory + on disk)
+        self.remove_state(container_id).await;
 
         // Update metrics
         self.metrics.record_container_operation("delete", "success", start.elapsed());
@@ -459,10 +560,7 @@ impl ContainerManager {
 
         state.mark_suspended();
 
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.to_string(), state);
-        }
+        self.set_state(state).await;
 
         self.metrics.record_container_operation("suspend", "success", start.elapsed());
         self.update_container_count_metrics().await;
@@ -500,10 +598,7 @@ impl ContainerManager {
 
         state.mark_unsuspended();
 
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.to_string(), state);
-        }
+        self.set_state(state).await;
 
         self.metrics.record_container_operation("unsuspend", "success", start.elapsed());
         self.update_container_count_metrics().await;
@@ -567,10 +662,7 @@ impl ContainerManager {
             state.image.clone(),
         );
 
-        {
-            let mut states = self.states.write().await;
-            states.insert(container_id.to_string(), new_state);
-        }
+        self.set_state(new_state).await;
 
         self.metrics.record_container_operation("reinstall", "success", start.elapsed());
         self.update_container_count_metrics().await;
@@ -666,6 +758,44 @@ impl ContainerManager {
                 memory_swap_bytes,
             },
         })
+    }
+}
+
+/// Update a persisted [`ContainerState`] to match what the runtime reports.
+///
+/// A `Suspended` container is a billing marker we set deliberately; the runtime
+/// only ever reports it as stopped/created, so we preserve `Suspended` rather
+/// than letting reconciliation clear it.
+fn reconcile_state(state: &mut ContainerState, info: &ContainerInfo) {
+    match info.status.as_str() {
+        "running" => {
+            state.status = ContainerStatus::Running;
+            state.pid = info.pid;
+        }
+        "paused" | "pausing" => {
+            state.status = ContainerStatus::Paused;
+            state.pid = info.pid;
+        }
+        "created" => {
+            if !state.status.is_suspended() {
+                state.status = ContainerStatus::Created;
+            }
+            state.pid = None;
+        }
+        // "stopped", "unknown", or anything else → not running.
+        _ => {
+            if !state.status.is_suspended() {
+                state.status = if info.exit_code.unwrap_or(0) == 0 {
+                    ContainerStatus::Stopped
+                } else {
+                    ContainerStatus::Failed
+                };
+            }
+            state.pid = None;
+            if info.exit_code.is_some() {
+                state.exit_code = info.exit_code;
+            }
+        }
     }
 }
 
@@ -816,5 +946,78 @@ security:
         // Should not exist
         let result = manager.get_state(&container_id).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_state_persists_and_restores_across_managers() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+
+        // Manager A creates a container, then "goes away".
+        {
+            let manager = ContainerManager::new(data_dir.clone());
+            let config = create_test_config();
+            manager
+                .create_container(&config, Some("persisted-1".to_string()))
+                .await
+                .unwrap();
+        }
+
+        // A fresh manager (as if the node restarted) restores from disk.
+        let manager2 = ContainerManager::new(data_dir.clone());
+        assert!(manager2.list_containers().await.is_empty());
+
+        let restored = manager2.restore().await;
+        assert_eq!(restored, 1);
+
+        let state = manager2.get_state("persisted-1").await.unwrap();
+        assert_eq!(state.name, "Test Server");
+        // The fresh mock runtime does not know the container, so a previously
+        // created (not running) container stays as Created.
+        assert_eq!(state.status, ContainerStatus::Created);
+    }
+
+    #[tokio::test]
+    async fn test_restore_reconciles_stale_running_to_stopped() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+
+        // Manager A creates and starts a container.
+        {
+            let manager = ContainerManager::new(data_dir.clone());
+            let config = create_test_config();
+            let id =
+                manager.create_container(&config, Some("running-1".to_string())).await.unwrap();
+            manager.start_container(&id).await.unwrap();
+            assert!(manager.get_state(&id).await.unwrap().status.is_running());
+        }
+
+        // A fresh manager with an empty runtime restores: the container was
+        // marked Running on disk but the runtime no longer has it, so
+        // reconciliation must clear the running view.
+        let manager2 = ContainerManager::new(data_dir.clone());
+        assert_eq!(manager2.restore().await, 1);
+
+        let state = manager2.get_state("running-1").await.unwrap();
+        assert_eq!(state.status, ContainerStatus::Stopped);
+        assert!(state.pid.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_removes_persisted_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let manager = ContainerManager::new(data_dir.clone());
+
+        let config = create_test_config();
+        let id = manager.create_container(&config, Some("to-delete".to_string())).await.unwrap();
+        assert!(manager.state_path(&id).exists());
+
+        manager.delete_container(&id, true).await.unwrap();
+        assert!(!manager.state_path(&id).exists());
+
+        // A restore now finds nothing.
+        let manager2 = ContainerManager::new(data_dir);
+        assert_eq!(manager2.restore().await, 0);
     }
 }
