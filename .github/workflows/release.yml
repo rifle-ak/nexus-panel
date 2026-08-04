@@ -4,12 +4,21 @@ on:
   push:
     tags:
       - "v*"
+  # Allows (re)building and attaching binaries to an existing tag/release,
+  # e.g. to backfill assets for a release whose original run failed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach binaries to (e.g. v0.1.0)"
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # The tag to build for: the pushed tag, or the workflow_dispatch input.
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -24,6 +33,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Install protoc
         run: |
@@ -41,13 +52,15 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} --bin nexus-panel --bin nexus-node
+        run: |
+          cargo build --release --target ${{ matrix.target }} \
+            -p nexus-panel -p nexus-node
 
       - name: Package
         run: |
           mkdir -p dist
           tar -C "target/${{ matrix.target }}/release" \
-            -czf "dist/nexus-panel-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" \
+            -czf "dist/nexus-panel-${RELEASE_TAG}-${{ matrix.target }}.tar.gz" \
             nexus-panel nexus-node
 
       - name: Upload build artifact
@@ -71,6 +84,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: dist/*.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: true
