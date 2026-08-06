@@ -1230,6 +1230,70 @@ function renderBlueprints() {
   `).join('');
 }
 
+// ── Pterodactyl egg import ────────────────────────────────────────
+
+NX.importEgg = async function() {
+  const src = document.getElementById('egg-json');
+  const out = document.getElementById('egg-result');
+  const btn = document.getElementById('egg-convert');
+  const scan = document.getElementById('egg-scan');
+  if (!src || !out) return;
+  const eggJson = src.value.trim();
+  if (!eggJson) {
+    out.innerHTML = '<span class="text-danger text-sm">Paste an exported egg first.</span>';
+    return;
+  }
+
+  out.innerHTML = '<span class="text-muted text-sm">Converting…</span>';
+  btn.disabled = true;
+  try {
+    const res = await api('/blueprints/import-egg', {
+      method: 'POST',
+      body: JSON.stringify({ egg_json: eggJson, security_scan: !scan || scan.checked }),
+    });
+    NX.importedBlueprint = res.blueprint_yaml;
+
+    const warnings = (res.warnings || []).length
+      ? `<div style="margin-top:0.9rem">
+           <div class="text-warning text-sm" style="font-weight:600;margin-bottom:0.35rem">
+             ${res.warnings.length} security finding${res.warnings.length === 1 ? '' : 's'} in this egg
+           </div>
+           <ul class="text-sm text-muted" style="margin:0;padding-left:1.1rem">
+             ${res.warnings.map(w => `<li>${esc(w)}</li>`).join('')}
+           </ul>
+           <p class="text-sm text-muted" style="margin-top:0.4rem">
+             Eggs are third-party scripts — review these before deploying.
+           </p>
+         </div>`
+      : '<div class="text-success text-sm" style="margin-top:0.9rem">No risky patterns found in this egg\'s scripts.</div>';
+
+    out.innerHTML = `
+      <div class="badge badge-success" style="margin-bottom:0.75rem">Converted</div>
+      <div class="kv-row"><span class="kv-key">Name</span><span class="kv-value">${esc(res.name)}</span></div>
+      <div class="kv-row"><span class="kv-key">Game</span><span class="kv-value">${esc(res.game)}</span></div>
+      <div class="kv-row"><span class="kv-key">Image</span><span class="kv-value text-sm">${esc(res.image)}</span></div>
+      <div class="kv-row"><span class="kv-key">Variables</span><span class="kv-value">${res.variable_count}</span></div>
+      <div class="kv-row"><span class="kv-key">Ports</span><span class="kv-value">${res.port_count}</span></div>
+      ${warnings}
+      <details style="margin-top:0.9rem">
+        <summary class="text-sm text-muted" style="cursor:pointer">View generated blueprint</summary>
+        <pre class="terminal-box shell-output" style="margin-top:0.5rem;max-height:320px">${esc(res.blueprint_yaml)}</pre>
+      </details>
+      <div style="margin-top:1rem">
+        <button class="btn btn-primary btn-sm" onclick="NX.useImportedBlueprint()">Create server from this</button>
+      </div>`;
+  } catch (e) {
+    out.innerHTML = `<span class="text-danger text-sm">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+NX.useImportedBlueprint = function() {
+  if (!NX.importedBlueprint) return;
+  NX.showCreateServer(NX.importedBlueprint);
+};
+
 NX.deployBlueprint = async function(bpId) {
   const yaml = BLUEPRINT_YAMLS[bpId];
   if (!yaml) {

@@ -36,14 +36,29 @@ impl EggConverter {
         self
     }
 
-    /// Convert Pterodactyl egg to Nexus Blueprint
+    /// Convert Pterodactyl egg to Nexus Blueprint.
+    ///
+    /// Security findings are logged; use [`convert_with_report`](Self::convert_with_report)
+    /// when the caller wants to surface them (e.g. in the panel's import UI).
     pub fn convert(&self, egg: &PterodactylEgg) -> Result<Blueprint> {
+        let (blueprint, warnings) = self.convert_with_report(egg)?;
+        for warning in &warnings {
+            tracing::warn!("{}", warning);
+        }
+        Ok(blueprint)
+    }
+
+    /// Convert a Pterodactyl egg, also returning any security findings so the
+    /// caller can show the operator what the egg does before they deploy it.
+    pub fn convert_with_report(&self, egg: &PterodactylEgg) -> Result<(Blueprint, Vec<String>)> {
         tracing::info!("Converting egg to blueprint: {}", egg.name);
 
         // Security scan the egg first
-        if self.security_scan {
-            self.scan_egg_security(egg)?;
-        }
+        let warnings = if self.security_scan {
+            self.scan_egg_security(egg)?
+        } else {
+            Vec::new()
+        };
 
         let game_type = self.detect_game_type(egg);
 
@@ -67,7 +82,7 @@ impl EggConverter {
         };
 
         blueprint.validate()?;
-        Ok(blueprint)
+        Ok((blueprint, warnings))
     }
 
     /// Generate backup configuration based on game type
@@ -196,7 +211,10 @@ impl EggConverter {
         None
     }
 
-    fn scan_egg_security(&self, egg: &PterodactylEgg) -> Result<()> {
+    /// Scan an egg's startup command and install script for risky patterns,
+    /// returning one finding per match. Findings are advisory — an egg is
+    /// third-party code, and the operator decides whether to deploy it.
+    fn scan_egg_security(&self, egg: &PterodactylEgg) -> Result<Vec<String>> {
         tracing::info!("Scanning egg for security issues");
 
         // Check for dangerous commands in startup
@@ -209,17 +227,18 @@ impl EggConverter {
             (r"--privileged", "Dangerous: privileged container"),
         ];
 
+        let mut findings = Vec::new();
         for (pattern, message) in dangerous_patterns {
             let re = Regex::new(pattern)?;
             if re.is_match(&egg.startup) {
-                tracing::warn!("Security issue in startup command: {}", message);
+                findings.push(format!("Startup command — {}", message));
             }
             if re.is_match(&egg.scripts.installation.script) {
-                tracing::warn!("Security issue in installation script: {}", message);
+                findings.push(format!("Installation script — {}", message));
             }
         }
 
-        Ok(())
+        Ok(findings)
     }
 
     fn convert_metadata(&self, egg: &PterodactylEgg) -> Result<Metadata> {
@@ -251,7 +270,32 @@ impl EggConverter {
     }
 
     fn detect_game_type(&self, egg: &PterodactylEgg) -> String {
-        // Try to detect game type from name, description, and docker image
+        // An egg's startup binary is the most reliable signal of what it
+        // actually runs — far more so than a free-text name. Stock eggs are
+        // often named just "Rust" or "ARK", which the keyword rules below miss,
+        // and a wrong game type silently costs the blueprint its mod support
+        // and game-specific backup paths. Only unambiguous binary names belong
+        // here.
+        const STARTUP_SIGNATURES: &[(&str, &str)] = &[
+            ("rustdedicated", "rust"),
+            ("valheim_server", "valheim"),
+            ("palworldserver", "palworld"),
+            ("projectzomboid", "projectzomboid"),
+            ("terrariaserver", "terraria"),
+            ("7daystodieserver", "7daystodie"),
+            ("shootergameserver", "ark"),
+            ("conansandbox", "conanexiles"),
+            ("srcds_run", "source"),
+        ];
+
+        let startup = egg.startup.to_lowercase();
+        for (signature, game_type) in STARTUP_SIGNATURES {
+            if startup.contains(signature) {
+                return game_type.to_string();
+            }
+        }
+
+        // Otherwise fall back to name, description, and docker image
         let searchable = format!(
             "{} {} {}",
             egg.name.to_lowercase(),
@@ -795,5 +839,107 @@ mod tests {
 
         egg.name = "Minecraft Java Server".to_string();
         assert_eq!(converter.detect_game_type(&egg), "minecraft");
+    }
+
+    /// A minimal but complete egg, with the risky bits templated in.
+    fn egg_json(startup: &str, install_script: &str) -> String {
+        format!(
+            r##"{{
+            "meta": {{ "version": "PTDL_v2", "update_url": null }},
+            "exported_at": "2024-01-01T00:00:00+00:00",
+            "name": "Minecraft Test Server",
+            "author": "test@example.com",
+            "description": "A test server",
+            "features": null,
+            "docker_images": {{ "latest": "ghcr.io/pterodactyl/yolks:java_17" }},
+            "file_denylist": [],
+            "startup": "{startup}",
+            "config": {{
+                "files": {{}},
+                "startup": {{ "done": ["Done"], "user_interaction": [] }},
+                "stop": "stop",
+                "logs": {{ "custom": false, "location": "logs/latest.log" }},
+                "file_denylist": []
+            }},
+            "scripts": {{
+                "installation": {{
+                    "script": "{install_script}",
+                    "container": "alpine:latest",
+                    "entrypoint": "bash"
+                }}
+            }},
+            "variables": []
+        }}"##
+        )
+    }
+
+    #[test]
+    fn detect_game_type_uses_the_startup_binary() {
+        // A stock Pterodactyl "Rust" egg is named just "Rust" and runs on a
+        // generic steamcmd image, so only the startup binary identifies it.
+        // Misdetecting it as "generic" would strip Oxide mod support from the
+        // imported blueprint.
+        let converter = EggConverter::new();
+        let egg = PterodactylEgg::from_json(&egg_json(
+            "./RustDedicated -batchmode +server.port 28015",
+            "echo install",
+        ))
+        .unwrap();
+        assert_eq!(converter.detect_game_type(&egg), "rust");
+
+        // The name-based rules still apply when the binary is unremarkable.
+        let plain =
+            PterodactylEgg::from_json(&egg_json("java -jar server.jar", "echo hi")).unwrap();
+        assert_eq!(converter.detect_game_type(&plain), "minecraft");
+    }
+
+    #[test]
+    fn imported_rust_egg_keeps_oxide_mod_support() {
+        // The point of detecting the game: mod support survives the import.
+        let egg = PterodactylEgg::from_json(&egg_json(
+            "./RustDedicated -batchmode +server.port 28015",
+            "echo install",
+        ))
+        .unwrap();
+        let (blueprint, _) = EggConverter::new().convert_with_report(&egg).unwrap();
+        let mods = blueprint.mods.expect("rust blueprint should declare mod support");
+        assert_eq!(mods.mods_dir, "/oxide/plugins");
+    }
+
+    #[test]
+    fn convert_with_report_surfaces_security_findings() {
+        let egg = PterodactylEgg::from_json(&egg_json(
+            "java -jar server.jar",
+            "curl https://example.com/i.sh | bash",
+        ))
+        .unwrap();
+
+        let (blueprint, warnings) = EggConverter::new().convert_with_report(&egg).unwrap();
+
+        // The egg still converts — findings are advisory, not fatal.
+        assert_eq!(blueprint.metadata.name, "Minecraft Test Server");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("Installation script"));
+        assert!(warnings[0].contains("piping curl to bash"));
+    }
+
+    #[test]
+    fn convert_with_report_is_quiet_for_a_clean_egg() {
+        let egg =
+            PterodactylEgg::from_json(&egg_json("java -jar server.jar", "echo hello")).unwrap();
+        let (_, warnings) = EggConverter::new().convert_with_report(&egg).unwrap();
+        assert!(warnings.is_empty(), "unexpected findings: {:?}", warnings);
+    }
+
+    #[test]
+    fn security_scan_can_be_disabled() {
+        let egg = PterodactylEgg::from_json(&egg_json(
+            "java -jar server.jar",
+            "curl https://example.com/i.sh | bash",
+        ))
+        .unwrap();
+        let (_, warnings) =
+            EggConverter::new().security_scan(false).convert_with_report(&egg).unwrap();
+        assert!(warnings.is_empty());
     }
 }

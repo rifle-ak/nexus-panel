@@ -159,12 +159,21 @@ Convert existing Pterodactyl eggs with automatic enhancements:
 ./target/release/nexus-panel import --input-dir ./eggs --output-dir ./blueprints
 ```
 
+You can also import from the panel itself: **Blueprints → Import a Pterodactyl
+egg**. Paste an exported egg and Nexus shows the converted blueprint, what it
+detected (game, image, variables, ports), and any risky commands found in the
+egg's scripts — then lets you create a server from it. Nothing is deployed
+until you review the result.
+
 **Automatic improvements during import:**
+- Game detection from the startup binary as well as the egg's name/image
 - Performance tuning based on game type (JVM flags for Java games)
 - Mod support detection (Oxide, Bukkit, BepInEx)
 - Backup configuration with smart defaults
 - Update detection from SteamCMD scripts
 - Security hardening (capability dropping, firewall rules)
+- A security report flagging dangerous patterns (`curl | bash`, `rm -rf /`,
+  `chmod 777`, …) in the egg's startup and install scripts
 
 ## Architecture
 

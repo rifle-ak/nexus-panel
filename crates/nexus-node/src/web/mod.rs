@@ -161,6 +161,8 @@ pub async fn start_web_server(
             "/api/v1/containers/:id/update-config",
             get(api_update_config),
         )
+        // ── Blueprints ───────────────────────────────────────────────
+        .route("/api/v1/blueprints/import-egg", post(api_import_egg))
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
         .route(
@@ -1297,6 +1299,84 @@ async fn api_update_status(
             "no update has been run for this server",
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Blueprint import (Pterodactyl eggs)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ImportEggReq {
+    /// Raw Pterodactyl egg JSON (the file you export from Pterodactyl/Pelican).
+    egg_json: String,
+    /// Scan the egg's startup/install script for risky patterns. Default true.
+    security_scan: Option<bool>,
+    /// Add Nexus's default firewall rules to the generated blueprint.
+    /// Default true.
+    firewall_rules: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct ImportEggResp {
+    /// The converted blueprint, ready to paste into the create form.
+    blueprint_yaml: String,
+    /// Summary of what was imported, so the UI needn't re-parse the YAML.
+    name: String,
+    game: String,
+    image: String,
+    variable_count: usize,
+    port_count: usize,
+    /// Advisory security findings from scanning the egg (may be empty).
+    warnings: Vec<String>,
+}
+
+/// Convert a Pterodactyl egg into a Nexus blueprint.
+///
+/// This is the migration path off Pterodactyl/Pelican: paste an exported egg
+/// and get back an equivalent blueprint, plus any security findings about what
+/// the egg's scripts do. Conversion is pure — nothing is deployed here; the
+/// operator reviews the result and creates a server from it.
+async fn api_import_egg(
+    Json(body): Json<ImportEggReq>,
+) -> Result<Json<ImportEggResp>, (StatusCode, Json<ApiError>)> {
+    if body.egg_json.trim().is_empty() {
+        return Err(err_json(StatusCode::BAD_REQUEST, "Empty egg JSON"));
+    }
+
+    let egg = egg_importer::PterodactylEgg::from_json(&body.egg_json).map_err(|e| {
+        err_json(
+            StatusCode::BAD_REQUEST,
+            format!("Not a valid Pterodactyl egg: {}", e),
+        )
+    })?;
+
+    let converter = egg_importer::EggConverter::new()
+        .security_scan(body.security_scan.unwrap_or(true))
+        .add_firewall_rules(body.firewall_rules.unwrap_or(true));
+
+    let (blueprint, warnings) = converter.convert_with_report(&egg).map_err(|e| {
+        err_json(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Could not convert egg '{}': {}", egg.name, e),
+        )
+    })?;
+
+    let blueprint_yaml = blueprint.to_yaml().map_err(|e| {
+        err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to render blueprint: {}", e),
+        )
+    })?;
+
+    Ok(Json(ImportEggResp {
+        name: blueprint.metadata.name.clone(),
+        game: blueprint.metadata.game.clone(),
+        image: blueprint.container.image.clone(),
+        variable_count: blueprint.variables.len(),
+        port_count: blueprint.networking.ports.len(),
+        blueprint_yaml,
+        warnings,
+    }))
 }
 
 // ---------------------------------------------------------------------------

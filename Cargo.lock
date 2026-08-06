@@ -1798,6 +1798,7 @@ dependencies = [
  "chrono",
  "containerd-client",
  "cron",
+ "egg-importer",
  "flate2",
  "futures",
  "governor",
