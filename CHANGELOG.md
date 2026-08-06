@@ -22,6 +22,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RUSTSEC-2026-0097).
 
 ### Fixed
+- **Egg import misdetected games whose egg is named only after the game.** Game
+  detection searched an egg's name, description and image but not its startup
+  command, so a stock Pterodactyl "Rust" egg (running `./RustDedicated` on a
+  generic steamcmd image) imported as `generic` — silently losing Oxide mod
+  support and Rust's backup paths. Unambiguous startup binaries are now checked
+  first.
 - **Umod marketplace adapter refreshed for the current API.** umod.org's
   responses had drifted (display name moved to `title`, `downloads_total` →
   `downloads`, `category` → `category_tags`, `games` → `games_detail`, and the
@@ -38,6 +44,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`403`), instead of surfacing an opaque failure.
 
 ### Added
+- **Pterodactyl egg import in the panel.** `POST /api/v1/blueprints/import-egg`
+  converts an exported Pterodactyl/Pelican egg into a Nexus blueprint, and the
+  Blueprints page gains an import panel: paste an egg, review what was detected
+  (game, image, variables, ports) plus a **security report** of risky commands
+  found in the egg's scripts, then create a server from the result. Conversion
+  is pure — nothing is deployed until the operator acts. Previously this was
+  CLI-only (`nexus-panel import` / `convert`), which still works.
 - **Per-server blueprint persistence + one-click updates.** The blueprint a
   server was created from is now saved to `DATA_DIR/.nexus/blueprints/<id>.yaml`
   (and removed with the container), so a server's declared configuration

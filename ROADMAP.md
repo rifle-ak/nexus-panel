@@ -33,7 +33,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Rust (Carbon framework, DepotDownloader install) blueprint | Done (`blueprints/rust-carbon.yaml`) |
 | Blueprint selection auto-populates create form | Done |
 | Custom YAML editor | Done |
-| Blueprint import from Pterodactyl eggs | Planned |
+| Blueprint import from Pterodactyl eggs | Done (CLI **and** panel UI, with a security report) |
 
 ## Mod Marketplace
 
