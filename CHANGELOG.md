@@ -38,6 +38,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`403`), instead of surfacing an opaque failure.
 
 ### Added
+- **Per-server blueprint persistence + one-click updates.** The blueprint a
+  server was created from is now saved to `DATA_DIR/.nexus/blueprints/<id>.yaml`
+  (and removed with the container), so a server's declared configuration
+  survives a node restart. `GET /api/v1/containers/:id/update-config` exposes
+  the blueprint's `updates.apply` strategy and install directory, and the Update
+  tab uses it: it shows what the blueprint declares and offers a single "Run
+  blueprint update" button. `POST .../update` now accepts an empty body and
+  resolves the strategy (and install dir, from `startup.working_dir`) from the
+  blueprint; an explicit body still overrides it, and servers created before
+  this change simply fall back to the manual form.
 - **On-demand game-file update executor.** A new per-server "Update" tab and
   `POST /api/v1/containers/:id/update` endpoint turn the blueprint `updates`
   strategy into an action: pick SteamCMD or DepotDownloader (with app id,

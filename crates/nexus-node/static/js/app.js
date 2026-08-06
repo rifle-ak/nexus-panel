@@ -618,10 +618,75 @@ NX.switchTab = function(tab) {
   if (tab === 'backups') loadBackups();
   if (tab === 'schedules') loadSchedules();
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
-  if (tab === 'update') NX.refreshUpdateStatus();
+  if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
 };
 
 // ── Update game files ─────────────────────────────────────────────
+
+// Human-readable one-liner for a blueprint's `updates.apply` strategy.
+function updateApplySummary(a) {
+  if (!a || !a.type) return 'unknown strategy';
+  switch (a.type) {
+    case 'steam_cmd':
+      return `SteamCMD · app ${a.app_id}` + (a.beta ? ` · beta ${a.beta}` : '');
+    case 'depot_downloader':
+      return `DepotDownloader · app ${a.app_id}`
+        + (a.depot_id ? ` · depot ${a.depot_id}` : '')
+        + (a.branch ? ` · branch ${a.branch}` : '');
+    case 'download': return `Download · ${a.url}`;
+    case 'command': return `Command · ${a.command}`;
+    case 'docker': return 'Docker image pull (runs at the host level, not in-container)';
+    default: return a.type;
+  }
+}
+
+// Load the update strategy this server's blueprint declares, so the operator
+// can run it in one click instead of retyping it.
+NX.loadUpdateConfig = async function() {
+  const box = document.getElementById('update-blueprint');
+  const manual = document.getElementById('update-manual');
+  if (!box || !NX.currentServer) return;
+  try {
+    const cfg = await api(`/containers/${NX.currentServer}/update-config`);
+    NX.updateBlueprint = cfg;
+    const runnable = cfg.apply && cfg.apply.type !== 'docker';
+    box.innerHTML = `
+      <div class="text-sm" style="margin-bottom:0.6rem">
+        <strong>From this server's blueprint</strong>
+        <div class="text-muted" style="margin-top:0.25rem">${esc(updateApplySummary(cfg.apply))}</div>
+        <div class="text-muted" style="margin-top:0.15rem">Installs into <code>${esc(cfg.install_dir)}</code></div>
+      </div>
+      ${runnable
+        ? `<button class="btn btn-primary btn-sm" id="update-run-blueprint" onclick="NX.startUpdate(true)">Run blueprint update</button>`
+        : `<span class="text-muted text-sm">This strategy can't be applied from inside the container.</span>`}`;
+    box.classList.remove('hidden');
+    if (manual) manual.open = false;
+    NX.prefillUpdateForm(cfg);
+  } catch (_) {
+    // No blueprint on file, or it declares no update strategy — manual only.
+    NX.updateBlueprint = null;
+    box.classList.add('hidden');
+    if (manual) manual.open = true;
+  }
+};
+
+// Mirror the blueprint's strategy into the manual override form.
+NX.prefillUpdateForm = function(cfg) {
+  const a = cfg && cfg.apply;
+  if (!a) return;
+  const dir = document.getElementById('update-dir');
+  if (dir && cfg.install_dir) dir.value = cfg.install_dir;
+  if (a.type !== 'steam_cmd' && a.type !== 'depot_downloader') return;
+  const method = document.getElementById('update-method');
+  const appId = document.getElementById('update-appid');
+  const branch = document.getElementById('update-branch');
+  const depot = document.getElementById('update-depot');
+  if (method) method.value = a.type;
+  if (appId && a.app_id != null) appId.value = a.app_id;
+  if (branch) branch.value = a.beta || a.branch || '';
+  if (depot) depot.value = a.depot_id != null ? a.depot_id : '';
+  NX.onUpdateMethodChange();
+};
 
 NX.onUpdateMethodChange = function() {
   const method = document.getElementById('update-method')?.value;
@@ -630,15 +695,34 @@ NX.onUpdateMethodChange = function() {
   if (depotGroup) depotGroup.style.display = method === 'depot_downloader' ? '' : 'none';
 };
 
-NX.startUpdate = async function() {
+NX.startUpdate = async function(useBlueprint) {
   if (!NX.currentServer) return;
+  const status = document.getElementById('update-status');
+  const btns = ['update-run', 'update-run-blueprint']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+
+  // One-click path: send an empty body and let the node resolve the strategy
+  // from the server's stored blueprint.
+  if (useBlueprint) {
+    status.innerHTML = '<span class="text-muted">Starting update…</span>';
+    btns.forEach(b => { b.disabled = true; });
+    try {
+      await api(`/containers/${NX.currentServer}/update`, { method: 'POST', body: '{}' });
+      toast('Update started', 'success');
+      NX.pollUpdate();
+    } catch (e) {
+      status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
+      btns.forEach(b => { b.disabled = false; });
+    }
+    return;
+  }
+
   const method = document.getElementById('update-method').value;
   const appId = parseInt(document.getElementById('update-appid').value.trim(), 10);
   const branch = document.getElementById('update-branch')?.value.trim();
   const depot = document.getElementById('update-depot')?.value.trim();
   const dir = document.getElementById('update-dir').value.trim();
-  const status = document.getElementById('update-status');
-  const btn = document.getElementById('update-run');
   if (!Number.isFinite(appId)) {
     status.innerHTML = '<span class="text-danger">Enter a valid Steam App ID.</span>';
     return;
@@ -651,7 +735,7 @@ NX.startUpdate = async function() {
     if (depot) body.depot_id = parseInt(depot, 10);
   }
   status.innerHTML = '<span class="text-muted">Starting update…</span>';
-  btn.disabled = true;
+  btns.forEach(b => { b.disabled = true; });
   try {
     await api(`/containers/${NX.currentServer}/update`, {
       method: 'POST',
@@ -661,7 +745,7 @@ NX.startUpdate = async function() {
     NX.pollUpdate();
   } catch (e) {
     status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
-    btn.disabled = false;
+    btns.forEach(b => { b.disabled = false; });
   }
 };
 
@@ -691,7 +775,10 @@ NX.renderUpdateJob = function(job) {
   status.innerHTML = line;
   const text = [job.stdout, job.stderr, job.error ? `error: ${job.error}` : ''].filter(Boolean).join('\n');
   if (text) { out.textContent = text; out.classList.remove('hidden'); out.scrollTop = out.scrollHeight; }
-  btn.disabled = job.status === 'running';
+  const running = job.status === 'running';
+  if (btn) btn.disabled = running;
+  const bpBtn = document.getElementById('update-run-blueprint');
+  if (bpBtn) bpBtn.disabled = running;
 };
 
 NX.pollUpdate = function() {

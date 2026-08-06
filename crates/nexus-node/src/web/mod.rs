@@ -157,6 +157,10 @@ pub async fn start_web_server(
             "/api/v1/containers/:id/update",
             get(api_update_status).post(api_start_update),
         )
+        .route(
+            "/api/v1/containers/:id/update-config",
+            get(api_update_config),
+        )
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
         .route(
@@ -1138,13 +1142,69 @@ async fn api_install_mod(
 /// Request to run a game-file update. The body carries an `UpdateApply`
 /// strategy (tagged by `type`, e.g. `steam_cmd` / `depot_downloader`) plus an
 /// optional install directory.
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct StartUpdateReq {
-    #[serde(flatten)]
-    apply: nexus_config::UpdateApply,
+    /// Explicit strategy. Omit (or send an empty body) to use the strategy
+    /// declared in the server's own blueprint (`updates.apply`).
+    #[serde(flatten, default)]
+    apply: Option<nexus_config::UpdateApply>,
     /// Directory inside the container to install into. Defaults to the
-    /// blueprint working dir (`/home/container`).
+    /// blueprint's `startup.working_dir`, then `/home/container`.
     install_dir: Option<String>,
+}
+
+/// The update strategy a server declares in its blueprint, so the UI can
+/// prefill (and one-click) instead of making the operator retype it.
+#[derive(Serialize)]
+struct UpdateConfigResp {
+    apply: nexus_config::UpdateApply,
+    install_dir: String,
+    /// Whether the blueprint asks for unattended updates.
+    auto_update: bool,
+}
+
+/// Return the update strategy declared in this server's stored blueprint.
+/// 404 when the server has no blueprint on file or declares no `updates` block.
+async fn api_update_config(
+    State(s): State<S>,
+    Path(id): Path<String>,
+) -> Result<Json<UpdateConfigResp>, (StatusCode, Json<ApiError>)> {
+    // Container must exist (gives a clean 404 for unknown ids).
+    s.manager
+        .get_state(&id)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+
+    let config = s.manager.load_blueprint(&id).await.ok_or_else(|| {
+        err_json(
+            StatusCode::NOT_FOUND,
+            "no blueprint stored for this server (it may predate blueprint persistence)",
+        )
+    })?;
+
+    let updates = config.updates.as_ref().ok_or_else(|| {
+        err_json(
+            StatusCode::NOT_FOUND,
+            "this server's blueprint declares no update strategy",
+        )
+    })?;
+
+    Ok(Json(UpdateConfigResp {
+        apply: updates.apply.clone(),
+        install_dir: blueprint_install_dir(&config),
+        auto_update: updates.auto_update,
+    }))
+}
+
+/// The directory a blueprint installs into: its startup working dir, falling
+/// back to the conventional container path.
+fn blueprint_install_dir(config: &nexus_config::GameConfig) -> String {
+    let dir = config.startup.working_dir.trim();
+    if dir.is_empty() {
+        crate::update::DEFAULT_INSTALL_DIR.to_string()
+    } else {
+        dir.to_string()
+    }
 }
 
 /// Kick off a game-file update for a server. The update runs as a background
@@ -1153,7 +1213,7 @@ struct StartUpdateReq {
 async fn api_start_update(
     State(s): State<S>,
     Path(id): Path<String>,
-    Json(body): Json<StartUpdateReq>,
+    body: Option<Json<StartUpdateReq>>,
 ) -> Result<Json<crate::update::UpdateJob>, (StatusCode, Json<ApiError>)> {
     // Container must exist and be running to exec into it.
     let state = s
@@ -1168,15 +1228,35 @@ async fn api_start_update(
         ));
     }
 
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+
+    // The blueprint supplies the defaults; an explicit request overrides them.
+    let blueprint = s.manager.load_blueprint(&id).await;
+
+    let apply = match body.apply {
+        Some(apply) => apply,
+        None => blueprint
+            .as_ref()
+            .and_then(|c| c.updates.as_ref())
+            .map(|u| u.apply.clone())
+            .ok_or_else(|| {
+                err_json(
+                    StatusCode::BAD_REQUEST,
+                    "no update strategy given and this server's blueprint declares none",
+                )
+            })?,
+    };
+
     let install_dir = body
         .install_dir
         .as_deref()
         .map(str::trim)
         .filter(|d| !d.is_empty())
-        .unwrap_or(crate::update::DEFAULT_INSTALL_DIR)
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| blueprint.as_ref().map(blueprint_install_dir))
+        .unwrap_or_else(|| crate::update::DEFAULT_INSTALL_DIR.to_string());
 
-    let command = crate::update::build_update_command(&body.apply, &install_dir)
+    let command = crate::update::build_update_command(&apply, &install_dir)
         .map_err(|e| err_json(StatusCode::BAD_REQUEST, e))?;
 
     // Register the job (rejects if one is already running for this server).
@@ -1449,7 +1529,46 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_mods_dir, is_newer, mods_dir_for};
+    use super::{default_mods_dir, is_newer, mods_dir_for, StartUpdateReq};
+
+    #[test]
+    fn start_update_body_may_omit_the_strategy() {
+        // An empty body (or one carrying only install_dir) means "use the
+        // server's blueprint" — the strategy must deserialize as None rather
+        // than failing on the missing `type` tag.
+        let empty: StartUpdateReq = serde_json::from_str("{}").unwrap();
+        assert!(empty.apply.is_none());
+        assert!(empty.install_dir.is_none());
+
+        let dir_only: StartUpdateReq =
+            serde_json::from_str(r#"{"install_dir":"/srv/game"}"#).unwrap();
+        assert!(dir_only.apply.is_none());
+        assert_eq!(dir_only.install_dir.as_deref(), Some("/srv/game"));
+    }
+
+    #[test]
+    fn start_update_body_still_accepts_an_explicit_strategy() {
+        // The flattened shape the UI already sends must keep working.
+        let body: StartUpdateReq =
+            serde_json::from_str(r#"{"type":"steam_cmd","app_id":258550,"install_dir":"/x"}"#)
+                .unwrap();
+        match body.apply {
+            Some(nexus_config::UpdateApply::SteamCmd { app_id, beta }) => {
+                assert_eq!(app_id, 258550);
+                assert_eq!(beta, None);
+            }
+            other => panic!("expected SteamCmd, got {:?}", other.is_some()),
+        }
+        assert_eq!(body.install_dir.as_deref(), Some("/x"));
+
+        let depot: StartUpdateReq =
+            serde_json::from_str(r#"{"type":"depot_downloader","app_id":1,"branch":"beta"}"#)
+                .unwrap();
+        assert!(matches!(
+            depot.apply,
+            Some(nexus_config::UpdateApply::DepotDownloader { app_id: 1, .. })
+        ));
+    }
 
     #[test]
     fn mods_dir_defaults_per_provider() {

@@ -18,6 +18,11 @@ use uuid::Uuid;
 /// in the file manager or inside a container's bind mount.
 const STATE_SUBDIR: &str = ".nexus/state";
 
+/// Subdirectory of `DATA_DIR` where each container's originating blueprint is
+/// kept, so features that need the server's declared configuration (e.g. the
+/// game-file update strategy) can recover it after a node restart.
+const BLUEPRINT_SUBDIR: &str = ".nexus/blueprints";
+
 /// Manages container lifecycle and state
 pub struct ContainerManager {
     /// Container runtime (Containerd, Docker, or Mock)
@@ -98,6 +103,59 @@ impl ContainerManager {
             }
             Err(e) => warn!("Failed to serialize state for {}: {}", state.id, e),
         }
+    }
+
+    // ── Blueprint persistence ────────────────────────────────────────────
+
+    /// Directory holding per-container blueprint copies.
+    fn blueprint_dir(&self) -> PathBuf {
+        self.data_dir.join(BLUEPRINT_SUBDIR)
+    }
+
+    /// Path of the persisted blueprint for a container.
+    fn blueprint_path(&self, id: &str) -> PathBuf {
+        self.blueprint_dir().join(format!("{}.yaml", id))
+    }
+
+    /// Save the blueprint a container was created from (best-effort; a failure
+    /// here must not break container creation).
+    async fn persist_blueprint(&self, id: &str, config: &GameConfig) {
+        let dir = self.blueprint_dir();
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            warn!("Failed to create blueprint dir {:?}: {}", dir, e);
+            return;
+        }
+        match config.to_yaml() {
+            Ok(yaml) => {
+                let path = self.blueprint_path(id);
+                if let Err(e) = tokio::fs::write(&path, yaml).await {
+                    warn!("Failed to persist blueprint for {}: {}", id, e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize blueprint for {}: {}", id, e),
+        }
+    }
+
+    /// Load the blueprint a container was created from, if one was saved.
+    ///
+    /// Returns `None` when the container predates blueprint persistence or the
+    /// stored file is unreadable — callers treat that as "not configured"
+    /// rather than an error.
+    pub async fn load_blueprint(&self, id: &str) -> Option<GameConfig> {
+        let path = self.blueprint_path(id);
+        let yaml = tokio::fs::read_to_string(&path).await.ok()?;
+        match GameConfig::from_yaml(&yaml) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                warn!("Stored blueprint for {} is unreadable: {}", id, e);
+                None
+            }
+        }
+    }
+
+    /// Remove a container's persisted blueprint.
+    async fn remove_blueprint(&self, id: &str) {
+        let _ = tokio::fs::remove_file(self.blueprint_path(id)).await;
     }
 
     /// Insert or replace a container's in-memory state and persist it to disk.
@@ -248,6 +306,10 @@ impl ContainerManager {
 
         // Store state (in memory + on disk)
         self.set_state(state).await;
+
+        // Keep the originating blueprint so per-server features (e.g. the
+        // game-file update strategy) survive a node restart.
+        self.persist_blueprint(&container_id, config).await;
 
         // Update metrics
         self.metrics.record_container_operation("create", "success", start.elapsed());
@@ -431,6 +493,7 @@ impl ContainerManager {
 
         // Remove from state (in memory + on disk)
         self.remove_state(container_id).await;
+        self.remove_blueprint(container_id).await;
 
         // Update metrics
         self.metrics.record_container_operation("delete", "success", start.elapsed());
@@ -1060,6 +1123,33 @@ security:
             .unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(out.stdout.contains("echo hi"));
+    }
+
+    #[tokio::test]
+    async fn test_blueprint_persists_and_is_removed_with_the_container() {
+        let temp = TempDir::new().unwrap();
+        let manager = ContainerManager::new(temp.path().to_path_buf());
+        let config = create_test_config();
+        let id = manager.create_container(&config, Some("bp-1".to_string())).await.unwrap();
+
+        // The originating blueprint is recoverable after creation...
+        let loaded = manager.load_blueprint(&id).await.expect("blueprint saved");
+        assert_eq!(loaded.metadata.id, config.metadata.id);
+        assert_eq!(loaded.startup.working_dir, config.startup.working_dir);
+        assert!(manager.blueprint_path(&id).exists());
+
+        // ...and goes away with the container.
+        manager.delete_container(&id, true).await.unwrap();
+        assert!(manager.load_blueprint(&id).await.is_none());
+        assert!(!manager.blueprint_path(&id).exists());
+    }
+
+    #[tokio::test]
+    async fn test_load_blueprint_is_none_for_unknown_container() {
+        let temp = TempDir::new().unwrap();
+        let manager = ContainerManager::new(temp.path().to_path_buf());
+        // Containers created before blueprint persistence simply have none.
+        assert!(manager.load_blueprint("never-created").await.is_none());
     }
 
     #[tokio::test]

@@ -219,6 +219,9 @@
         Re-run the game-file install/update for this server. The server must be running;
         the update runs inside the container and can take several minutes.
       </p>
+      <div id="update-blueprint" class="hidden" style="margin-bottom:1.25rem;padding:1rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-primary)"></div>
+      <details id="update-manual">
+        <summary class="text-sm text-muted" style="cursor:pointer;margin-bottom:0.75rem">Override manually</summary>
       <div class="form-group">
         <label class="form-label">Method</label>
         <select id="update-method" class="form-input" style="max-width:320px" onchange="NX.onUpdateMethodChange()">
@@ -243,6 +246,7 @@
         <input id="update-dir" class="form-input" style="max-width:320px" value="/home/container">
       </div>
       <button class="btn btn-primary" id="update-run" onclick="NX.startUpdate()">Run update</button>
+      </details>
       <div id="update-status" class="text-sm" style="margin-top:1rem"></div>
       <pre id="update-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
     </div>
