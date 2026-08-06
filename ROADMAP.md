@@ -14,6 +14,8 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Backups (create, restore, delete) | Done |
 | Cron-based scheduling | Done |
 | On-demand game-file update (SteamCMD / DepotDownloader) | Done (UI + API; runs as a background job) |
+| Blueprint persistence per server (survives node restart) | Done |
+| One-click update using the server's own blueprint strategy | Done (no retyping; manual override still available) |
 | State persistence + reconciliation across restarts | Done |
 
 > **Planned differentiator — real shell console.** Pterodactyl and Pelican pipe
