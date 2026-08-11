@@ -299,11 +299,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize mod marketplace
     let marketplace = {
-        use nexus_marketplace::adapters::{CodeflingAdapter, LoneDesignAdapter, UmodAdapter};
+        use nexus_marketplace::adapters::{
+            CodeflingAdapter, LoneDesignAdapter, SteamWorkshopAdapter, UmodAdapter,
+        };
         let mut mgr = nexus_marketplace::MarketplaceManager::new();
         mgr.register_adapter(UmodAdapter::new());
         mgr.register_adapter(CodeflingAdapter::new());
         mgr.register_adapter(LoneDesignAdapter::new());
+
+        // Steam Workshop is the only mod source for DayZ, Arma and friends.
+        // It degrades in two steps rather than being all-or-nothing: without
+        // STEAM_API_KEY it still installs items pasted by id/URL, and without
+        // STEAM_USERNAME it still downloads from Workshops that allow
+        // anonymous access.
+        let workshop = SteamWorkshopAdapter::from_env();
+        info!(
+            "  Steam Workshop: search {}, downloads {}",
+            if workshop.search_enabled() {
+                "enabled"
+            } else {
+                "id/URL only (set STEAM_API_KEY to search)"
+            },
+            if workshop.authenticated_downloads() {
+                "authenticated"
+            } else {
+                "anonymous (set STEAM_USERNAME for DayZ/Arma)"
+            }
+        );
+        mgr.register_adapter(workshop);
+
         Arc::new(mgr)
     };
 

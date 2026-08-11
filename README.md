@@ -10,7 +10,8 @@ A high-performance game server control panel built in Rust with security and per
 - **Authenticated by default**: The panel requires a login (password or API key) and binds to
   loopback unless you deliberately expose it — see [SECURITY.md](SECURITY.md)
 - **Blueprints**: Game server configs with performance tuning and mod support
-- **Mod Marketplace**: Unified search across Umod, Codefling, and Lone.Design
+- **Mod Marketplace**: Unified search across Umod, Codefling, Lone.Design, and the Steam Workshop
+  (the only mod source for DayZ, Arma and friends) — see [Steam Workshop mods](#steam-workshop-mods)
 - **WHMCS Integration**: Billing/provisioning integration (backend implemented; see the roadmap)
 
 > **Status:** Nexus is under active development. Some features listed below are implemented and
@@ -45,6 +46,38 @@ Ready-to-use blueprints for popular games in `/blueprints`:
 - **valheim.yaml** - Valheim with BepInEx mod support
 - **cs2.yaml** - Counter-Strike 2 with GSLT, competitive configs
 - **palworld.yaml** - Palworld with optimized settings
+- **dayz.yaml** - DayZ with Steam Workshop mod support
+
+## Steam Workshop mods
+
+Some games have no third-party plugin site at all — DayZ, Arma 3, Project Zomboid
+and Space Engineers distribute every mod through the Steam Workshop. Nexus treats
+the Workshop as a marketplace provider (`steam_workshop`) alongside Umod and the
+Rust plugin sites, so the same search → detail → **Install to server** flow works
+for them.
+
+Two things make the Workshop different from an HTTP marketplace, and both are
+handled for you:
+
+- **Downloads run through SteamCMD.** Workshop files have no public download URL,
+  so Nexus shells out to `steamcmd +workshop_download_item`. Install SteamCMD on
+  the node (the installer does this for Steam-based games) or point
+  `STEAMCMD_PATH` at it.
+- **An item is a folder, not a file.** Nexus installs it as `@ModName` for the
+  DayZ/Arma engines and as the Workshop id elsewhere, replacing any previous
+  install. For DayZ, add those folder names to the blueprint's `MODS` variable
+  (`-mod=@CF;@Trader`).
+
+Configuration (all optional):
+
+| Variable | Purpose |
+|----------|---------|
+| `STEAM_API_KEY` | Enables Workshop *search*. Without it you can still install by pasting an item id or `steamcommunity.com` URL into the search box. Get one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
+| `STEAM_USERNAME` | Steam account for downloads. **Required for DayZ and Arma**, whose Workshops refuse anonymous SteamCMD logins. |
+| `STEAM_PASSWORD` | Optional. Prefer running `steamcmd +login <user>` once on the node so the credential (and Steam Guard) is cached and the secret never reaches a command line. |
+| `STEAMCMD_PATH` | Path to the `steamcmd` binary (default: `steamcmd` on `PATH`). |
+| `STEAM_WORKSHOP_CACHE_DIR` | Where Workshop content is downloaded. Kept between runs so re-downloads are incremental. |
+| `STEAM_WORKSHOP_TIMEOUT_SECS` | Per-download timeout (default 1800). |
 
 ## Quick Start
 

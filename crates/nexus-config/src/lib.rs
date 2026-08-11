@@ -574,7 +574,10 @@ pub enum ModLoader {
     Fabric,
     /// Paper/Spigot plugins
     Bukkit,
-    /// BepInEx for Unity games
+    /// BepInEx for Unity games. `snake_case` renders this variant as
+    /// `bep_in_ex`, which nobody writes (and which the shipped Valheim
+    /// blueprint did not), so the natural spelling is accepted too.
+    #[serde(alias = "bepinex")]
     BepInEx,
     /// Generic mod folder
     Generic,

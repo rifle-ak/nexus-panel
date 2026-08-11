@@ -1071,6 +1071,10 @@ struct InstallModResp {
 fn default_mods_dir(provider: &str) -> &'static str {
     match provider {
         "umod" | "codefling" | "lone_design" => "oxide/plugins",
+        // Steam Workshop items are whole mod directories that the games
+        // themselves expect in the server root (`@Mod` folders for DayZ/Arma,
+        // Workshop-id folders elsewhere), not files dropped in a plugins dir.
+        "steam_workshop" => ".",
         _ => "plugins",
     }
 }
@@ -1079,6 +1083,12 @@ fn default_mods_dir(provider: &str) -> &'static str {
 /// An explicit `framework` wins (Rust servers can run Oxide *or* Carbon, which
 /// use different plugin folders); otherwise fall back to a per-provider guess.
 fn mods_dir_for(framework: Option<&str>, provider: &str) -> String {
+    // The Oxide/Carbon split is a Rust-plugin concept; a stray framework hint
+    // must not divert a Workshop mod into `oxide/plugins`, where the game
+    // would never find it.
+    if provider == "steam_workshop" {
+        return default_mods_dir(provider).to_string();
+    }
     match framework.map(str::trim).filter(|f| !f.is_empty()) {
         Some(f) if f.eq_ignore_ascii_case("carbon") => "carbon/plugins".to_string(),
         Some(f) if f.eq_ignore_ascii_case("oxide") => "oxide/plugins".to_string(),
@@ -1656,6 +1666,8 @@ mod tests {
         assert_eq!(default_mods_dir("codefling"), "oxide/plugins");
         assert_eq!(default_mods_dir("lone_design"), "oxide/plugins");
         assert_eq!(default_mods_dir("spigot"), "plugins");
+        // Workshop items are mod folders the game loads from the server root.
+        assert_eq!(default_mods_dir("steam_workshop"), ".");
     }
 
     #[test]
@@ -1668,6 +1680,10 @@ mod tests {
         assert_eq!(mods_dir_for(None, "umod"), "oxide/plugins");
         assert_eq!(mods_dir_for(Some("  "), "codefling"), "oxide/plugins");
         assert_eq!(mods_dir_for(Some("bogus"), "spigot"), "plugins");
+        // A Workshop mod ignores the Rust framework hint entirely — dropping
+        // an `@Mod` folder into oxide/plugins would leave it unloadable.
+        assert_eq!(mods_dir_for(Some("carbon"), "steam_workshop"), ".");
+        assert_eq!(mods_dir_for(None, "steam_workshop"), ".");
     }
 
     #[test]

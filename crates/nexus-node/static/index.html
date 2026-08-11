@@ -294,9 +294,13 @@
     <div class="page-header">
       <h1>Mod Marketplace</h1>
     </div>
-    <p class="text-muted" style="margin-bottom:1rem">Search mods from Umod, Codefling, and Lone.Design.</p>
+    <p class="text-muted" style="margin-bottom:1rem">
+      Search mods from Umod, Codefling, Lone.Design, and the Steam Workshop.
+      For the Workshop you can also paste an item id or
+      <code>steamcommunity.com</code> link straight into the search box.
+    </p>
     <div class="flex gap-1" style="margin-bottom:1.5rem;flex-wrap:wrap">
-      <input type="text" class="form-input" id="mp-search" placeholder="Search mods..." style="flex:1;min-width:200px">
+      <input type="text" class="form-input" id="mp-search" placeholder="Search mods, or paste a Workshop id/URL..." style="flex:1;min-width:200px">
       <select class="form-input" id="mp-game" style="width:auto">
         <option value="">All Games</option>
         <option value="rust">Rust</option>
@@ -304,12 +308,17 @@
         <option value="valheim">Valheim</option>
         <option value="ark">ARK</option>
         <option value="7daystodie">7 Days to Die</option>
+        <option value="dayz">DayZ</option>
+        <option value="arma3">Arma 3</option>
+        <option value="projectzomboid">Project Zomboid</option>
+        <option value="spaceengineers">Space Engineers</option>
       </select>
       <select class="form-input" id="mp-provider" style="width:auto">
         <option value="">All Providers</option>
         <option value="umod">Umod</option>
         <option value="codefling">Codefling</option>
         <option value="lone_design">Lone.Design</option>
+        <option value="steam_workshop">Steam Workshop</option>
       </select>
     </div>
     <div class="blueprint-grid" id="mp-results">

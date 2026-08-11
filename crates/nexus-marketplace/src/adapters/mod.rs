@@ -2,6 +2,7 @@
 
 pub mod codefling;
 pub mod lone_design;
+pub mod steam_workshop;
 pub mod umod;
 
 use crate::error::Result;
@@ -11,6 +12,7 @@ use std::path::Path;
 
 pub use codefling::CodeflingAdapter;
 pub use lone_design::LoneDesignAdapter;
+pub use steam_workshop::{SteamCmdConfig, SteamWorkshopAdapter};
 pub use umod::UmodAdapter;
 
 /// Trait for marketplace provider adapters
