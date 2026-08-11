@@ -47,6 +47,7 @@ pub mod grpc;
 pub mod health;
 pub mod metrics;
 pub mod metrics_server;
+pub mod mods;
 pub mod runtime;
 pub mod schedule;
 pub mod secrets;

@@ -314,7 +314,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // anonymous access.
         let workshop = SteamWorkshopAdapter::from_env();
         info!(
-            "  Steam Workshop: search {}, downloads {}",
+            "  Steam Workshop: search {}, downloads {} via {}",
             if workshop.search_enabled() {
                 "enabled"
             } else {
@@ -324,7 +324,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "authenticated"
             } else {
                 "anonymous (set STEAM_USERNAME for DayZ/Arma)"
-            }
+            },
+            workshop.downloader_names()
         );
         mgr.register_adapter(workshop);
 
@@ -368,6 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth: web_auth_config.clone(),
             sessions: web_sessions.clone(),
             update_jobs: Arc::new(nexus_node::update::UpdateJobStore::new()),
+            mod_jobs: Arc::new(nexus_node::mods::ModInstallJobStore::new()),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

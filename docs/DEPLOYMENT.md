@@ -175,6 +175,8 @@ AUDIT_LOG_FILE=/var/log/nexus-node/audit.log
 STEAM_API_KEY=
 STEAM_USERNAME=
 STEAMCMD_PATH=/usr/games/steamcmd
+DEPOTDOWNLOADER_PATH=/usr/local/bin/DepotDownloader
+STEAM_WORKSHOP_DOWNLOADER=auto
 STEAM_WORKSHOP_CACHE_DIR=/var/lib/nexus-node/workshop
 
 # Logging
@@ -185,16 +187,34 @@ LOG_FORMAT=json
 ### Steam Workshop mods
 
 The Workshop is the only mod source for DayZ, Arma 3, Project Zomboid and
-Space Engineers. Nexus downloads Workshop items with SteamCMD, so the node
-needs the `steamcmd` binary — set `STEAMCMD_PATH` if it isn't on `PATH`.
+Space Engineers. Nexus downloads Workshop items with SteamCMD or
+DepotDownloader, so the node needs at least one of those binaries — set
+`STEAMCMD_PATH` / `DEPOTDOWNLOADER_PATH` if they aren't on `PATH`.
 
 | Variable | Effect |
 |----------|--------|
 | `STEAM_API_KEY` | Enables Workshop **search**. Without it, operators can still install by pasting an item id or `steamcommunity.com` URL. Create one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
-| `STEAM_USERNAME` | Steam account used for downloads. **Required for DayZ and Arma** — their Workshops reject anonymous SteamCMD logins with `No subscription`. |
+| `STEAM_USERNAME` | Steam account used for downloads. **Required for DayZ and Arma** — their Workshops reject anonymous logins with `No subscription`. |
 | `STEAM_PASSWORD` | Optional, and best left unset. |
+| `STEAM_WORKSHOP_DOWNLOADER` | `steamcmd` (default), `depot_downloader`, or `auto`. |
+| `STEAMCMD_PATH` / `DEPOTDOWNLOADER_PATH` | Binary locations. |
 | `STEAM_WORKSHOP_CACHE_DIR` | Download cache, kept between runs so re-downloads are incremental. Size it for the mods you host — Arma/DayZ mod sets reach tens of gigabytes. |
 | `STEAM_WORKSHOP_TIMEOUT_SECS` | Per-download timeout (default `1800`). |
+
+#### Choosing a downloader
+
+SteamCMD is the default because it's already on most game nodes. It is also
+the one that fails badly when Steam's content servers are having a bad day —
+opaque `Failure` results, or a download that never progresses.
+[DepotDownloader](https://github.com/SteamRE/DepotDownloader) fetches the same
+content over a different path and tends to succeed where SteamCMD doesn't,
+which is why many operators keep it around (Nexus already offers it as a
+game-file update strategy).
+
+Set `STEAM_WORKSHOP_DOWNLOADER=auto` to try SteamCMD first and fall back to
+DepotDownloader on failure; the node logs which tool succeeded, and a failure
+that exhausts both reports what each one said. Use `depot_downloader` to skip
+SteamCMD entirely.
 
 Prefer **cached credentials** over `STEAM_PASSWORD`: run
 
@@ -211,6 +231,17 @@ personal one — a Workshop download counts as a login from this host.
 Nexus installs each item as a mod folder inside the server directory: `@ModName`
 for the DayZ/Arma engines, the Workshop id for everything else. For DayZ, list
 those folder names in the server's `MODS` variable so they reach `-mod=`.
+
+A mod's `.bikey` signature keys are copied into the server's `keys/` directory
+as part of the install. DayZ and Arma verify mod signatures by default
+(`verifySignatures=2`), and a missing key presents as clients being unable to
+join rather than as a key error — so this is done for you, and the panel
+reports how many keys were installed.
+
+Installs run as a background job: `POST /api/v1/containers/:id/mods/install`
+returns immediately with a job, and `GET` on the same path reports progress.
+A multi-gigabyte Workshop download would otherwise hold an HTTP request open
+for its entire duration.
 
 ## Systemd Service
 

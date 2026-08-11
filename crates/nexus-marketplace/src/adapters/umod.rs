@@ -493,6 +493,8 @@ impl MarketplaceAdapter for UmodAdapter {
             file_size,
             checksum,
             download_time_ms,
+            // Signature keys are a DayZ/Arma (Steam Workshop) concept.
+            signature_keys: Vec::new(),
         })
     }
 }

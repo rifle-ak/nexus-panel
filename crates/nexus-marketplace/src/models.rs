@@ -244,7 +244,7 @@ pub struct ModUpdate {
 }
 
 /// Result of a mod download operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DownloadResult {
     /// Downloaded file path
     pub file_path: PathBuf,
@@ -257,6 +257,14 @@ pub struct DownloadResult {
 
     /// Time taken to download
     pub download_time_ms: u64,
+
+    /// Signature keys the install placed in the server's `keys/` directory.
+    ///
+    /// Only the Real Virtuality / Enfusion games (DayZ, Arma) use these: a mod
+    /// ships `.bikey` files that must sit in the *server's* key directory, or
+    /// clients are rejected when the server verifies signatures. Empty for
+    /// every other provider.
+    pub signature_keys: Vec<String>,
 }
 
 /// Mod category
