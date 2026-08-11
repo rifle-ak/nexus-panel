@@ -171,10 +171,46 @@ RATE_LIMIT_PER_CLIENT_RPS=100
 AUDIT_ENABLED=true
 AUDIT_LOG_FILE=/var/log/nexus-node/audit.log
 
+# Steam Workshop mods (optional — see below)
+STEAM_API_KEY=
+STEAM_USERNAME=
+STEAMCMD_PATH=/usr/games/steamcmd
+STEAM_WORKSHOP_CACHE_DIR=/var/lib/nexus-node/workshop
+
 # Logging
 RUST_LOG=info
 LOG_FORMAT=json
 ```
+
+### Steam Workshop mods
+
+The Workshop is the only mod source for DayZ, Arma 3, Project Zomboid and
+Space Engineers. Nexus downloads Workshop items with SteamCMD, so the node
+needs the `steamcmd` binary — set `STEAMCMD_PATH` if it isn't on `PATH`.
+
+| Variable | Effect |
+|----------|--------|
+| `STEAM_API_KEY` | Enables Workshop **search**. Without it, operators can still install by pasting an item id or `steamcommunity.com` URL. Create one at [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey). |
+| `STEAM_USERNAME` | Steam account used for downloads. **Required for DayZ and Arma** — their Workshops reject anonymous SteamCMD logins with `No subscription`. |
+| `STEAM_PASSWORD` | Optional, and best left unset. |
+| `STEAM_WORKSHOP_CACHE_DIR` | Download cache, kept between runs so re-downloads are incremental. Size it for the mods you host — Arma/DayZ mod sets reach tens of gigabytes. |
+| `STEAM_WORKSHOP_TIMEOUT_SECS` | Per-download timeout (default `1800`). |
+
+Prefer **cached credentials** over `STEAM_PASSWORD`: run
+
+```bash
+sudo -u nexus steamcmd +login <steam-user> +quit
+```
+
+once on the node and answer the Steam Guard prompt. SteamCMD stores the
+credential for that user, `+login <user>` then succeeds unattended, and the
+password never appears in a command line (where any local user could read it
+from `ps`). Use a dedicated Steam account that owns the game rather than a
+personal one — a Workshop download counts as a login from this host.
+
+Nexus installs each item as a mod folder inside the server directory: `@ModName`
+for the DayZ/Arma engines, the Workshop id for everything else. For DayZ, list
+those folder names in the server's `MODS` variable so they reach `-mod=`.
 
 ## Systemd Service
 

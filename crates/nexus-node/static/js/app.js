@@ -36,6 +36,7 @@ const BLUEPRINTS = [
   { id: 'valheim',         name: 'Valheim',         desc: 'Valheim with BepInEx mod framework and automatic updates.', tags: ['survival','mods','bepinex'], game: 'valheim' },
   { id: 'cs2',             name: 'Counter-Strike 2', desc: 'CS2 with GSLT, competitive configs, and workshop map support.', tags: ['competitive','esports','srcds'], game: 'cs2' },
   { id: 'palworld',        name: 'Palworld',        desc: 'Palworld Dedicated Server with optimised memory and CPU settings.', tags: ['popular','survival'], game: 'palworld' },
+  { id: 'dayz',            name: 'DayZ',            desc: 'DayZ Dedicated Server with Steam Workshop mod support.', tags: ['survival','pvp','workshop'], game: 'dayz' },
 ];
 
 // ── Per-game YAML configs ────────────────────────────────────────
@@ -327,6 +328,64 @@ updates:
 backups:
   paths: [/home/container/Pal/Saved]
   exclude: ["*.log", "*.tmp"]
+  retention: 5`,
+
+'dayz': `blueprint_version: "1.0"
+metadata:
+  name: DayZ Dedicated Server
+  game: dayz
+  version: "1.28"
+  author: Nexus Panel
+  description: DayZ dedicated server with Steam Workshop mod support
+  tags: [survival, pvp, workshop]
+
+container:
+  image: ghcr.io/parkervcp/steamcmd:debian
+  environment:
+    SRCDS_APPID: "223350"
+
+resources:
+  cpu:
+    min: 2000
+    max: 6000
+  memory:
+    min: 4Gi
+    max: 8Gi
+  disk:
+    min: 30Gi
+
+startup:
+  # Workshop mods install as @ModName folders in the server root; list them
+  # here (semicolon separated) to load them.
+  command: ./DayZServer
+  args: ["-config=serverDZ.cfg", "-port=2302", "-profiles=/home/container/profiles", "-mod=", "-dologs", "-adminlog"]
+  working_dir: /home/container
+
+networking:
+  ports:
+    - name: game
+      internal: "2302"
+      protocol: udp
+      required: true
+    - name: query
+      internal: "27016"
+      protocol: udp
+      required: true
+
+mods:
+  loader: generic
+  mods_dir: /
+  marketplaces: [steam_workshop]
+
+updates:
+  check:
+    type: steam_cmd
+    app_id: 223350
+  auto_update: false
+
+backups:
+  paths: [/home/container/mpmissions, /home/container/profiles]
+  exclude: ["*.log", "*.ADM", "*.RPT"]
   retention: 5`,
 };
 
@@ -1429,10 +1488,14 @@ NX.viewMod = async function(provider, modId) {
     const section = document.getElementById('mod-install-section');
     let servers = [];
     try { servers = await api('/containers'); } catch (_) { servers = []; }
+    // Steam Workshop items are whole mod folders the game loads from the
+    // server root (`@Mod` for DayZ/Arma, the Workshop id elsewhere), so they
+    // have no plugin-framework choice to make.
+    const workshop = mod.provider === 'steam_workshop';
     // Rust servers run either Oxide or Carbon, which use different plugin
     // folders. Minecraft-style mods just drop into /plugins.
-    const rustLike = mod.game !== 'minecraft';
-    const defaultDir = rustLike ? 'oxide/plugins' : 'plugins';
+    const rustLike = !workshop && mod.game !== 'minecraft';
+    const defaultDir = workshop ? '.' : (rustLike ? 'oxide/plugins' : 'plugins');
     if (!servers.length) {
       section.innerHTML = '<p class="text-muted text-sm">Create a server first to install this mod.</p>';
     } else {
@@ -1445,8 +1508,15 @@ NX.viewMod = async function(provider, modId) {
             <option value="carbon">Carbon (carbon/plugins)</option>
           </select>
         </div>` : '';
+      const workshopNote = workshop ? `
+        <p class="text-sm text-muted" style="margin-bottom:0.75rem">
+          Downloaded with SteamCMD and installed as a mod folder inside this
+          directory. Games that need a Steam account for Workshop downloads
+          (DayZ, Arma) require <code>STEAM_USERNAME</code> on this node.
+        </p>` : '';
       section.innerHTML = `
         <h4 style="margin-bottom:0.75rem">Install to server</h4>
+        ${workshopNote}
         <div class="form-group">
           <label class="form-label">Server</label>
           <select id="install-server" class="form-input" style="width:100%">${options}</select>

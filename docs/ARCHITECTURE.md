@@ -218,7 +218,7 @@ crates/
 │
 ├── nexus-marketplace/    # Mod marketplace
 │   └── src/
-│       ├── adapters/     # Umod, Codefling, etc.
+│       ├── adapters/     # Umod, Codefling, Lone.Design, Steam Workshop
 │       ├── models.rs     # Data structures
 │       └── cache.rs      # Metadata caching
 │

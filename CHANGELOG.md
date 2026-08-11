@@ -22,6 +22,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RUSTSEC-2026-0097).
 
 ### Fixed
+- **The shipped Valheim blueprint could not be loaded.** `mods.loader: bepinex`
+  failed to deserialize because `snake_case` renders the enum variant as
+  `bep_in_ex`; the natural spelling is now accepted. A new test parses and
+  validates every blueprint in `/blueprints`, so a shipped blueprint can't drift
+  out of the schema again unnoticed.
 - **Egg import misdetected games whose egg is named only after the game.** Game
   detection searched an egg's name, description and image but not its startup
   command, so a stock Pterodactyl "Rust" egg (running `./RustDedicated` on a
@@ -44,6 +49,29 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`403`), instead of surfacing an opaque failure.
 
 ### Added
+- **Steam Workshop as a mod source.** A `steam_workshop` marketplace adapter
+  makes the Workshop a first-class mod location, which is the *only* one for
+  games like DayZ, Arma 3, Project Zomboid and Space Engineers. Metadata comes
+  from the Steam Web API and downloads run through SteamCMD
+  (`+workshop_download_item`), because Workshop content has no public HTTP URL
+  and arrives as a directory rather than a single file. The adapter installs an
+  item as a mod *folder* — `@ModName` for the DayZ/Arma engines, the Workshop id
+  elsewhere — replacing any previous install so files deleted upstream don't
+  linger, and reports a content digest over the whole tree. It degrades in
+  steps instead of all-or-nothing: without `STEAM_API_KEY` it still resolves a
+  pasted Workshop id or `steamcommunity.com` URL (the common case for
+  installing a known mod), and without `STEAM_USERNAME` it still downloads from
+  Workshops that permit anonymous access. Failures name their fix — a missing
+  SteamCMD, an unsatisfied Steam Guard challenge, or the "No subscription"
+  refusal that means the game requires an owning account. Configured with
+  `STEAM_API_KEY`, `STEAM_USERNAME`/`STEAM_PASSWORD`, `STEAMCMD_PATH`,
+  `STEAM_WORKSHOP_CACHE_DIR` and `STEAM_WORKSHOP_TIMEOUT_SECS`; the cache is
+  kept between runs so re-downloads are incremental.
+- **DayZ blueprint** (`blueprints/dayz.yaml`), wired to the Workshop adapter:
+  it declares `marketplaces: [steam_workshop]`, passes `-mod=`/`-serverMod=`
+  for the `@ModName` folders the Marketplace installs, and ships DayZ's port
+  layout, health/ready checks and backup paths. Also available from the
+  Blueprints page.
 - **Pterodactyl egg import in the panel.** `POST /api/v1/blueprints/import-egg`
   converts an exported Pterodactyl/Pelican egg into a Nexus blueprint, and the
   Blueprints page gains an import panel: paste an egg, review what was detected

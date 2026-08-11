@@ -29,7 +29,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 
 | Feature | Status |
 |---------|--------|
-| Per-game YAML configs (Minecraft, Rust, Valheim, CS2, Palworld) | Done |
+| Per-game YAML configs (Minecraft, Rust, Valheim, CS2, Palworld, DayZ) | Done |
 | Rust (Carbon framework, DepotDownloader install) blueprint | Done (`blueprints/rust-carbon.yaml`) |
 | Blueprint selection auto-populates create form | Done |
 | Custom YAML editor | Done |
@@ -42,6 +42,8 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Umod search / detail / install | **Done** (live-verified against the current umod.org API) |
 | Codefling search / detail / install | Backend (requires a Codefling API key; unauthenticated requests 401) |
 | Lone.Design search / detail / install | Backend (blocked by Cloudflare bot protection for non-browser clients) |
+| Steam Workshop detail / install (by item id or URL) | **Done** (needs SteamCMD on the node; `STEAM_USERNAME` for DayZ/Arma) |
+| Steam Workshop text search | Done, requires `STEAM_API_KEY` + a game filter |
 | Mod detail view | Done (UI) |
 | One-click mod install to running server | Done (API + UI) |
 | Framework selection for Rust mods (Oxide **or** Carbon) | Done (installs to `oxide/plugins` or `carbon/plugins`) |
@@ -57,7 +59,14 @@ Current status of all features. Items marked **Done** are functional in the web 
 > as a clear "authentication required" error. **Lone.Design** sits behind
 > Cloudflare's bot challenge and returns a `403` interstitial to plain HTTP clients,
 > so it isn't reachable without a browser/JS-challenge path; the adapter now reports
-> that explicitly. The install pipeline (download → checksum → place in the server's
+> that explicitly. **Steam Workshop** is the only mod source for DayZ, Arma 3,
+> Project Zomboid and Space Engineers; it uses the Steam Web API for metadata and
+> SteamCMD for downloads (Workshop content has no public HTTP URL), and installs
+> an item as a mod *folder* — `@ModName` for the DayZ/Arma engines, the Workshop
+> id elsewhere. Search needs a `STEAM_API_KEY` and a game filter (Steam has no
+> cross-app Workshop search), but installing by pasted item id/URL needs neither.
+> Games whose Workshop refuses anonymous downloads need `STEAM_USERNAME` on the
+> node. The install pipeline (download → checksum → place in the server's
 > mods directory) and its API/UI are complete and work against any adapter that
 > parses correctly.
 
