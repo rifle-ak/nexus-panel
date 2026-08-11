@@ -51,19 +51,46 @@ pub struct SteamWorkshopAdapter {
     /// Steam Web API key. Only *search* needs it; id/URL lookups and downloads
     /// work without one.
     api_key: Option<String>,
-    /// How to invoke `steamcmd` for downloads.
-    steamcmd: SteamCmdConfig,
+    /// How to fetch Workshop content, and as whom.
+    downloads: WorkshopDownloadConfig,
     /// `steamcmd` keeps mutable state (a content log, an app-cache manifest)
     /// under its install root and does not tolerate two instances racing on
     /// the same root, so downloads are serialized.
     download_lock: Mutex<()>,
 }
 
-/// How the adapter runs `steamcmd`, and as whom.
+/// Tool used to fetch Workshop content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkshopDownloader {
+    /// Valve's own `steamcmd`.
+    SteamCmd,
+    /// [SteamRE DepotDownloader](https://github.com/SteamRE/DepotDownloader).
+    /// A useful escape hatch: when Steam's content servers misbehave, SteamCMD
+    /// tends to fail opaquely (or loop) where DepotDownloader succeeds. The
+    /// panel already offers it as a game-file update strategy.
+    DepotDownloader,
+}
+
+impl WorkshopDownloader {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SteamCmd => "steamcmd",
+            Self::DepotDownloader => "DepotDownloader",
+        }
+    }
+}
+
+/// How the adapter fetches Workshop content, with which tool, and as whom.
 #[derive(Debug, Clone)]
-pub struct SteamCmdConfig {
-    /// Binary to execute; looked up on `PATH` when not an absolute path.
-    pub binary: String,
+pub struct WorkshopDownloadConfig {
+    /// `steamcmd` binary; looked up on `PATH` when not an absolute path.
+    pub steamcmd_binary: String,
+    /// `DepotDownloader` binary; likewise.
+    pub depot_downloader_binary: String,
+    /// Downloaders to try, in order. More than one entry means the next tool
+    /// is tried when the previous one fails — which is the point of having
+    /// both available.
+    pub downloaders: Vec<WorkshopDownloader>,
     /// Steam account to log in as. Required for games whose Workshop refuses
     /// anonymous downloads (DayZ, Arma 3, …); omit for anonymous.
     pub username: Option<String>,
@@ -79,10 +106,12 @@ pub struct SteamCmdConfig {
     pub timeout: Duration,
 }
 
-impl Default for SteamCmdConfig {
+impl Default for WorkshopDownloadConfig {
     fn default() -> Self {
         Self {
-            binary: "steamcmd".to_string(),
+            steamcmd_binary: "steamcmd".to_string(),
+            depot_downloader_binary: "DepotDownloader".to_string(),
+            downloaders: vec![WorkshopDownloader::SteamCmd],
             username: None,
             password: None,
             cache_dir: std::env::temp_dir().join("nexus-workshop"),
@@ -91,10 +120,13 @@ impl Default for SteamCmdConfig {
     }
 }
 
-impl SteamCmdConfig {
-    /// Read the `steamcmd` configuration from the environment.
+impl WorkshopDownloadConfig {
+    /// Read the download configuration from the environment.
     ///
-    /// * `STEAMCMD_PATH` — binary to run (default `steamcmd`)
+    /// * `STEAMCMD_PATH` — `steamcmd` binary (default `steamcmd`)
+    /// * `DEPOTDOWNLOADER_PATH` — `DepotDownloader` binary
+    /// * `STEAM_WORKSHOP_DOWNLOADER` — `steamcmd` (default), `depot_downloader`,
+    ///   or `auto` to try SteamCMD and fall back to DepotDownloader
     /// * `STEAM_USERNAME` / `STEAM_PASSWORD` — Workshop login
     /// * `STEAM_WORKSHOP_CACHE_DIR` — download cache root
     /// * `STEAM_WORKSHOP_TIMEOUT_SECS` — per-download timeout
@@ -103,7 +135,12 @@ impl SteamCmdConfig {
         let non_empty = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
 
         Self {
-            binary: non_empty("STEAMCMD_PATH").unwrap_or(defaults.binary),
+            steamcmd_binary: non_empty("STEAMCMD_PATH").unwrap_or(defaults.steamcmd_binary),
+            depot_downloader_binary: non_empty("DEPOTDOWNLOADER_PATH")
+                .unwrap_or(defaults.depot_downloader_binary),
+            downloaders: non_empty("STEAM_WORKSHOP_DOWNLOADER")
+                .map(|v| parse_downloaders(&v))
+                .unwrap_or(defaults.downloaders),
             username: non_empty("STEAM_USERNAME"),
             password: non_empty("STEAM_PASSWORD"),
             cache_dir: non_empty("STEAM_WORKSHOP_CACHE_DIR")
@@ -116,8 +153,16 @@ impl SteamCmdConfig {
         }
     }
 
-    /// The `+login` arguments for this configuration.
-    fn login_args(&self) -> Vec<String> {
+    /// The binary for a given downloader.
+    fn binary(&self, downloader: WorkshopDownloader) -> &str {
+        match downloader {
+            WorkshopDownloader::SteamCmd => &self.steamcmd_binary,
+            WorkshopDownloader::DepotDownloader => &self.depot_downloader_binary,
+        }
+    }
+
+    /// The `+login` arguments for `steamcmd`.
+    fn steamcmd_login_args(&self) -> Vec<String> {
         match (&self.username, &self.password) {
             (Some(user), Some(pass)) => {
                 vec!["+login".into(), user.clone(), pass.clone()]
@@ -129,27 +174,71 @@ impl SteamCmdConfig {
         }
     }
 
+    /// The login arguments for DepotDownloader, which takes flags rather than
+    /// a `+login` command and defaults to anonymous when given no username.
+    fn depot_login_args(&self) -> Vec<String> {
+        let Some(user) = self.username.as_deref() else {
+            return Vec::new();
+        };
+        let mut args = vec!["-username".to_string(), user.to_string()];
+        match self.password.as_deref() {
+            Some(pass) => {
+                args.push("-password".to_string());
+                args.push(pass.to_string());
+                // Cache the session so subsequent runs don't need the password
+                // (and don't stop on a Steam Guard prompt).
+                args.push("-remember-password".to_string());
+            }
+            // No password: rely on a session DepotDownloader already cached.
+            None => args.push("-remember-password".to_string()),
+        }
+        args
+    }
+
     /// Whether downloads run as a real account rather than anonymously.
     fn is_authenticated(&self) -> bool {
         self.username.is_some()
     }
 }
 
+/// Parse `STEAM_WORKSHOP_DOWNLOADER`. Unknown values fall back to SteamCMD
+/// rather than leaving the node with no way to download at all.
+fn parse_downloaders(value: &str) -> Vec<WorkshopDownloader> {
+    match value.trim().to_lowercase().replace(['-', ' '], "_").as_str() {
+        "depot_downloader" | "depotdownloader" | "depot" => {
+            vec![WorkshopDownloader::DepotDownloader]
+        }
+        "auto" | "both" | "fallback" => vec![
+            WorkshopDownloader::SteamCmd,
+            WorkshopDownloader::DepotDownloader,
+        ],
+        other => {
+            if other != "steamcmd" && other != "steam_cmd" {
+                warn!("Unknown STEAM_WORKSHOP_DOWNLOADER '{value}', using steamcmd");
+            }
+            vec![WorkshopDownloader::SteamCmd]
+        }
+    }
+}
+
 impl SteamWorkshopAdapter {
-    /// Create an adapter with default `steamcmd` settings and no API key.
+    /// Create an adapter with default download settings and no API key.
     pub fn new() -> Self {
-        Self::with_config(None::<String>, SteamCmdConfig::default())
+        Self::with_config(None::<String>, WorkshopDownloadConfig::default())
     }
 
     /// Create an adapter configured entirely from the environment
-    /// (`STEAM_API_KEY` plus the [`SteamCmdConfig::from_env`] variables).
+    /// (`STEAM_API_KEY` plus the [`WorkshopDownloadConfig::from_env`] variables).
     pub fn from_env() -> Self {
         let api_key = std::env::var("STEAM_API_KEY").ok().filter(|v| !v.trim().is_empty());
-        Self::with_config(api_key, SteamCmdConfig::from_env())
+        Self::with_config(api_key, WorkshopDownloadConfig::from_env())
     }
 
-    /// Create an adapter with an explicit API key and `steamcmd` configuration.
-    pub fn with_config(api_key: Option<impl Into<String>>, steamcmd: SteamCmdConfig) -> Self {
+    /// Create an adapter with an explicit API key and download configuration.
+    pub fn with_config(
+        api_key: Option<impl Into<String>>,
+        downloads: WorkshopDownloadConfig,
+    ) -> Self {
         Self {
             client: Client::builder()
                 .user_agent("NexusPanel/0.1.0")
@@ -157,9 +246,20 @@ impl SteamWorkshopAdapter {
                 .build()
                 .expect("Failed to create HTTP client"),
             api_key: api_key.map(Into::into),
-            steamcmd,
+            downloads,
             download_lock: Mutex::new(()),
         }
+    }
+
+    /// Human-readable list of the download tools this adapter will try, for
+    /// startup logging.
+    pub fn downloader_names(&self) -> String {
+        self.downloads
+            .downloaders
+            .iter()
+            .map(|d| d.label())
+            .collect::<Vec<_>>()
+            .join(" → ")
     }
 
     /// Whether Workshop *search* is available (it needs a Steam Web API key).
@@ -169,7 +269,7 @@ impl SteamWorkshopAdapter {
 
     /// Whether downloads will authenticate as a real Steam account.
     pub fn authenticated_downloads(&self) -> bool {
-        self.steamcmd.is_authenticated()
+        self.downloads.is_authenticated()
     }
 }
 
@@ -791,10 +891,97 @@ async fn hash_tree(root: &Path) -> std::io::Result<(u64, String)> {
 }
 
 impl SteamWorkshopAdapter {
+    /// Fetch a Workshop item, trying each configured downloader in turn.
+    ///
+    /// Falling back matters because the two tools fail in different ways:
+    /// when Steam's content servers are unhappy, SteamCMD is the one that
+    /// stalls or returns an opaque `Failure`, and DepotDownloader often still
+    /// completes (which is why operators keep it around).
+    async fn fetch_item_content(&self, appid: u32, item_id: &str) -> Result<PathBuf> {
+        // Serialized: neither tool is safe to run twice against one cache root.
+        let _guard = self.download_lock.lock().await;
+
+        let mut failures: Vec<String> = Vec::new();
+
+        for (i, downloader) in self.downloads.downloaders.iter().copied().enumerate() {
+            if i > 0 {
+                info!(
+                    "Retrying Workshop item {} with {}",
+                    item_id,
+                    downloader.label()
+                );
+            }
+
+            let result = match downloader {
+                WorkshopDownloader::SteamCmd => self.steamcmd_download(appid, item_id).await,
+                WorkshopDownloader::DepotDownloader => {
+                    self.depot_downloader_download(appid, item_id).await
+                }
+            };
+
+            match result {
+                Ok(path) => return Ok(path),
+                Err(e) => {
+                    warn!("{} failed for item {}: {}", downloader.label(), item_id, e);
+                    failures.push(format!("{}: {}", downloader.label(), e));
+                }
+            }
+        }
+
+        Err(MarketplaceError::DownloadFailed {
+            reason: failures.join("; "),
+        })
+    }
+
+    /// Run a download tool with a bounded timeout, returning its output.
+    ///
+    /// `stdin` is closed so that a tool which decides to prompt (for a
+    /// password or a Steam Guard code) fails immediately instead of hanging
+    /// for the whole timeout — nothing is watching a panel download.
+    async fn run_downloader(
+        &self,
+        downloader: WorkshopDownloader,
+        args: &[String],
+        item_id: &str,
+    ) -> Result<std::process::Output> {
+        let binary = self.downloads.binary(downloader);
+        let mut command = tokio::process::Command::new(binary);
+        command.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+
+        match tokio::time::timeout(self.downloads.timeout, command.output()).await {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(MarketplaceError::DownloadFailed {
+                    reason: match downloader {
+                        WorkshopDownloader::SteamCmd => format!(
+                            "steamcmd not found at '{binary}'. Install SteamCMD on this node or \
+                             set STEAMCMD_PATH."
+                        ),
+                        WorkshopDownloader::DepotDownloader => format!(
+                            "DepotDownloader not found at '{binary}'. Install it on this node or \
+                             set DEPOTDOWNLOADER_PATH."
+                        ),
+                    },
+                })
+            }
+            Ok(Err(e)) => Err(MarketplaceError::DownloadFailed {
+                reason: format!("failed to run {}: {}", downloader.label(), e),
+            }),
+            Err(_) => Err(MarketplaceError::DownloadFailed {
+                reason: format!(
+                    "{} timed out after {}s downloading item {}",
+                    downloader.label(),
+                    self.downloads.timeout.as_secs(),
+                    item_id
+                ),
+            }),
+        }
+    }
+
     /// Run `steamcmd +workshop_download_item` and return the directory it
     /// wrote the content to.
     async fn steamcmd_download(&self, appid: u32, item_id: &str) -> Result<PathBuf> {
-        let cache_dir = &self.steamcmd.cache_dir;
+        let cache_dir = &self.downloads.cache_dir;
         tokio::fs::create_dir_all(cache_dir).await?;
 
         let mut args: Vec<String> = vec![
@@ -807,56 +994,24 @@ impl SteamWorkshopAdapter {
             "+force_install_dir".into(),
             cache_dir.to_string_lossy().to_string(),
         ];
-        args.extend(self.steamcmd.login_args());
+        args.extend(self.downloads.steamcmd_login_args());
         args.push("+workshop_download_item".into());
         args.push(appid.to_string());
         args.push(item_id.to_string());
         args.push("+quit".into());
 
         info!(
-            "Downloading Workshop item {} for app {} via {} ({} login)",
+            "Downloading Workshop item {} for app {} via steamcmd ({} login)",
             item_id,
             appid,
-            self.steamcmd.binary,
-            if self.steamcmd.is_authenticated() {
+            if self.downloads.is_authenticated() {
                 "account"
             } else {
                 "anonymous"
             }
         );
 
-        // Serialized: steamcmd is not safe to run twice against one install root.
-        let _guard = self.download_lock.lock().await;
-
-        let mut command = tokio::process::Command::new(&self.steamcmd.binary);
-        command.args(&args).kill_on_drop(true);
-
-        let output = match tokio::time::timeout(self.steamcmd.timeout, command.output()).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(MarketplaceError::DownloadFailed {
-                    reason: format!(
-                        "steamcmd not found at '{}'. Install SteamCMD on this node or set \
-                         STEAMCMD_PATH.",
-                        self.steamcmd.binary
-                    ),
-                });
-            }
-            Ok(Err(e)) => {
-                return Err(MarketplaceError::DownloadFailed {
-                    reason: format!("failed to run steamcmd: {}", e),
-                })
-            }
-            Err(_) => {
-                return Err(MarketplaceError::DownloadFailed {
-                    reason: format!(
-                        "steamcmd timed out after {}s downloading item {}",
-                        self.steamcmd.timeout.as_secs(),
-                        item_id
-                    ),
-                })
-            }
-        };
+        let output = self.run_downloader(WorkshopDownloader::SteamCmd, &args, item_id).await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -906,10 +1061,106 @@ impl SteamWorkshopAdapter {
                 &stdout,
                 item_id,
                 appid,
-                self.steamcmd.is_authenticated(),
+                self.downloads.is_authenticated(),
             ),
         })
     }
+
+    /// Fetch an item with DepotDownloader's `-pubfile`, which resolves a
+    /// published file id to its UGC content and writes it straight into
+    /// `-dir` — no `steamapps/workshop/content` nesting to go looking for.
+    async fn depot_downloader_download(&self, appid: u32, item_id: &str) -> Result<PathBuf> {
+        // One directory per item: DepotDownloader empties nothing, so sharing
+        // a directory between items would blend their files together.
+        let target = self.downloads.cache_dir.join("depot").join(appid.to_string()).join(item_id);
+        tokio::fs::create_dir_all(&target).await?;
+
+        let mut args = vec![
+            "-pubfile".to_string(),
+            item_id.to_string(),
+            "-dir".to_string(),
+            target.to_string_lossy().to_string(),
+        ];
+        args.extend(self.downloads.depot_login_args());
+
+        info!(
+            "Downloading Workshop item {} for app {} via DepotDownloader ({} login)",
+            item_id,
+            appid,
+            if self.downloads.is_authenticated() {
+                "account"
+            } else {
+                "anonymous"
+            }
+        );
+
+        let output =
+            self.run_downloader(WorkshopDownloader::DepotDownloader, &args, item_id).await?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            debug!("DepotDownloader stderr: {}", stderr.trim());
+        }
+
+        // DepotDownloader writes into the directory we chose, so success is
+        // "it exited cleanly and left files behind" rather than a path parsed
+        // out of its log.
+        if output.status.success() && dir_has_files(&target).await {
+            return Ok(target);
+        }
+
+        let detail = depot_failure_detail(&stdout, &stderr);
+        Err(MarketplaceError::DownloadFailed {
+            reason: if detail.is_empty() {
+                format!(
+                    "DepotDownloader could not download item {item_id} (app {appid}); it exited \
+                     without writing any content."
+                )
+            } else {
+                format!("DepotDownloader could not download item {item_id}: {detail}")
+            },
+        })
+    }
+}
+
+/// Whether a directory tree contains at least one file.
+async fn dir_has_files(root: &Path) -> bool {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            match entry.file_type().await {
+                Ok(t) if t.is_dir() => stack.push(entry.path()),
+                Ok(t) if t.is_file() => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// The most useful line from a failed DepotDownloader run. Its errors are
+/// single readable lines ("Error: ...", "... is not available ..."), so
+/// surfacing them beats a generic failure message.
+fn depot_failure_detail(stdout: &str, stderr: &str) -> String {
+    stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .find(|line| {
+            let lower = line.to_lowercase();
+            !line.is_empty()
+                && (lower.starts_with("error")
+                    || lower.contains("failed")
+                    || lower.contains("denied")
+                    || lower.contains("invalid")
+                    || lower.contains("unable to"))
+        })
+        .unwrap_or_default()
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,7 +1371,7 @@ impl MarketplaceAdapter for SteamWorkshopAdapter {
         }
 
         let start = Instant::now();
-        let content_dir = self.steamcmd_download(appid, &item_id).await?;
+        let content_dir = self.fetch_item_content(appid, &item_id).await?;
 
         let dir_name = install_dir_name(appid, &item.display_title(), &item_id);
         let dest = target_dir.join(&dir_name);
@@ -1143,12 +1394,32 @@ impl MarketplaceAdapter for SteamWorkshopAdapter {
                 ),
             })?;
 
+        // DayZ/Arma verify mod signatures against keys in the *server's* key
+        // directory. Installing the mod without them leaves a server that
+        // looks correctly modded but rejects every client, so this is part of
+        // installing, not an extra.
+        let signature_keys = if AT_PREFIX_APP_IDS.contains(&appid) {
+            install_signature_keys(&dest, target_dir).await.unwrap_or_else(|e| {
+                warn!(
+                    "Installed item {} but could not copy its signature keys: {}",
+                    item_id, e
+                );
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
+
         let (file_size, checksum) = hash_tree(&dest).await?;
         let download_time_ms = start.elapsed().as_millis() as u64;
 
         info!(
-            "Installed Workshop item {} as {} ({} bytes) in {}ms",
-            item_id, dir_name, file_size, download_time_ms
+            "Installed Workshop item {} as {} ({} bytes, {} signature key(s)) in {}ms",
+            item_id,
+            dir_name,
+            file_size,
+            signature_keys.len(),
+            download_time_ms
         );
 
         Ok(DownloadResult {
@@ -1156,8 +1427,67 @@ impl MarketplaceAdapter for SteamWorkshopAdapter {
             file_size,
             checksum,
             download_time_ms,
+            signature_keys,
         })
     }
+}
+
+/// Copy a mod's `.bikey` signature keys into the server's `keys/` directory,
+/// returning the file names installed.
+///
+/// DayZ and Arma ship keys inside the mod (conventionally `@Mod/keys` or
+/// `@Mod/Keys`, but layouts vary), while the server reads them from its own
+/// `keys/` folder. With `verifySignatures` enabled — the stock DayZ config —
+/// a missing key means clients are refused, which presents as "the mod doesn't
+/// work" rather than as a key problem. The whole mod tree is scanned so an
+/// unconventional layout still works.
+async fn install_signature_keys(mod_dir: &Path, server_dir: &Path) -> std::io::Result<Vec<String>> {
+    let mut keys: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![mod_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file()
+                && path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("bikey"))
+            {
+                keys.push(path);
+            }
+        }
+    }
+
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let key_dir = server_dir.join("keys");
+    tokio::fs::create_dir_all(&key_dir).await?;
+
+    keys.sort();
+    let mut installed = Vec::new();
+    for key in &keys {
+        let Some(name) = key.file_name() else {
+            continue;
+        };
+        // Overwrite: a mod update can rotate its key, and the stale one would
+        // otherwise stay valid forever.
+        tokio::fs::copy(key, key_dir.join(name)).await?;
+        installed.push(name.to_string_lossy().to_string());
+    }
+
+    // Sort by name before deduping: the walk order follows directory paths, so
+    // the same key found in two places would not be adjacent (and `dedup`
+    // only collapses neighbours).
+    installed.sort();
+    installed.dedup();
+    Ok(installed)
 }
 
 #[cfg(test)]
@@ -1262,26 +1592,145 @@ mod tests {
 
     #[test]
     fn login_args_cover_anonymous_cached_and_password() {
-        let anon = SteamCmdConfig::default();
-        assert_eq!(anon.login_args(), vec!["+login", "anonymous"]);
+        let anon = WorkshopDownloadConfig::default();
+        assert_eq!(anon.steamcmd_login_args(), vec!["+login", "anonymous"]);
         assert!(!anon.is_authenticated());
+        // DepotDownloader is anonymous by omission, not by keyword.
+        assert!(anon.depot_login_args().is_empty());
 
-        let cached = SteamCmdConfig {
+        let cached = WorkshopDownloadConfig {
             username: Some("operator".into()),
-            ..SteamCmdConfig::default()
+            ..WorkshopDownloadConfig::default()
         };
-        assert_eq!(cached.login_args(), vec!["+login", "operator"]);
+        assert_eq!(cached.steamcmd_login_args(), vec!["+login", "operator"]);
         assert!(cached.is_authenticated());
+        assert_eq!(
+            cached.depot_login_args(),
+            vec!["-username", "operator", "-remember-password"]
+        );
 
-        let with_password = SteamCmdConfig {
+        let with_password = WorkshopDownloadConfig {
             username: Some("operator".into()),
             password: Some("hunter2".into()),
-            ..SteamCmdConfig::default()
+            ..WorkshopDownloadConfig::default()
         };
         assert_eq!(
-            with_password.login_args(),
+            with_password.steamcmd_login_args(),
             vec!["+login", "operator", "hunter2"]
         );
+        assert_eq!(
+            with_password.depot_login_args(),
+            vec![
+                "-username",
+                "operator",
+                "-password",
+                "hunter2",
+                "-remember-password"
+            ]
+        );
+    }
+
+    #[test]
+    fn downloader_selection_parses_and_defaults_safely() {
+        assert_eq!(
+            parse_downloaders("steamcmd"),
+            vec![WorkshopDownloader::SteamCmd]
+        );
+        assert_eq!(
+            parse_downloaders("depot_downloader"),
+            vec![WorkshopDownloader::DepotDownloader]
+        );
+        assert_eq!(
+            parse_downloaders("DepotDownloader"),
+            vec![WorkshopDownloader::DepotDownloader]
+        );
+        // `auto` tries SteamCMD first, then falls back.
+        assert_eq!(
+            parse_downloaders("auto"),
+            vec![
+                WorkshopDownloader::SteamCmd,
+                WorkshopDownloader::DepotDownloader
+            ]
+        );
+        // A typo must not leave the node unable to download anything.
+        assert_eq!(
+            parse_downloaders("nonsense"),
+            vec![WorkshopDownloader::SteamCmd]
+        );
+        assert_eq!(
+            WorkshopDownloadConfig::default().downloaders,
+            vec![WorkshopDownloader::SteamCmd]
+        );
+    }
+
+    #[test]
+    fn depot_failure_detail_picks_the_useful_line() {
+        let stdout = "Using account operator.\n\
+                      Got AppInfo for 221100\n\
+                      Error: Requested file is not available for this account.\n";
+        assert_eq!(
+            depot_failure_detail(stdout, ""),
+            "Error: Requested file is not available for this account."
+        );
+        // Nothing recognizable → empty, so the caller supplies a generic message.
+        assert_eq!(depot_failure_detail("Downloading depot 221101\n", ""), "");
+    }
+
+    #[tokio::test]
+    async fn both_downloaders_are_tried_before_giving_up() {
+        // Neither binary exists, so `auto` must report both attempts rather
+        // than only the first — otherwise a fallback failure looks like a
+        // SteamCMD failure.
+        let adapter = SteamWorkshopAdapter::with_config(
+            None::<String>,
+            WorkshopDownloadConfig {
+                steamcmd_binary: "/nonexistent/steamcmd".to_string(),
+                depot_downloader_binary: "/nonexistent/DepotDownloader".to_string(),
+                downloaders: vec![
+                    WorkshopDownloader::SteamCmd,
+                    WorkshopDownloader::DepotDownloader,
+                ],
+                cache_dir: std::env::temp_dir().join("nexus-workshop-test"),
+                ..WorkshopDownloadConfig::default()
+            },
+        );
+        let err = adapter.fetch_item_content(221100, "1559212036").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("STEAMCMD_PATH"), "{msg}");
+        assert!(msg.contains("DEPOTDOWNLOADER_PATH"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn signature_keys_are_copied_into_the_server_key_directory() {
+        let root = std::env::temp_dir().join(format!("nexus-keys-{}", std::process::id()));
+        let _ = tokio::fs::remove_dir_all(&root).await;
+        let mod_dir = root.join("@CF");
+
+        // A mod that ships keys in the conventional place plus an oddly
+        // placed one — both must reach the server's keys/ directory.
+        tokio::fs::create_dir_all(mod_dir.join("keys")).await.unwrap();
+        tokio::fs::create_dir_all(mod_dir.join("addons/extra")).await.unwrap();
+        tokio::fs::write(mod_dir.join("keys/cf.bikey"), b"k1").await.unwrap();
+        tokio::fs::write(mod_dir.join("addons/extra/other.BIKEY"), b"k2").await.unwrap();
+        tokio::fs::write(mod_dir.join("addons/cf.pbo"), b"content").await.unwrap();
+
+        let installed = install_signature_keys(&mod_dir, &root).await.unwrap();
+        assert_eq!(installed, vec!["cf.bikey", "other.BIKEY"]);
+        assert_eq!(
+            tokio::fs::read(root.join("keys/cf.bikey")).await.unwrap(),
+            b"k1"
+        );
+        assert!(root.join("keys/other.BIKEY").exists());
+        // Non-key files stay where they are.
+        assert!(!root.join("keys/cf.pbo").exists());
+
+        // A mod with no keys leaves nothing behind and reports nothing.
+        let plain = root.join("@Plain");
+        tokio::fs::create_dir_all(&plain).await.unwrap();
+        tokio::fs::write(plain.join("x.pbo"), b"c").await.unwrap();
+        assert!(install_signature_keys(&plain, &root).await.unwrap().is_empty());
+
+        let _ = tokio::fs::remove_dir_all(&root).await;
     }
 
     #[test]
@@ -1502,7 +1951,7 @@ mod tests {
     #[tokio::test]
     async fn search_without_a_game_filter_is_rejected() {
         let adapter =
-            SteamWorkshopAdapter::with_config(Some("test-key"), SteamCmdConfig::default());
+            SteamWorkshopAdapter::with_config(Some("test-key"), WorkshopDownloadConfig::default());
         let err = adapter.search(&SearchQuery::new("trader")).await.unwrap_err();
         assert!(err.to_string().contains("game filter"), "{err}");
 
@@ -1517,10 +1966,10 @@ mod tests {
     async fn missing_steamcmd_reports_an_actionable_error() {
         let adapter = SteamWorkshopAdapter::with_config(
             None::<String>,
-            SteamCmdConfig {
-                binary: "/nonexistent/steamcmd".to_string(),
+            WorkshopDownloadConfig {
+                steamcmd_binary: "/nonexistent/steamcmd".to_string(),
                 cache_dir: std::env::temp_dir().join("nexus-workshop-test"),
-                ..SteamCmdConfig::default()
+                ..WorkshopDownloadConfig::default()
             },
         );
         let err = adapter.steamcmd_download(221100, "1559212036").await.unwrap_err();

@@ -59,14 +59,22 @@ for them.
 Two things make the Workshop different from an HTTP marketplace, and both are
 handled for you:
 
-- **Downloads run through SteamCMD.** Workshop files have no public download URL,
-  so Nexus shells out to `steamcmd +workshop_download_item`. Install SteamCMD on
-  the node (the installer does this for Steam-based games) or point
-  `STEAMCMD_PATH` at it.
+- **Downloads run through SteamCMD or DepotDownloader.** Workshop files have no
+  public download URL, so Nexus shells out to `steamcmd +workshop_download_item`
+  — or to [DepotDownloader](https://github.com/SteamRE/DepotDownloader)
+  (`-pubfile`), which is the more reliable of the two when Steam's content
+  servers misbehave. `STEAM_WORKSHOP_DOWNLOADER=auto` tries SteamCMD and falls
+  back to DepotDownloader automatically.
 - **An item is a folder, not a file.** Nexus installs it as `@ModName` for the
   DayZ/Arma engines and as the Workshop id elsewhere, replacing any previous
   install. For DayZ, add those folder names to the blueprint's `MODS` variable
   (`-mod=@CF;@Trader`).
+- **Signature keys are handled.** DayZ and Arma reject clients when a mod's
+  `.bikey` is missing from the server's `keys/` directory, so Nexus copies each
+  mod's keys there as part of installing it.
+
+Installs run as a background job and the panel polls for progress — a multi-
+gigabyte mod would otherwise hold an HTTP request open for the whole download.
 
 Configuration (all optional):
 
@@ -76,6 +84,8 @@ Configuration (all optional):
 | `STEAM_USERNAME` | Steam account for downloads. **Required for DayZ and Arma**, whose Workshops refuse anonymous SteamCMD logins. |
 | `STEAM_PASSWORD` | Optional. Prefer running `steamcmd +login <user>` once on the node so the credential (and Steam Guard) is cached and the secret never reaches a command line. |
 | `STEAMCMD_PATH` | Path to the `steamcmd` binary (default: `steamcmd` on `PATH`). |
+| `DEPOTDOWNLOADER_PATH` | Path to the `DepotDownloader` binary (default: `DepotDownloader` on `PATH`). |
+| `STEAM_WORKSHOP_DOWNLOADER` | `steamcmd` (default), `depot_downloader`, or `auto` to try SteamCMD then fall back to DepotDownloader. |
 | `STEAM_WORKSHOP_CACHE_DIR` | Where Workshop content is downloaded. Kept between runs so re-downloads are incremental. |
 | `STEAM_WORKSHOP_TIMEOUT_SECS` | Per-download timeout (default 1800). |
 

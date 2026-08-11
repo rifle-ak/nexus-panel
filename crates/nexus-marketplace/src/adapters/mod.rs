@@ -12,7 +12,7 @@ use std::path::Path;
 
 pub use codefling::CodeflingAdapter;
 pub use lone_design::LoneDesignAdapter;
-pub use steam_workshop::{SteamCmdConfig, SteamWorkshopAdapter};
+pub use steam_workshop::{SteamWorkshopAdapter, WorkshopDownloadConfig, WorkshopDownloader};
 pub use umod::UmodAdapter;
 
 /// Trait for marketplace provider adapters

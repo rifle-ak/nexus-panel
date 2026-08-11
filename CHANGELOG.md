@@ -49,6 +49,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`403`), instead of surfacing an opaque failure.
 
 ### Added
+- **DepotDownloader as an alternative Workshop downloader.** SteamCMD is the
+  one that fails opaquely when Steam's content servers misbehave, so
+  `STEAM_WORKSHOP_DOWNLOADER` selects `steamcmd` (default), `depot_downloader`
+  ([SteamRE DepotDownloader](https://github.com/SteamRE/DepotDownloader), via
+  `-pubfile`), or `auto` to try SteamCMD and fall back automatically. A failure
+  that exhausts both reports what each tool said, rather than only the first.
+  Both tools now run with stdin closed, so a password or Steam Guard prompt
+  fails immediately instead of hanging for the full timeout.
+- **DayZ/Arma signature keys are installed with the mod.** These engines verify
+  mod signatures by default, and a `.bikey` missing from the server's `keys/`
+  directory presents as clients being unable to join rather than as a key
+  error. Installing a Workshop item now copies its keys there (the whole mod
+  tree is scanned, so unconventional layouts work), and the API and UI report
+  how many were installed.
+- **Mod installs run as a background job.** `POST /api/v1/containers/:id/mods/install`
+  now returns a job immediately and `GET` on the same path reports progress,
+  mirroring the game-file update executor. Inline installs were fine for a
+  50 KB Oxide plugin, but a Workshop mod can be gigabytes — long enough for the
+  request to outlive any proxy between the browser and the node. One install at
+  a time per server, since concurrent installs would race on the same files.
+  **Breaking:** the endpoint's response is now a job snapshot rather than the
+  finished install result.
 - **Steam Workshop as a mod source.** A `steam_workshop` marketplace adapter
   makes the Workshop a first-class mod location, which is the *only* one for
   games like DayZ, Arma 3, Project Zomboid and Space Engineers. Metadata comes

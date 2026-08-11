@@ -53,6 +53,7 @@ pub struct AppState {
     pub auth: Arc<auth::WebAuthConfig>,
     pub sessions: Arc<auth::SessionStore>,
     pub update_jobs: crate::update::SharedUpdateJobStore,
+    pub mod_jobs: crate::mods::SharedModInstallJobStore,
 }
 
 type S = Arc<AppState>;
@@ -151,7 +152,10 @@ pub async fn start_web_server(
             post(api_trigger_schedule),
         )
         // ── Mods (install to a server) ───────────────────────────────
-        .route("/api/v1/containers/:id/mods/install", post(api_install_mod))
+        .route(
+            "/api/v1/containers/:id/mods/install",
+            get(api_install_mod_status).post(api_install_mod),
+        )
         // ── Game-file update (SteamCMD / DepotDownloader) ────────────
         .route(
             "/api/v1/containers/:id/update",
@@ -1058,14 +1062,6 @@ struct InstallModReq {
     framework: Option<String>,
 }
 
-#[derive(Serialize)]
-struct InstallModResp {
-    /// Installed file path, relative to the server root.
-    file_path: String,
-    file_size: u64,
-    checksum: String,
-}
-
 /// Sensible default mods directory for a provider when the caller doesn't
 /// specify one. The Rust marketplaces install Oxide plugins.
 fn default_mods_dir(provider: &str) -> &'static str {
@@ -1096,14 +1092,18 @@ fn mods_dir_for(framework: Option<&str>, provider: &str) -> String {
     }
 }
 
-/// Download a marketplace mod and install it into a running server's mods
-/// directory. The download itself (fetch + checksum verify) lives in the
-/// marketplace adapter; here we resolve a jail-safe target path and stream it in.
+/// Start installing a marketplace mod into a server's mods directory.
+///
+/// The install runs as a background job and the client polls
+/// `GET .../mods/install` for progress, mirroring the game-file update
+/// executor. Inline installs were fine for a 50 KB Oxide plugin, but a Steam
+/// Workshop item can be gigabytes — long enough for the request to outlive
+/// any proxy between the browser and the node.
 async fn api_install_mod(
     State(s): State<S>,
     Path(id): Path<String>,
     Json(body): Json<InstallModReq>,
-) -> Result<Json<InstallModResp>, (StatusCode, Json<ApiError>)> {
+) -> Result<Json<crate::mods::ModInstallJob>, (StatusCode, Json<ApiError>)> {
     // Container must exist.
     s.manager
         .get_state(&id)
@@ -1121,30 +1121,40 @@ async fn api_install_mod(
         .resolve_path(&subdir)
         .map_err(|e| err_json(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let result = s
-        .marketplace
-        .download_mod(
-            &body.provider,
-            &body.mod_id,
-            body.version.as_deref(),
-            &target,
-        )
+    // Register the job (rejects if an install is already running here).
+    let job = s
+        .mod_jobs
+        .start(&id, &body.provider, &body.mod_id, &subdir)
         .await
-        .map_err(|e| err_json(StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .map_err(|e| err_json(StatusCode::CONFLICT, e))?;
 
-    // Report the path relative to the server root so the UI can show it.
-    let rel = result
-        .file_path
-        .strip_prefix(fm.server_dir())
-        .unwrap_or(&result.file_path)
-        .to_string_lossy()
-        .to_string();
+    let server_dir = fm.server_dir().to_path_buf();
+    tokio::spawn(crate::mods::run_install(
+        s.mod_jobs.clone(),
+        s.marketplace.clone(),
+        id,
+        body.provider,
+        body.mod_id,
+        body.version,
+        target,
+        server_dir,
+    ));
 
-    Ok(Json(InstallModResp {
-        file_path: rel,
-        file_size: result.file_size,
-        checksum: result.checksum,
-    }))
+    Ok(Json(job))
+}
+
+/// Return the current/most-recent mod-install job for a server.
+async fn api_install_mod_status(
+    State(s): State<S>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::mods::ModInstallJob>, (StatusCode, Json<ApiError>)> {
+    match s.mod_jobs.get(&id).await {
+        Some(job) => Ok(Json(job)),
+        None => Err(err_json(
+            StatusCode::NOT_FOUND,
+            "no mod install has been run for this server",
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------

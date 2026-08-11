@@ -1510,9 +1510,10 @@ NX.viewMod = async function(provider, modId) {
         </div>` : '';
       const workshopNote = workshop ? `
         <p class="text-sm text-muted" style="margin-bottom:0.75rem">
-          Downloaded with SteamCMD and installed as a mod folder inside this
-          directory. Games that need a Steam account for Workshop downloads
-          (DayZ, Arma) require <code>STEAM_USERNAME</code> on this node.
+          Downloaded with SteamCMD (or DepotDownloader) and installed as a mod
+          folder inside this directory; for DayZ and Arma, signature keys are
+          copied into <code>keys/</code> automatically. Those games also need
+          <code>STEAM_USERNAME</code> configured on this node.
         </p>` : '';
       section.innerHTML = `
         <h4 style="margin-bottom:0.75rem">Install to server</h4>
@@ -1551,21 +1552,56 @@ NX.installMod = async function(provider, modId) {
   const status = document.getElementById('install-status');
   const btn = document.getElementById('install-btn');
   if (!server) { status.innerHTML = '<span class="text-danger">Select a server.</span>'; return; }
-  status.innerHTML = '<span class="text-muted">Installing…</span>';
+  status.innerHTML = '<span class="text-muted">Starting install…</span>';
   btn.disabled = true;
   try {
     const body = { provider, mod_id: modId, target_dir: dir };
     if (framework) body.framework = framework;
-    const res = await api(`/containers/${encodeURIComponent(server)}/mods/install`, {
+    // The install runs as a background job — a Workshop mod can be gigabytes,
+    // far longer than a request should be held open.
+    const job = await api(`/containers/${encodeURIComponent(server)}/mods/install`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
-    status.innerHTML = `<span class="text-success">Installed → ${esc(res.file_path)} (${fmtBytes(res.file_size)})</span>`;
-    toast('Mod installed', 'success');
+    NX.renderInstallJob(server, job);
   } catch (e) {
     status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
-  } finally {
     btn.disabled = false;
+  }
+};
+
+// Show a mod-install job's state, re-polling while it runs. The modal can be
+// closed and the install continues on the node regardless.
+NX.renderInstallJob = function(server, job) {
+  const status = document.getElementById('install-status');
+  const btn = document.getElementById('install-btn');
+  if (!status) return; // Operator closed the dialog; the job runs on.
+
+  if (job.status === 'running') {
+    status.innerHTML = '<span class="text-muted">Downloading… large mods can take several '
+      + 'minutes. You can leave this dialog open or check back later.</span>';
+    if (btn) btn.disabled = true;
+    clearTimeout(NX.installPollTimer);
+    NX.installPollTimer = setTimeout(async () => {
+      try {
+        const next = await api(`/containers/${encodeURIComponent(server)}/mods/install`);
+        NX.renderInstallJob(server, next);
+      } catch (_) {}
+    }, 2000);
+    return;
+  }
+
+  if (btn) btn.disabled = false;
+
+  if (job.status === 'succeeded') {
+    const keys = (job.signature_keys || []).length;
+    const keyNote = keys
+      ? `<div class="text-sm text-muted" style="margin-top:0.35rem">Installed ${keys} signature key${keys === 1 ? '' : 's'} to <code>keys/</code> — clients can connect with signature verification on.</div>`
+      : '';
+    status.innerHTML = `<span class="text-success">Installed → ${esc(job.file_path || '')} (${fmtBytes(job.file_size || 0)})</span>${keyNote}`;
+    toast('Mod installed', 'success');
+  } else {
+    status.innerHTML = `<span class="text-danger">${esc(job.error || 'Install failed')}</span>`;
   }
 };
 
