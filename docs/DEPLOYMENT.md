@@ -7,7 +7,7 @@ Deploy Nexus Node in a production environment.
 The fastest way to get a production node running:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
 ```
 
 The installer launches an **interactive setup wizard** that walks you through:
@@ -25,7 +25,7 @@ Just press Enter to accept sensible defaults at each step.
 Skip the wizard entirely by setting `NONINTERACTIVE=1` and passing config via environment variables:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | \
   sudo NONINTERACTIVE=1 \
   PANEL_DOMAIN=panel.example.com \
   ENABLE_TLS=true \
@@ -312,7 +312,7 @@ sudo chmod 600 /etc/nexus-node/*.key
 Re-run the installer — it detects an existing installation and only rebuilds/restarts:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s -- --update
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s -- --update
 ```
 
 Or from a local clone:
