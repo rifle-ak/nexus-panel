@@ -94,8 +94,34 @@ Configuration (all optional):
 One command installs everything (Rust, containerd, protobuf, CNI plugins) and starts the node:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
 ```
+
+> **Note:** while this repository is private, the URL above returns `404: Not Found`
+> for everyone, including collaborators — `raw.githubusercontent.com` does not accept
+> your normal GitHub login. Until the repo is made public, use one of the
+> authenticated methods below.
+
+<details>
+<summary>Installing while the repository is private</summary>
+
+Using the [GitHub CLI](https://cli.github.com/) (reads your existing `gh auth login` credentials):
+
+```bash
+gh api repos/rifle-ak/nexus-panel/contents/install.sh \
+  -H 'Accept: application/vnd.github.raw' | sudo bash
+```
+
+Or with a personal access token that has `repo` scope:
+
+```bash
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash
+```
+
+Or just clone and run it locally (see below).
+
+</details>
 
 Or if you've already cloned the repo:
 

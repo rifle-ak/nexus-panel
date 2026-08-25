@@ -2,10 +2,10 @@
 set -eo pipefail
 
 # Nexus Panel - One-Line Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
+# Usage: curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
 #
 # Non-interactive mode (skip wizard, use defaults or env vars):
-#   curl -sSL ... | sudo NONINTERACTIVE=1 bash -s --
+#   curl -fsSL ... | sudo NONINTERACTIVE=1 bash -s --
 #
 # Or if already cloned:
 #   sudo bash install.sh
@@ -312,7 +312,7 @@ install_cni_plugins() {
     esac
 
     mkdir -p /opt/cni/bin
-    curl -sSL "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-${CNI_ARCH}-${CNI_VERSION}.tgz" \
+    curl -fsSL "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-${CNI_ARCH}-${CNI_VERSION}.tgz" \
         | tar -xz -C /opt/cni/bin
 
     ok "CNI plugins installed"
@@ -340,7 +340,25 @@ build_nexus() {
     else
         info "Cloning nexus-panel (branch: $branch)..."
         src_dir=$(mktemp -d)
-        git clone --depth 1 --branch "$branch" https://github.com/rifle-ak/nexus-panel.git "$src_dir" > /dev/null 2>&1
+        local clone_log="/tmp/nexus-clone-$$.log"
+        # NEXUS_REPO lets you point at an authenticated URL while the repo is
+        # private, e.g. https://<token>@github.com/rifle-ak/nexus-panel.git
+        local repo_url="${NEXUS_REPO:-https://github.com/rifle-ak/nexus-panel.git}"
+        if ! git clone --depth 1 --branch "$branch" "$repo_url" "$src_dir" > "$clone_log" 2>&1; then
+            local clone_output
+            clone_output=$(cat "$clone_log")
+            rm -f "$clone_log"
+            err "Could not clone $repo_url (branch: $branch).
+
+$clone_output
+
+If the repository is private, git cannot read it anonymously. Either run the
+installer from an existing clone (sudo bash install.sh), or pass an
+authenticated URL:
+
+  sudo NEXUS_REPO=https://<token>@github.com/rifle-ak/nexus-panel.git bash install.sh"
+        fi
+        rm -f "$clone_log"
     fi
 
     check_protoc

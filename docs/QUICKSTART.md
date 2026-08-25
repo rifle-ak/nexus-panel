@@ -7,7 +7,7 @@ Get Nexus Panel running in minutes.
 One command installs all dependencies, builds the project, and starts the node as a systemd service:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo bash -s --
 ```
 
 The installer runs an **interactive setup wizard** that asks you to configure:
@@ -23,7 +23,7 @@ sudo bash install.sh
 To skip the wizard and use defaults (or env vars), set `NONINTERACTIVE=1`:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo NONINTERACTIVE=1 bash -s --
+curl -fsSL https://raw.githubusercontent.com/rifle-ak/nexus-panel/main/install.sh | sudo NONINTERACTIVE=1 bash -s --
 ```
 
 Once complete, verify:
