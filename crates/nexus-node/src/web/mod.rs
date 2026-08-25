@@ -36,6 +36,36 @@ const INDEX_HTML: &str = include_str!("../../static/index.html");
 const STYLE_CSS: &str = include_str!("../../static/css/style.css");
 const APP_JS: &str = include_str!("../../static/js/app.js");
 
+/// The blueprints shipped in `/blueprints`, compiled in so the panel serves the
+/// same YAML the repo ships and `nexus-config`'s blueprint test validates.
+///
+/// The UI used to carry its own hand-copied YAML for each game. Those copies
+/// drifted out of the schema and every one of them failed to parse when
+/// deployed, so the duplicate is gone: this table is the only source the
+/// Blueprints page reads from. Keys are the file stems, which are also the ids
+/// the UI's blueprint cards use.
+const SHIPPED_BLUEPRINTS: &[(&str, &str)] = &[
+    ("cs2", include_str!("../../../../blueprints/cs2.yaml")),
+    ("dayz", include_str!("../../../../blueprints/dayz.yaml")),
+    (
+        "minecraft-paper",
+        include_str!("../../../../blueprints/minecraft-paper.yaml"),
+    ),
+    (
+        "palworld",
+        include_str!("../../../../blueprints/palworld.yaml"),
+    ),
+    ("rust", include_str!("../../../../blueprints/rust.yaml")),
+    (
+        "rust-carbon",
+        include_str!("../../../../blueprints/rust-carbon.yaml"),
+    ),
+    (
+        "valheim",
+        include_str!("../../../../blueprints/valheim.yaml"),
+    ),
+];
+
 // ---------------------------------------------------------------------------
 // Shared application state
 // ---------------------------------------------------------------------------
@@ -167,6 +197,7 @@ pub async fn start_web_server(
         )
         // ── Blueprints ───────────────────────────────────────────────
         .route("/api/v1/blueprints/import-egg", post(api_import_egg))
+        .route("/api/v1/blueprints/:id", get(api_get_blueprint))
         // ── Marketplace ─────────────────────────────────────────────
         .route("/api/v1/marketplace/search", get(api_marketplace_search))
         .route(
@@ -1350,6 +1381,32 @@ struct ImportEggResp {
     warnings: Vec<String>,
 }
 
+/// Return the YAML for one of the shipped blueprints, by file stem.
+///
+/// The Blueprints page fetches this when an operator picks a game, so the
+/// create-server form is prefilled with the same blueprint the repo ships
+/// rather than a copy maintained separately in the frontend.
+async fn api_get_blueprint(
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    let yaml = SHIPPED_BLUEPRINTS
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, yaml)| *yaml)
+        .ok_or_else(|| {
+            err_json(
+                StatusCode::NOT_FOUND,
+                &format!("unknown blueprint \"{}\"", id),
+            )
+        })?;
+
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/yaml; charset=utf-8")],
+        yaml,
+    ))
+}
+
 /// Convert a Pterodactyl egg into a Nexus blueprint.
 ///
 /// This is the migration path off Pterodactyl/Pelican: paste an exported egg
@@ -1629,7 +1686,64 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_mods_dir, is_newer, mods_dir_for, StartUpdateReq};
+    use super::{default_mods_dir, is_newer, mods_dir_for, StartUpdateReq, SHIPPED_BLUEPRINTS};
+
+    /// Every blueprint the panel serves must parse and validate against the
+    /// current schema.
+    ///
+    /// The Blueprints page used to serve YAML hand-copied into `app.js`. It
+    /// drifted out of the schema — every game failed with a parse error the
+    /// moment an operator clicked it — because nothing here ever parsed what
+    /// the UI actually served. `nexus-config` validates the files in
+    /// `/blueprints`; this validates what reaches the browser.
+    #[test]
+    fn every_served_blueprint_parses_and_validates() {
+        assert!(
+            !SHIPPED_BLUEPRINTS.is_empty(),
+            "no blueprints are served to the UI"
+        );
+
+        for (id, yaml) in SHIPPED_BLUEPRINTS {
+            let blueprint: nexus_config::Blueprint = serde_yaml::from_str(yaml)
+                .unwrap_or_else(|e| panic!("blueprint \"{}\" failed to parse: {}", id, e));
+            blueprint
+                .validate()
+                .unwrap_or_else(|e| panic!("blueprint \"{}\" failed validation: {}", id, e));
+        }
+    }
+
+    /// Each blueprint card in the UI must resolve to a blueprint the node
+    /// serves, or clicking it 404s.
+    #[test]
+    fn every_blueprint_card_in_the_ui_is_served() {
+        let app_js = super::APP_JS;
+        let start = app_js
+            .find("const BLUEPRINTS = [")
+            .expect("BLUEPRINTS list not found in app.js");
+        let list =
+            &app_js[start..app_js[start..].find("];").expect("unterminated BLUEPRINTS") + start];
+
+        let card_ids: Vec<&str> = list
+            .match_indices("{ id: '")
+            .map(|(i, pat)| {
+                let rest = &list[i + pat.len()..];
+                &rest[..rest.find('\'').expect("unterminated blueprint id")]
+            })
+            .collect();
+
+        assert!(
+            !card_ids.is_empty(),
+            "no blueprint cards parsed out of app.js"
+        );
+
+        for id in card_ids {
+            assert!(
+                SHIPPED_BLUEPRINTS.iter().any(|(name, _)| *name == id),
+                "the UI offers blueprint \"{}\" but the node serves no such blueprint",
+                id
+            );
+        }
+    }
 
     #[test]
     fn start_update_body_may_omit_the_strategy() {
