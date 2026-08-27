@@ -28,14 +28,17 @@ pub enum NodeError {
     #[error("Containerd error: {0}")]
     ContainerdError(String),
 
-    #[error("Container start failed: {container_id}")]
+    // The cause is part of the message on purpose: this error is what the
+    // panel shows an operator, and "start failed: <uuid>" on its own tells
+    // them nothing about what to fix.
+    #[error("Container start failed: {container_id}: {source}")]
     StartFailed {
         container_id: String,
         #[source]
         source: anyhow::Error,
     },
 
-    #[error("Container stop failed: {container_id}")]
+    #[error("Container stop failed: {container_id}: {source}")]
     StopFailed {
         container_id: String,
         #[source]

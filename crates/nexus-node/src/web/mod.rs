@@ -1396,7 +1396,7 @@ async fn api_get_blueprint(
         .ok_or_else(|| {
             err_json(
                 StatusCode::NOT_FOUND,
-                &format!("unknown blueprint \"{}\"", id),
+                format!("unknown blueprint \"{}\"", id),
             )
         })?;
 

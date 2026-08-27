@@ -443,8 +443,15 @@ impl NodeService for NodeServiceImpl {
                         }
                     }
                     Ok(None) => {
-                        // EOF reached
-                        if tail > 0 && !follow {
+                        // Caught up with the container's output. A follower
+                        // waits for the server to write more; a plain tail is
+                        // done once it has read what is already there.
+                        if follow {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            continue;
+                        }
+
+                        if tail > 0 {
                             // Send buffered tail lines
                             for line in buffer {
                                 let entry = LogEntry {

@@ -47,8 +47,8 @@ This checks:
 |------|---------|----------|
 | E201 | Container not found | Check container ID |
 | E202 | Container already exists | Use different ID or delete existing |
-| E203 | Image not found | Pull image first with `ctr images pull` |
-| E204 | Container start failed | Check logs, verify image and config |
+| E203 | Image pull failed | See the registry reason in the error; retry the same `ctr images pull` by hand |
+| E204 | Container start failed | The cause is in the message; check the server's console log |
 | E205 | Container stop timeout | Container may be hung, use force stop |
 
 ### Network Errors (E301-E399)
@@ -156,37 +156,64 @@ Error: Permission denied: /var/lib/nexus-node
    sudo aa-complain nexus-node  # AppArmor complain mode
    ```
 
-### Image Not Found
+### Image Pull Failed
+
+The node pulls a blueprint's image itself when a server is created, so this is a
+pull that failed rather than an image you forgot to fetch. The error carries the
+registry's own reason.
 
 **Symptoms:**
 ```
-Error: Image not found: docker.io/itzg/minecraft-server:latest
+Error: Failed to pull image ghcr.io/parkervcp/steamcmd:debian: <registry reason>
 ```
 
 **Solutions:**
 
-1. Pull image manually:
+1. Reproduce the pull by hand — the node runs exactly this:
    ```bash
-   sudo ctr -n nexus-panel images pull docker.io/itzg/minecraft-server:latest
+   sudo ctr -n nexus-panel images pull ghcr.io/parkervcp/steamcmd:debian
    ```
 
-2. Check available images:
+2. `not found` / `unauthorized`: check the reference (registry, repository and
+   tag) in the blueprint, and for a private registry that the host is logged in
+   the way `ctr` expects.
+
+3. `no such host` / timeouts: the node reaches the registry through the host's
+   network and proxy settings; check DNS and any egress firewall.
+
+4. Check what the namespace already has:
    ```bash
    sudo ctr -n nexus-panel images list
    ```
 
-3. Verify image name in config matches pulled image exactly.
+5. `ctr` client not found: it ships with containerd. If it is installed outside
+   `PATH`, `/usr/bin`, `/usr/local/bin` and `/bin`, point the node at it with
+   `NEXUS_CTR_BINARY=/path/to/ctr`.
 
 ### Container Start Failed
 
 **Symptoms:**
 ```
-Error: Failed to start container: exit code 1
+Error: Container start failed: <server-id>: Containerd error: Failed to create
+task: ... exec: "./DayZServer": stat ./DayZServer: no such file or directory
 ```
+
+The message names the cause. The most common one is the above: the game's
+files are not there. A blueprint's container image supplies the *tooling*
+(SteamCMD, a JVM), not the game itself, so a server whose files have never been
+downloaded has nothing to execute — its file manager shows an empty directory
+for the same reason. Run the server's update/reinstall action to fetch the game
+files, or put them in `/var/lib/nexus-node/<server-id>/` yourself.
 
 **Solutions:**
 
-1. Check container logs:
+1. Read the server's console log — the game's own error is there, whereas
+   `journalctl` shows only the node's view:
+   ```bash
+   sudo tail -100 /var/lib/nexus-node/runtime/logs/nexus-panel/<server-id>.log
+   ```
+
+2. Check container logs over the API:
    ```bash
    grpcurl -plaintext -d '{"container_id":"<id>","tail":100}' \
      localhost:8080 nexus.node.v1.NodeService/StreamLogs

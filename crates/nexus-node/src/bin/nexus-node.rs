@@ -143,10 +143,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize Containerd runtime
     info!("Connecting to Containerd...");
-    let runtime = Arc::new(ContainerdRuntime::new(
-        containerd_socket.clone(),
-        containerd_namespace.clone(),
-    ));
+    // Per-container stdio lives under the data directory: the systemd unit
+    // runs with ProtectSystem=strict, so that is the one path the node is
+    // guaranteed to be able to write to.
+    let runtime = Arc::new(
+        ContainerdRuntime::new(containerd_socket.clone(), containerd_namespace.clone())
+            .with_state_dir(PathBuf::from(&data_dir).join("runtime")),
+    );
 
     // The in-memory mock runtime pretends to run containers and exists ONLY
     // for development/testing. In normal operation a containerd connection
