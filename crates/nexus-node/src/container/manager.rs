@@ -1,5 +1,6 @@
 use crate::container::state::{ContainerState, ContainerStatus};
 use crate::error::{NodeError, Result};
+use crate::install::{InstallPlan, InstallState};
 use crate::metrics::Metrics;
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits,
@@ -22,6 +23,14 @@ const STATE_SUBDIR: &str = ".nexus/state";
 /// kept, so features that need the server's declared configuration (e.g. the
 /// game-file update strategy) can recover it after a node restart.
 const BLUEPRINT_SUBDIR: &str = ".nexus/blueprints";
+
+/// Memory ceiling for an install container. Generous enough for SteamCMD and
+/// an unpack, without reserving the whole game server's allowance for a job
+/// that only downloads files.
+const INSTALL_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// How often an install's output is pulled from its console while it runs.
+const INSTALL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Manages container lifecycle and state
 pub struct ContainerManager {
@@ -208,6 +217,29 @@ impl ContainerManager {
                 }
             };
 
+            // A server recorded mid-install cannot still be installing: the
+            // node that was running it is gone. Mark it failed so the operator
+            // can see it and retry, rather than leaving it stuck "Running".
+            if state.install_state == InstallState::Running {
+                warn!(
+                    "Install for {} was interrupted by a node restart; marking it failed",
+                    state.id
+                );
+                state.install_state = InstallState::Failed;
+            }
+
+            // A state file written before installs were tracked says nothing
+            // about them. Decide from the server's own directory: files on
+            // disk mean the game was installed by whatever means, and an empty
+            // directory means it still needs installing.
+            if state.install_state == InstallState::Unknown {
+                state.install_state = if self.server_dir_has_files(&state.id) {
+                    InstallState::Installed
+                } else {
+                    InstallState::Pending
+                };
+            }
+
             // Reconcile against what the runtime actually reports.
             match self.runtime.inspect(&state.id).await {
                 Ok(info) => reconcile_state(&mut state, &info),
@@ -297,12 +329,19 @@ impl ContainerManager {
             }
         })?;
 
-        // Create state
-        let state = ContainerState::new(
+        // Create state. A blueprint that declares no install has nothing to
+        // fetch, so its server is ready to start immediately; anything else
+        // stays un-startable until its game files are actually there.
+        let mut state = ContainerState::new(
             container_id.clone(),
             server_name.clone(),
             config.container.image.clone(),
         );
+        state.install_state = if crate::install::plan(config).is_some() {
+            InstallState::Pending
+        } else {
+            InstallState::NotRequired
+        };
 
         // Store state (in memory + on disk)
         self.set_state(state).await;
@@ -321,6 +360,179 @@ impl ContainerManager {
         );
 
         Ok(container_id)
+    }
+
+    // ── Game-file installation ───────────────────────────────────────────
+
+    /// Whether a server's data directory holds anything at all.
+    ///
+    /// Used to classify servers created before install state was tracked.
+    fn server_dir_has_files(&self, container_id: &str) -> bool {
+        std::fs::read_dir(self.data_dir.join(container_id))
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    }
+
+    /// Container id used for a server's one-shot install container.
+    ///
+    /// Derived from the server's id so a crashed node can find and clean up a
+    /// leftover install container on the next attempt.
+    fn install_container_id(container_id: &str) -> String {
+        format!("{}-install", container_id)
+    }
+
+    /// The install this server's blueprint asks for, if any.
+    pub async fn install_plan(&self, container_id: &str) -> Option<InstallPlan> {
+        crate::install::plan(&self.load_blueprint(container_id).await?)
+    }
+
+    /// Record a server's install state (in memory and on disk).
+    pub async fn set_install_state(&self, container_id: &str, install: InstallState) {
+        let mut state = {
+            let states = self.states.read().await;
+            match states.get(container_id) {
+                Some(state) => state.clone(),
+                None => return,
+            }
+        };
+        state.install_state = install;
+        self.set_state(state).await;
+    }
+
+    /// Install a server's game files, blocking until the install finishes.
+    ///
+    /// The install runs as its own short-lived container: the blueprint's
+    /// script, in the install image, with the server's data directory mounted
+    /// where the script expects it. Output is streamed into `sink` as it
+    /// arrives, so a caller can show progress on an install that runs for
+    /// half an hour.
+    ///
+    /// Returns the script's exit code. A non-zero code is a failed install,
+    /// not an error: the caller reports it with the log that explains it.
+    pub async fn run_install<F>(&self, container_id: &str, mut sink: F) -> Result<i32>
+    where
+        F: FnMut(String) + Send,
+    {
+        let plan = self.install_plan(container_id).await.ok_or_else(|| {
+            NodeError::InvalidInput(format!(
+                "server {} has no blueprint on file to install from",
+                container_id
+            ))
+        })?;
+
+        // The server's own data directory is what the install populates.
+        let server_dir = self.data_dir.join(container_id);
+        std::fs::create_dir_all(&server_dir).map_err(|e| {
+            NodeError::Internal(format!("Failed to create server directory: {}", e))
+        })?;
+
+        self.set_install_state(container_id, InstallState::Running).await;
+
+        let result = self.run_install_container(container_id, &plan, &server_dir, &mut sink).await;
+
+        let state = match &result {
+            Ok(0) => InstallState::Installed,
+            _ => InstallState::Failed,
+        };
+        self.set_install_state(container_id, state).await;
+
+        result
+    }
+
+    /// The container half of [`run_install`]: create, run, drain, clean up.
+    async fn run_install_container<F>(
+        &self,
+        container_id: &str,
+        plan: &InstallPlan,
+        server_dir: &Path,
+        sink: &mut F,
+    ) -> Result<i32>
+    where
+        F: FnMut(String) + Send,
+    {
+        let install_id = Self::install_container_id(container_id);
+
+        // A leftover from a previous attempt (or a node that died mid-install)
+        // would make create fail with "already exists".
+        let _ = self.runtime.delete(&install_id).await;
+
+        self.runtime.pull_image(&plan.image).await?;
+
+        let spec = ContainerSpec {
+            image: plan.image.clone(),
+            command: vec![],
+            args: plan.argv(),
+            env: plan.env.clone(),
+            working_dir: plan.server_dir.clone(),
+            mounts: vec![Mount {
+                source: server_dir.to_string_lossy().to_string(),
+                target: plan.server_dir.clone(),
+                read_only: false,
+            }],
+            ports: vec![],
+            // An install is a download and an unpack: it wants I/O and disk,
+            // not the memory headroom the game itself will need.
+            resources: ResourceLimits {
+                cpu_shares: 1024,
+                memory_bytes: INSTALL_MEMORY_BYTES,
+                memory_swap_bytes: 0,
+                // SteamCMD raises its own descriptor limit to 2048 and warns
+                // loudly when it cannot.
+                nofile: crate::runtime::DEFAULT_NOFILE,
+            },
+        };
+
+        self.runtime.create(&install_id, spec).await?;
+        info!(
+            "Installing game files for {} using {} ({})",
+            container_id, plan.image, plan.server_dir
+        );
+
+        let start_result = self.runtime.start(&install_id).await;
+        if let Err(e) = start_result {
+            let _ = self.runtime.delete(&install_id).await;
+            return Err(e);
+        }
+
+        let exit_code = self.drain_until_exit(&install_id, plan.timeout, sink).await;
+
+        // Whatever happened, do not leave the install container (or its
+        // rootfs snapshot) behind.
+        if exit_code.is_err() {
+            let _ = self.runtime.stop(&install_id, 5).await;
+        }
+        let _ = self.runtime.delete(&install_id).await;
+
+        exit_code
+    }
+
+    /// Follow an install container's output until its process exits.
+    async fn drain_until_exit<F>(
+        &self,
+        install_id: &str,
+        timeout: std::time::Duration,
+        sink: &mut F,
+    ) -> Result<i32>
+    where
+        F: FnMut(String) + Send,
+    {
+        let mut console = self.runtime.attach(install_id).await.ok();
+
+        let wait = self.runtime.wait(install_id, timeout);
+        tokio::pin!(wait);
+
+        loop {
+            tokio::select! {
+                exit = &mut wait => {
+                    // Pick up whatever the script printed just before exiting.
+                    drain_console(&mut console, sink).await;
+                    return exit;
+                }
+                _ = tokio::time::sleep(INSTALL_POLL_INTERVAL) => {
+                    drain_console(&mut console, sink).await;
+                }
+            }
+        }
     }
 
     /// Start a container
@@ -346,6 +558,15 @@ impl ContainerManager {
             self.metrics
                 .record_container_operation("start", "already_running", start.elapsed());
             return Ok(());
+        }
+
+        // A server whose game files were never installed cannot start: its
+        // startup command does not exist yet. Saying so beats letting runc
+        // report a missing binary.
+        if let Some(reason) = state.install_state.blocked_reason() {
+            self.metrics
+                .record_container_operation("start", "not_installed", start.elapsed());
+            return Err(NodeError::InvalidInput(reason.to_string()));
         }
 
         // Start container via runtime
@@ -826,6 +1047,16 @@ impl ContainerManager {
             })
             .collect();
 
+        // A blueprint may raise the open-file limit; game servers and SteamCMD
+        // both want more than the conservative default.
+        let nofile = config
+            .performance
+            .as_ref()
+            .and_then(|p| p.kernel.as_ref())
+            .and_then(|k| k.ulimits.get("nofile").copied())
+            .filter(|n| *n > 0)
+            .unwrap_or(crate::runtime::DEFAULT_NOFILE);
+
         // Parse resource limits
         let cpu_shares = config.resources.cpu.shares as u64;
         let memory_bytes = parse_size(&config.resources.memory.max)?;
@@ -847,8 +1078,32 @@ impl ContainerManager {
                 cpu_shares,
                 memory_bytes,
                 memory_swap_bytes,
+                nofile,
             },
         })
+    }
+}
+
+/// Read whatever a console has buffered right now into `sink`.
+///
+/// `read_line` returning `None` means "caught up", not "finished", so this
+/// drains what is available and returns rather than blocking.
+async fn drain_console<F>(
+    console: &mut Option<Box<dyn crate::runtime::ConsoleStream>>,
+    sink: &mut F,
+) where
+    F: FnMut(String) + Send,
+{
+    let Some(stream) = console.as_mut() else {
+        return;
+    };
+    // Bounded so a chatty install cannot starve the exit check.
+    for _ in 0..512 {
+        match stream.read_line().await {
+            Ok(Some(line)) => sink(line),
+            Ok(None) => return,
+            Err(_) => return,
+        }
     }
 }
 

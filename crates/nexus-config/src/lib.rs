@@ -40,6 +40,13 @@ pub struct Blueprint {
     /// Mod/plugin support configuration (Nexus-exclusive)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mods: Option<ModSupport>,
+    /// How the game's own files are installed before the server first runs
+    /// (Nexus-exclusive).
+    ///
+    /// Optional: a blueprint that does not declare one has its install derived
+    /// from `startup.lifecycle.pre_start`, then from `updates.apply`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install: Option<Install>,
     /// Update configuration (Nexus-exclusive)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updates: Option<Updates>,
@@ -203,6 +210,42 @@ pub enum LifecycleAction {
         #[serde(skip_serializing_if = "Option::is_none")]
         delay: Option<String>,
     },
+}
+
+/// How a server's game files are installed, before it is ever started.
+///
+/// A game image supplies the *tooling* — SteamCMD's dependencies, a JVM, a
+/// .NET runtime — not the game. Something has to fetch the game itself into
+/// the server's data directory, and that is this block: a script run once, in
+/// its own container, with the server's directory mounted into it.
+///
+/// The shape mirrors a Pterodactyl egg's installation script, so an imported
+/// egg can be represented without losing anything.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Install {
+    /// Image to run the install script in.
+    ///
+    /// Defaults to the server's own `container.image`. Blueprints imported
+    /// from Pterodactyl eggs usually name a dedicated installer image here,
+    /// which carries build tools the slim runtime image leaves out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Interpreter the script is fed to. Defaults to `/bin/sh`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    /// The install script itself.
+    pub script: String,
+    /// Where the server's data directory is mounted inside the install
+    /// container. Defaults to the blueprint's `startup.working_dir`.
+    ///
+    /// Pterodactyl scripts write to `/mnt/server`, so imported eggs set that
+    /// here while the game itself still runs out of `/home/container`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_dir: Option<String>,
+    /// How long the install may run before it is killed. Defaults to one hour;
+    /// a multi-gigabyte game download is not quick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -823,6 +866,35 @@ impl Blueprint {
             errors.push("  • Startup command cannot be empty".to_string());
         }
 
+        // Validate the install block. An install that cannot run leaves a
+        // server with no game files, which surfaces much later as a server
+        // that will not start — so reject it here instead.
+        if let Some(install) = &self.install {
+            if install.script.trim().is_empty() {
+                errors.push(
+                    "  • install.script cannot be empty (omit the whole `install` block \
+                     if this game needs no install step)"
+                        .to_string(),
+                );
+            }
+            if let Some(dir) = &install.server_dir {
+                if !dir.starts_with('/') {
+                    errors.push(format!(
+                        "  • install.server_dir must be an absolute path inside the container, got '{}'",
+                        dir
+                    ));
+                }
+            }
+            if let Some(timeout) = &install.timeout {
+                if parse_duration(timeout).is_none() {
+                    errors.push(format!(
+                        "  • Invalid install.timeout: '{}'. Use a duration like '1800s', '30m' or '2h'",
+                        timeout
+                    ));
+                }
+            }
+        }
+
         // Validate container image
         if self.container.image.is_empty() {
             errors.push("  • Container image cannot be empty".to_string());
@@ -927,6 +999,35 @@ impl Blueprint {
     }
 }
 
+/// Parse a blueprint duration such as `90s`, `30m`, `2h`, or a bare number of
+/// seconds.
+///
+/// Returns `None` for anything it does not understand, so a malformed value is
+/// reported as a config error rather than silently becoming zero.
+pub fn parse_duration(value: &str) -> Option<std::time::Duration> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let (digits, multiplier) = match value.strip_suffix('s') {
+        Some(rest) => (rest, 1),
+        None => match value.strip_suffix('m') {
+            Some(rest) => (rest, 60),
+            None => match value.strip_suffix('h') {
+                Some(rest) => (rest, 3600),
+                // A bare number is seconds.
+                None => (value, 1),
+            },
+        },
+    };
+
+    let seconds: u64 = digits.trim().parse().ok()?;
+    Some(std::time::Duration::from_secs(
+        seconds.saturating_mul(multiplier),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1001,6 +1102,7 @@ mod tests {
             performance: None,
             scaling: None,
             mods: None,
+            install: None,
             updates: None,
             dependencies: None,
             clustering: None,
@@ -1094,6 +1196,7 @@ mod tests {
             }),
             scaling: None,
             mods: None,
+            install: None,
             updates: None,
             dependencies: None,
             clustering: None,
@@ -1152,5 +1255,29 @@ mod tests {
             }
             _ => panic!("expected DepotDownloader"),
         }
+    }
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+
+    #[test]
+    fn durations_parse_in_every_unit_blueprints_use() {
+        assert_eq!(parse_duration("90s").unwrap().as_secs(), 90);
+        assert_eq!(parse_duration("30m").unwrap().as_secs(), 1800);
+        assert_eq!(parse_duration("2h").unwrap().as_secs(), 7200);
+        assert_eq!(parse_duration("45").unwrap().as_secs(), 45);
+        assert_eq!(parse_duration(" 600s ").unwrap().as_secs(), 600);
+    }
+
+    /// A malformed duration has to be rejected rather than read as zero — a
+    /// zero timeout would kill every install the instant it started.
+    #[test]
+    fn malformed_durations_are_rejected() {
+        assert!(parse_duration("").is_none());
+        assert!(parse_duration("soon").is_none());
+        assert!(parse_duration("10x").is_none());
+        assert!(parse_duration("-5s").is_none());
     }
 }

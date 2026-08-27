@@ -45,6 +45,7 @@ pub mod error;
 pub mod files;
 pub mod grpc;
 pub mod health;
+pub mod install;
 pub mod metrics;
 pub mod metrics_server;
 pub mod mods;

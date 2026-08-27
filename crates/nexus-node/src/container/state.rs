@@ -1,3 +1,4 @@
+use crate::install::InstallState;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
@@ -64,6 +65,15 @@ pub struct ContainerState {
 
     /// Stopped at timestamp (if stopped)
     pub stopped_at: Option<SystemTime>,
+
+    /// Where this server stands with respect to its game files.
+    ///
+    /// Defaults to `Pending` for states written before installs existed: a
+    /// server restored from such a file has unknown provenance, and treating
+    /// it as installed would be the dangerous direction of that guess only if
+    /// it were not — so callers reconcile it against the blueprint on restore.
+    #[serde(default)]
+    pub install_state: InstallState,
 }
 
 impl ContainerState {
@@ -79,6 +89,7 @@ impl ContainerState {
             created_at: SystemTime::now(),
             started_at: None,
             stopped_at: None,
+            install_state: InstallState::Pending,
         }
     }
 

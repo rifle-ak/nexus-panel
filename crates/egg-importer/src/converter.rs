@@ -4,6 +4,10 @@ use nexus_config::*;
 use regex::Regex;
 use std::collections::HashMap;
 
+/// Where Pterodactyl mounts a server's directory while its installation
+/// script runs. Egg scripts are written against this path.
+const PTERODACTYL_INSTALL_DIR: &str = "/mnt/server";
+
 /// Converts Pterodactyl eggs to Nexus Blueprints
 pub struct EggConverter {
     /// Security scanning enabled
@@ -76,6 +80,7 @@ impl EggConverter {
             performance: self.generate_performance_config(&game_type),
             scaling: None, // Eggs don't have scaling config
             mods: self.detect_mod_support(&game_type),
+            install: self.convert_install(egg),
             updates: self.generate_update_config(egg),
             dependencies: None,
             clustering: None,
@@ -499,25 +504,58 @@ impl EggConverter {
     }
 
     fn convert_installation_script(&self, egg: &PterodactylEgg) -> Result<Lifecycle> {
-        // Convert Pterodactyl installation script to structured lifecycle hooks
-        // This is a simplified conversion - real implementation would be more sophisticated
-
-        let script = &egg.scripts.installation.script;
-        let mut pre_start = Vec::new();
-
-        // Look for common patterns like apt-get, downloads, etc.
-        if script.contains("steamcmd") {
-            pre_start.push(LifecycleAction::Execute {
-                command: egg.scripts.installation.script.clone(),
-                condition: Some("first_start".to_string()),
-                timeout: Some("300s".to_string()),
-            });
-        }
-
+        // An egg's installation script becomes the blueprint's `install`
+        // block (see `convert_install`), not a pre-start hook: it is a one-off
+        // that populates the server directory, and it runs in its own
+        // container with its own image.
         Ok(Lifecycle {
-            pre_start,
+            pre_start: vec![],
             post_start: vec![],
             pre_stop: vec![self.convert_stop_command(&egg.config.stop)],
+        })
+    }
+
+    /// Carry an egg's installation script across as the blueprint's install.
+    ///
+    /// Everything the egg says about installing is preserved: the script, the
+    /// image it runs in (installer images carry build tools the slim runtime
+    /// image leaves out), and its interpreter. Pterodactyl mounts the server
+    /// directory at `/mnt/server` during installation and scripts are written
+    /// against that path, so the blueprint records it rather than rewriting
+    /// paths inside somebody else's shell script.
+    ///
+    /// Returns `None` only when an egg genuinely has no installation script —
+    /// previously anything that did not mention `steamcmd` was dropped on the
+    /// floor, which imported a game that could never install itself.
+    fn convert_install(&self, egg: &PterodactylEgg) -> Option<Install> {
+        let script = egg.scripts.installation.script.trim();
+        if script.is_empty() {
+            return None;
+        }
+
+        let image = match egg.scripts.installation.container.trim() {
+            "" => None,
+            // Anything with a path is already a full reference.
+            other if other.contains('/') => Some(other.to_string()),
+            // A bare name (`debian:bullseye-slim`) means Docker Hub, which
+            // containerd will not infer for us the way the Docker CLI does.
+            other => Some(format!("docker.io/library/{}", other)),
+        };
+
+        let entrypoint = match egg.scripts.installation.entrypoint.trim() {
+            "" => None,
+            other => Some(other.to_string()),
+        };
+
+        Some(Install {
+            image,
+            entrypoint,
+            script: script.to_string(),
+            server_dir: Some(PTERODACTYL_INSTALL_DIR.to_string()),
+            // Egg scripts routinely download whole games; Pterodactyl itself
+            // imposes no limit, so this is a generous backstop rather than a
+            // policy.
+            timeout: Some("3600s".to_string()),
         })
     }
 
@@ -941,5 +979,93 @@ mod tests {
         let (_, warnings) =
             EggConverter::new().security_scan(false).convert_with_report(&egg).unwrap();
         assert!(warnings.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod install_conversion_tests {
+    use super::*;
+    use crate::pterodactyl::{InstallationScript, PterodactylEgg, Scripts};
+
+    fn egg_with_install(script: &str, container: &str, entrypoint: &str) -> PterodactylEgg {
+        PterodactylEgg {
+            comment: None,
+            meta: crate::pterodactyl::Meta {
+                version: "PTDL_v2".to_string(),
+                update_url: None,
+            },
+            exported_at: "2024-01-01".to_string(),
+            name: "Test Server".to_string(),
+            author: "test".to_string(),
+            description: None,
+            features: vec![],
+            docker_images: HashMap::new(),
+            file_denylist: vec![],
+            startup: "./start.sh".to_string(),
+            config: crate::pterodactyl::Config {
+                files: HashMap::new(),
+                startup: crate::pterodactyl::StartupConfig {
+                    done: vec![],
+                    user_interaction: vec![],
+                },
+                stop: "stop".to_string(),
+                logs: crate::pterodactyl::LogsConfig {
+                    custom: false,
+                    location: String::new(),
+                },
+                file_denylist: vec![],
+            },
+            scripts: Scripts {
+                installation: InstallationScript {
+                    script: script.to_string(),
+                    container: container.to_string(),
+                    entrypoint: entrypoint.to_string(),
+                },
+            },
+            variables: vec![],
+        }
+    }
+
+    /// The whole point of importing an egg is that the game it describes can
+    /// then be installed. Anything that does not mention SteamCMD used to be
+    /// dropped, which imported a server that could never be populated.
+    #[test]
+    fn a_non_steamcmd_install_script_is_kept() {
+        let converter = EggConverter::new();
+        let egg = egg_with_install(
+            "#!/bin/bash\ncurl -sSL -o server.jar https://example.invalid/server.jar",
+            "ghcr.io/pterodactyl/installers:debian",
+            "bash",
+        );
+
+        let install = converter.convert_install(&egg).expect("script should be carried across");
+        assert!(install.script.contains("server.jar"));
+        assert_eq!(
+            install.image.as_deref(),
+            Some("ghcr.io/pterodactyl/installers:debian")
+        );
+        assert_eq!(install.entrypoint.as_deref(), Some("bash"));
+        // Egg scripts are written against Pterodactyl's install mount point.
+        assert_eq!(install.server_dir.as_deref(), Some("/mnt/server"));
+    }
+
+    /// A bare image name means Docker Hub. containerd does not infer that the
+    /// way the Docker CLI does, so an unqualified reference would fail to pull.
+    #[test]
+    fn a_bare_install_image_is_qualified() {
+        let converter = EggConverter::new();
+        let egg = egg_with_install("echo hi", "debian:bullseye-slim", "");
+        let install = converter.convert_install(&egg).unwrap();
+        assert_eq!(
+            install.image.as_deref(),
+            Some("docker.io/library/debian:bullseye-slim")
+        );
+        assert_eq!(install.entrypoint, None);
+    }
+
+    #[test]
+    fn an_egg_with_no_install_script_declares_no_install() {
+        let converter = EggConverter::new();
+        assert!(converter.convert_install(&egg_with_install("   ", "", "")).is_none());
     }
 }

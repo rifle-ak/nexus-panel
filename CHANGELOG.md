@@ -6,6 +6,53 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Game files are now installed.** A blueprint's image supplies the tooling a
+  game needs — a JVM, a .NET runtime, the 32-bit libraries SteamCMD links
+  against — but never the game itself, and nothing fetched it:
+  `ghcr.io/parkervcp/steamcmd:debian` does not even contain SteamCMD. Every
+  server therefore came up with an empty directory and a startup command that
+  did not exist. Creating a server now runs its install first, as a one-shot
+  container with the server's directory mounted into it, and the server is not
+  startable until that succeeds.
+  - **Where the install comes from.** An explicit `install:` block in the
+    blueprint (image, entrypoint, script, server directory, timeout), else the
+    `startup.lifecycle.pre_start` actions the shipped blueprints declare, else
+    the `updates.apply` strategy — installing into an empty directory and
+    updating in place are the same operation. A blueprint that declares none of
+    these needs no install and its server starts immediately.
+  - **The tools get installed too.** The shipped blueprints call
+    `./steamcmd/steamcmd.sh`, which no game image provides; the generated
+    script fetches SteamCMD (and DepotDownloader, for the Carbon blueprint)
+    into the server directory first, the way Pterodactyl's own install
+    container does. Both spellings work: the literal path and a bare
+    `steamcmd` on `PATH`.
+  - **`{{VARIABLE}}` placeholders are substituted** in install scripts, so the
+    Paper blueprint's templated download URL resolves instead of 404ing on a
+    literal `{{MC_VERSION}}`. An unknown placeholder is left visible rather
+    than blanked, so a missing variable is legible in the failure.
+  - **Progress is visible.** `POST /api/v1/containers/:id/install` starts one
+    and `GET` polls it; the panel gains an Install tab with live output, the
+    server's game-file state in its status bar, and an install button in place
+    of a Start that could only fail. A server created with auto-start begins
+    once its files are in place.
+  - Installs are one at a time per server, are killed at the blueprint's
+    timeout (one hour by default), and abort on the first failing step, so a
+    server is never reported ready with half a game in it.
+
+### Changed
+- **Imported eggs keep their installation script.** The egg importer only
+  carried the script across when it mentioned `steamcmd`, silently discarding
+  it otherwise — importing a game that could never install itself. Every egg's
+  script now becomes the blueprint's `install` block, along with the installer
+  image and entrypoint it names, and Pterodactyl's `/mnt/server` convention.
+- **Containers get a usable open-file limit.** The OCI spec pinned
+  `RLIMIT_NOFILE` at 1024, below what SteamCMD asks for before a single player
+  connects; blueprints can now set it (`performance.kernel.ulimits.nofile`) and
+  the default is 65536, capped at what the node process itself holds — asking
+  for more than that makes runc refuse the container outright. The installer's
+  systemd unit raises the node's own limit to match.
+
 ### Security
 - The web panel and REST API now require authentication. A password/API-key
   login issues a short-lived session token, and an Axum middleware gates every
@@ -22,6 +69,54 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RUSTSEC-2026-0097).
 
 ### Fixed
+- **Containers could never actually run.** Two defects made every server fail on
+  the path from picking a blueprint to pressing start:
+  - *The node never pulled an image.* `pull_image` only checked whether an image
+    was already present and, when it was not, returned an error telling the
+    operator to run `ctr images pull` by hand. The node now pulls the image
+    itself, through containerd's own `ctr` client (which handles registry auth,
+    platform selection and unpacking, and ships with containerd at every version
+    the installer targets).
+  - *Created containers had no root filesystem.* A container was registered with
+    no snapshot, so starting it asked containerd's shim to run a process in a
+    bundle with nothing in it — surfacing as `Container start failed: <uuid>`
+    with no explanation. Creating a container now resolves the image's layer
+    chain ID (index → manifest → config in the content store), prepares a
+    snapshot from it under a lease so the GC cannot reclaim it mid-create, names
+    that snapshot on the container record, and passes the resolved mounts to the
+    task at start. Deleting a container removes its snapshot instead of leaking
+    a full rootfs per server.
+- **`Container start failed: <uuid>` said nothing about why.** `StartFailed` and
+  `StopFailed` dropped their cause from the message the panel displays; both now
+  carry it, so a failure reads e.g. `... exec: "./DayZServer": no such file or
+  directory`.
+- **Containers had no `/proc`, `/dev` or network.** The generated OCI spec
+  omitted the standard Linux mounts, so almost anything a game image runs — a
+  shell script, SteamCMD — failed obscurely; and it put every container in a
+  private network namespace, which on a node with no CNI plugin means loopback
+  and nothing else. Containers now get containerd's default filesystems plus
+  masked/read-only kernel paths, and share the host's network namespace (with
+  the host's `resolv.conf`, `hosts` and `localtime` bound in) to match how the
+  panel allocates ports. Environment, working directory and entrypoint now fall
+  back to the image's own config when a blueprint does not set them.
+- **Container status could be read from the wrong container.** containerd's task
+  list ignores its filter argument and returns every task in the namespace, so
+  `inspect` reported whichever task came first — one stopped server could make a
+  running one report as stopped. Task lookups are now by container ID.
+- **Stopping a container that ignored SIGTERM failed.** After the timeout the
+  node sent SIGKILL and immediately deleted the task, which containerd rejects
+  with "cannot delete a running process". It now waits for the process to
+  actually exit (via the task `Wait` RPC) before reaping it. A game server's main
+  process is PID 1 in its namespace and so ignores SIGTERM unless it installs a
+  handler, which made this the normal path, not an edge case.
+- **Container output went nowhere.** Tasks were created with no stdio at all,
+  while the console readers looked for FIFOs in containerd's shim bundle
+  directory — a path that never contains any. Containers now log through
+  containerd's `file://` stdio to a per-server console log that several viewers
+  can follow at once, and stdin is a FIFO the node holds open for the life of the
+  task so a console session detaching no longer closes the game server's stdin.
+  `StreamLogs` with `follow` set now waits for new output instead of ending as
+  soon as it catches up.
 - **The shipped Valheim blueprint could not be loaded.** `mods.loader: bepinex`
   failed to deserialize because `snake_case` renders the enum variant as
   `bep_in_ex`; the natural spelling is now accepted. A new test parses and

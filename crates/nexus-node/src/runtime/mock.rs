@@ -96,6 +96,24 @@ impl ContainerRuntime for MockRuntime {
         Ok(0)
     }
 
+    /// A mock container's process is imaginary, so it "exits" cleanly the
+    /// moment it is waited on — enough for tests that drive the install flow
+    /// without a container runtime.
+    async fn wait(&self, id: &str, _timeout: std::time::Duration) -> Result<i32> {
+        tracing::info!("[MOCK] Waiting for container: {}", id);
+
+        let mut containers = self.containers.write().await;
+        let container = containers
+            .get_mut(id)
+            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+
+        container.pid = None;
+        container.status = "stopped".to_string();
+        container.exit_code = Some(0);
+
+        Ok(0)
+    }
+
     async fn delete(&self, id: &str) -> Result<()> {
         tracing::info!("[MOCK] Deleting container: {}", id);
 

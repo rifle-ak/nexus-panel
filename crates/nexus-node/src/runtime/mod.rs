@@ -1,4 +1,5 @@
 pub mod containerd;
+pub mod image;
 pub mod mock;
 
 use crate::error::Result;
@@ -20,6 +21,14 @@ pub trait ContainerRuntime: Send + Sync {
 
     /// Stop a container
     async fn stop(&self, id: &str, timeout_secs: u32) -> Result<i32>; // Returns exit code
+
+    /// Block until a container's process exits, returning its exit code.
+    ///
+    /// This is what a one-shot container needs — an install script that runs
+    /// to completion — as opposed to `stop`, which asks a long-running server
+    /// to shut down. Errors if the container is still running when `timeout`
+    /// elapses.
+    async fn wait(&self, id: &str, timeout: std::time::Duration) -> Result<i32>;
 
     /// Delete a container
     async fn delete(&self, id: &str) -> Result<()>;
@@ -101,7 +110,20 @@ pub struct ResourceLimits {
     pub cpu_shares: u64,
     pub memory_bytes: u64,
     pub memory_swap_bytes: u64,
+    /// Maximum open file descriptors (`RLIMIT_NOFILE`).
+    ///
+    /// Game servers hold a descriptor per connected player, per world region
+    /// file and per log; SteamCMD raises this to 2048 for itself and warns
+    /// when it cannot. The old fixed 1024 was below what the tooling asks for
+    /// before a single player connects.
+    pub nofile: u64,
 }
+
+/// Open-file limit for containers whose blueprint does not set one.
+///
+/// Matches what container runtimes hand a service by default, and is far
+/// enough above any game's needs not to be the thing that breaks.
+pub const DEFAULT_NOFILE: u64 = 65536;
 
 /// Container information
 #[derive(Debug, Clone)]

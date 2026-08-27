@@ -111,6 +111,12 @@ sudo mkdir -p /opt/cni/bin
 curl -L "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-amd64-${CNI_VERSION}.tgz" | sudo tar -xz -C /opt/cni/bin
 ```
 
+> **Container networking.** Game servers currently run in the *host's* network
+> namespace: a server binds its allocated port directly on the node, and there
+> is no port mapping to configure. Plan allocations accordingly — two servers
+> cannot share a port — and keep the firewall rules below in mind, since a
+> container's listening sockets are the host's.
+
 ## Install Nexus Node
 
 ```bash
@@ -140,6 +146,11 @@ METRICS_BIND=0.0.0.0:9090
 # Containerd
 CONTAINERD_SOCKET=/run/containerd/containerd.sock
 CONTAINERD_NAMESPACE=nexus-panel
+
+# Snapshotter used for container root filesystems. Defaults to overlayfs,
+# which is what containerd unpacks images into out of the box; change it only
+# if the node is configured with a different default snapshotter.
+# NEXUS_SNAPSHOTTER=overlayfs
 
 # Data storage
 DATA_DIR=/var/lib/nexus-node
@@ -377,13 +388,42 @@ sudo cp /usr/local/bin/nexus-node.bak /usr/local/bin/nexus-node
 sudo systemctl restart nexus-node
 ```
 
-## Pre-pull Game Images
+## Installing a Game's Files
+
+Creating a server installs its game files automatically: the blueprint's
+install script runs in its own short-lived container with the server's
+directory mounted into it, and the server stays un-startable until it
+succeeds. Progress is in the panel's **Install** tab, or over the API:
 
 ```bash
-# Pull images before container creation
+# Re-run an install (repair, or after fixing a Steam credential)
+curl -X POST http://localhost:8080/api/v1/containers/<id>/install
+curl http://localhost:8080/api/v1/containers/<id>/install    # poll
+```
+
+Two things worth knowing when planning a node:
+
+* **Egress.** SteamCMD talks Steam's own protocol, not only HTTPS, so a node
+  behind an HTTPS-only proxy cannot install Steam games.
+* **Disk.** Installs land in `DATA_DIR/<server-id>`, and a modern game is tens
+  of gigabytes.
+
+## Pre-pull Game Images (optional)
+
+The node pulls a blueprint's image itself the first time a server is created
+with it, so this is only a way to get the wait out of the way in advance — a
+multi-gigabyte game image can take a while on a slow link.
+
+```bash
 sudo ctr -n nexus-panel images pull docker.io/itzg/minecraft-server:latest
 sudo ctr -n nexus-panel images pull ghcr.io/parkervcp/steamcmd:debian
 ```
+
+Pulls run through containerd's own `ctr` client against the socket the node is
+configured with, so private registries authenticate exactly as they do for
+`ctr` on that host. `ctr` is found on `PATH`, then at `/usr/bin/ctr`,
+`/usr/local/bin/ctr` and `/bin/ctr`; set `NEXUS_CTR_BINARY` if it lives
+somewhere else.
 
 ## Monitoring
 
@@ -465,6 +505,16 @@ sudo systemctl edit nexus-node
 # Add: Environment=RUST_LOG=debug
 sudo systemctl restart nexus-node
 ```
+
+Each game server's own console output is kept separately, under the data
+directory, and is what the panel console reads:
+
+```bash
+sudo tail -f /var/lib/nexus-node/runtime/logs/nexus-panel/<server-id>.log
+```
+
+This is the first place to look when a server starts and then exits: the game's
+own error is in there, while `journalctl` only shows the node's view of it.
 
 ## Security Hardening
 

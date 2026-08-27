@@ -47,8 +47,8 @@ This checks:
 |------|---------|----------|
 | E201 | Container not found | Check container ID |
 | E202 | Container already exists | Use different ID or delete existing |
-| E203 | Image not found | Pull image first with `ctr images pull` |
-| E204 | Container start failed | Check logs, verify image and config |
+| E203 | Image pull failed | See the registry reason in the error; retry the same `ctr images pull` by hand |
+| E204 | Container start failed | The cause is in the message; check the server's console log |
 | E205 | Container stop timeout | Container may be hung, use force stop |
 
 ### Network Errors (E301-E399)
@@ -156,37 +156,74 @@ Error: Permission denied: /var/lib/nexus-node
    sudo aa-complain nexus-node  # AppArmor complain mode
    ```
 
-### Image Not Found
+### Image Pull Failed
+
+The node pulls a blueprint's image itself when a server is created, so this is a
+pull that failed rather than an image you forgot to fetch. The error carries the
+registry's own reason.
 
 **Symptoms:**
 ```
-Error: Image not found: docker.io/itzg/minecraft-server:latest
+Error: Failed to pull image ghcr.io/parkervcp/steamcmd:debian: <registry reason>
 ```
 
 **Solutions:**
 
-1. Pull image manually:
+1. Reproduce the pull by hand — the node runs exactly this:
    ```bash
-   sudo ctr -n nexus-panel images pull docker.io/itzg/minecraft-server:latest
+   sudo ctr -n nexus-panel images pull ghcr.io/parkervcp/steamcmd:debian
    ```
 
-2. Check available images:
+2. `not found` / `unauthorized`: check the reference (registry, repository and
+   tag) in the blueprint, and for a private registry that the host is logged in
+   the way `ctr` expects.
+
+3. `no such host` / timeouts: the node reaches the registry through the host's
+   network and proxy settings; check DNS and any egress firewall.
+
+4. Check what the namespace already has:
    ```bash
    sudo ctr -n nexus-panel images list
    ```
 
-3. Verify image name in config matches pulled image exactly.
+5. `ctr` client not found: it ships with containerd. If it is installed outside
+   `PATH`, `/usr/bin`, `/usr/local/bin` and `/bin`, point the node at it with
+   `NEXUS_CTR_BINARY=/path/to/ctr`.
 
 ### Container Start Failed
 
 **Symptoms:**
 ```
-Error: Failed to start container: exit code 1
+Error: Container start failed: <server-id>: Containerd error: Failed to create
+task: ... exec: "./DayZServer": stat ./DayZServer: no such file or directory
 ```
+
+The message names the cause. If it is the above — the startup binary does not
+exist — the server's game files were never installed. A blueprint's image
+supplies the *tooling* (SteamCMD's libraries, a JVM), not the game itself, so
+until the install has run there is nothing to execute, and the file manager
+shows an empty directory for the same reason.
+
+The panel refuses to start such a server and offers **Install game files**
+instead; the Install tab shows the install's own output. From the API:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/containers/<id>/install
+curl http://localhost:8080/api/v1/containers/<id>/install   # poll for progress
+```
+
+If the install itself is what failed, its log is the thing to read — a Steam
+login refusal or an unreachable CDN appears there verbatim.
 
 **Solutions:**
 
-1. Check container logs:
+1. Read the server's console log — the game's own error is there, whereas
+   `journalctl` shows only the node's view:
+   ```bash
+   sudo tail -100 /var/lib/nexus-node/runtime/logs/nexus-panel/<server-id>.log
+   ```
+
+2. Check container logs over the API:
    ```bash
    grpcurl -plaintext -d '{"container_id":"<id>","tail":100}' \
      localhost:8080 nexus.node.v1.NodeService/StreamLogs
@@ -207,6 +244,32 @@ Error: Failed to start container: exit code 1
    ```bash
    sudo ctr -n nexus-panel run --rm docker.io/image:tag test-run
    ```
+
+### Install Failed
+
+**Symptoms:** the Install tab reports a non-zero exit, and the server stays
+un-startable.
+
+**Solutions:**
+
+1. Read the install log in the panel (or `GET
+   /api/v1/containers/<id>/install`). The install runs the blueprint's own
+   script, so the failure is usually the game's installer talking.
+
+2. `Steamcmd needs to be online` / connection failures: SteamCMD uses Steam's
+   own protocol, not just HTTPS. Check the node's egress — a proxy that only
+   permits HTTPS is not enough.
+
+3. `Please login` / anonymous refusals: some games (DayZ, Arma) will not serve
+   their server files to an anonymous Steam account. Set `STEAM_USERNAME` on
+   the node and prime SteamCMD's cached credentials once by hand.
+
+4. Disk space: a game install is tens of gigabytes. Check `df -h` against
+   `DATA_DIR`.
+
+5. Re-running an install is safe and incremental — SteamCMD validates what is
+   already there rather than re-downloading it — so a failed install can simply
+   be retried once its cause is fixed.
 
 ### TLS/mTLS Errors
 
