@@ -221,12 +221,12 @@
         the game itself. Installing downloads the game into this server's folder. It runs once,
         before the server can start, and a large game can take a while.
       </p>
-      <div id="install-summary" style="margin-bottom:1.25rem;padding:1rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-primary)">
+      <div id="gamefiles-summary" style="margin-bottom:1.25rem;padding:1rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-primary)">
         <span class="text-muted text-sm">Loading…</span>
       </div>
-      <button class="btn btn-primary" id="install-run" onclick="NX.startInstall()">Install game files</button>
-      <div id="install-status" class="text-sm" style="margin-top:1rem"></div>
-      <pre id="install-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
+      <button class="btn btn-primary" id="gamefiles-run" onclick="NX.startGameFilesInstall()">Install game files</button>
+      <div id="gamefiles-status" class="text-sm" style="margin-top:1rem"></div>
+      <pre id="gamefiles-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
     </div>
     <div class="tab-content hidden" id="tab-update">
       <div class="card-header" style="padding:0 0 1rem 0">

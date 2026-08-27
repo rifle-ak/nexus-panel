@@ -1812,7 +1812,56 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_mods_dir, is_newer, mods_dir_for, StartUpdateReq, SHIPPED_BLUEPRINTS};
+    use super::{
+        default_mods_dir, is_newer, mods_dir_for, StartUpdateReq, APP_JS, SHIPPED_BLUEPRINTS,
+    };
+
+    /// No two panel features may claim the same `NX.<name>` handler.
+    ///
+    /// `app.js` is one flat script, so a second `NX.foo = function` silently
+    /// replaces the first — the two features look fine in isolation and one of
+    /// them is simply dead at runtime. That happened once already: the
+    /// game-file install panel and the marketplace mod dialog both defined
+    /// `NX.renderInstallJob`, and the install panel's status never rendered.
+    #[test]
+    fn panel_handlers_are_uniquely_named() {
+        let mut seen: Vec<&str> = Vec::new();
+        let mut duplicates: Vec<&str> = Vec::new();
+
+        for line in APP_JS.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("NX.") else {
+                continue;
+            };
+            // Only definitions (`NX.name = …`), not call sites.
+            let Some((name, tail)) = rest.split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            // Skip comparisons (`NX.a === b`) and property paths.
+            if tail.starts_with('=') || name.contains('.') || name.contains('(') {
+                continue;
+            }
+            // Only function definitions. Plain state (`NX.containers = […]`)
+            // is assigned from several places by design; it is redefining a
+            // *handler* that silently unhooks a feature.
+            let tail = tail.trim_start();
+            if !(tail.starts_with("function") || tail.starts_with("async function")) {
+                continue;
+            }
+            if seen.contains(&name) {
+                duplicates.push(name);
+            } else {
+                seen.push(name);
+            }
+        }
+
+        assert!(
+            duplicates.is_empty(),
+            "these NX handlers are defined more than once, so all but the last are dead: {:?}",
+            duplicates
+        );
+    }
 
     /// Every blueprint the panel serves must parse and validate against the
     /// current schema.
