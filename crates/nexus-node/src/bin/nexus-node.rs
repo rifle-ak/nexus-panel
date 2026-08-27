@@ -373,6 +373,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sessions: web_sessions.clone(),
             update_jobs: Arc::new(nexus_node::update::UpdateJobStore::new()),
             install_jobs: Arc::new(nexus_node::install::InstallJobStore::new()),
+            updater: nexus_node::selfupdate::SelfUpdater::new(&PathBuf::from(&data_dir)),
+            http: reqwest::Client::new(),
             mod_jobs: Arc::new(nexus_node::mods::ModInstallJobStore::new()),
         };
         tokio::spawn(async move {

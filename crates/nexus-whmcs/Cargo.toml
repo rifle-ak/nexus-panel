@@ -1,6 +1,6 @@
 [package]
 name = "nexus-whmcs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "WHMCS integration for Nexus Panel - Provisioning, billing, and client area"
 license = "MIT"

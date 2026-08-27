@@ -413,11 +413,55 @@ setup_directories() {
     ok "Directories ready"
 }
 
+# Add configuration keys this version understands but the existing file does
+# not, leaving every value the operator already set exactly as it is.
+#
+# Without this an upgrade silently skips new settings: the node falls back to
+# built-in defaults, and the operator has no way to see there is now a knob.
+merge_config() {
+    local config_file="$NEXUS_CONFIG/config.env"
+    [ -f "$config_file" ] || return 0
+
+    # key=default pairs introduced after the first release. Commented-out
+    # entries in the file count as present: an operator who deliberately left
+    # something off should not have it reappear.
+    local added=0
+    local entry key value
+    for entry in \
+        "UPDATE_CHANNEL=stable" \
+        "NEXUS_SNAPSHOTTER=overlayfs"
+    do
+        key="${entry%%=*}"
+        value="${entry#*=}"
+        if grep -qE "^[[:space:]]*#?[[:space:]]*${key}=" "$config_file"; then
+            continue
+        fi
+        if [ "$added" -eq 0 ]; then
+            printf '\n# Added by install.sh on %s\n' "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+                >> "$config_file"
+            added=1
+        fi
+        case "$key" in
+            UPDATE_CHANNEL)
+                printf '# Which updates this node follows: stable (release tags) or main.\n' \
+                    >> "$config_file" ;;
+            NEXUS_SNAPSHOTTER)
+                printf '# Snapshotter for container root filesystems.\n# ' >> "$config_file" ;;
+        esac
+        printf '%s=%s\n' "$key" "$value" >> "$config_file"
+        info "Added $key to config.env"
+    done
+
+    [ "$added" -eq 1 ] && ok "Configuration updated with new settings"
+    return 0
+}
+
 write_config() {
     local config_file="$NEXUS_CONFIG/config.env"
 
     if [ -f "$config_file" ]; then
         warn "Config already exists at $config_file, skipping"
+        merge_config
         return
     fi
 
@@ -759,6 +803,11 @@ main() {
         info "Stopping nexus-node before binary replacement..."
         systemctl stop nexus-node 2>/dev/null || true
         build_nexus
+        # A new binary can need a new unit (resource limits, dependencies) or
+        # understand new settings. Updating only the binary leaves those behind
+        # on every existing install, silently, forever.
+        merge_config
+        install_systemd_service
         info "Starting nexus-node..."
         systemctl start nexus-node
         sleep 2

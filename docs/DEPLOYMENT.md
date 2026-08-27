@@ -318,7 +318,42 @@ sudo chmod 600 /etc/nexus-node/*.key
 
 ## Updating Nexus Node
 
-### Quick Update (recommended)
+### From the panel (recommended)
+
+**Settings → Software Updates** shows what this node is running, what its
+channel has available, and applies it in one click.
+
+The update rebuilds from source and restarts the node, so the panel is
+unavailable for a few minutes. **Running game servers are not affected** —
+their containerd shims are independent of the node process, and the node
+reconciles their state when it comes back.
+
+If the new build fails to start, the previous binary is restored automatically
+and the panel reports the rollback. The node is left running either way.
+
+The update is refused while a server is installing its game files, since
+restarting mid-install would leave a half-downloaded game.
+
+> In-panel updates need systemd, which the installer sets up. On a node without
+> it, use the command-line update below.
+
+### Update channels
+
+```bash
+# /etc/nexus-node/config.env
+UPDATE_CHANNEL=stable   # published release tags (default)
+UPDATE_CHANNEL=main     # the main branch, which the installer builds by default
+```
+
+On `stable` the panel compares this node's version against the latest release.
+On `main` it compares the commit the binary was built from against the branch
+tip, and reports how many commits behind it is — the crate version does not
+move between releases, so it cannot answer that question on its own.
+
+A node that cannot reach GitHub reports the check as unknown, with the reason.
+It does not claim to be up to date.
+
+### Quick Update (from the command line)
 
 Re-run the installer — it detects an existing installation and only rebuilds/restarts:
 
@@ -338,9 +373,17 @@ The `--update` flag skips the setup wizard and only:
 2. Updates the Rust toolchain
 3. Stops the running service (required — Linux prevents overwriting a running binary)
 4. Rebuilds and installs the new binary
-5. Starts the `nexus-node` service
+5. Reinstalls the systemd unit, so unit changes reach existing nodes
+6. Adds any configuration keys this version introduced
+7. Starts the `nexus-node` service
 
-Your configuration in `/etc/nexus-node/config.env` is preserved.
+Your configuration in `/etc/nexus-node/config.env` is preserved: an existing
+value is never rewritten, and a key you commented out is not resurrected. Only
+genuinely new keys are appended, with a comment saying what they do.
+
+> Because step 5 rewrites `/etc/systemd/system/nexus-node.service`, customise
+> the unit with `sudo systemctl edit nexus-node` — a drop-in override survives
+> updates, direct edits to the unit file do not.
 
 ### Manual Update
 
