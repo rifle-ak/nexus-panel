@@ -336,9 +336,9 @@ sudo bash install.sh --update
 The `--update` flag skips the setup wizard and only:
 1. Updates system packages
 2. Updates the Rust toolchain
-3. Rebuilds the binary from the latest source
-4. Replaces the installed binary
-5. Restarts the `nexus-node` service
+3. Stops the running service (required — Linux prevents overwriting a running binary)
+4. Rebuilds and installs the new binary
+5. Starts the `nexus-node` service
 
 Your configuration in `/etc/nexus-node/config.env` is preserved.
 
@@ -352,13 +352,14 @@ git pull origin main
 # 2. Rebuild
 cargo build --release --workspace
 
-# 3. Stop the service
+# 3. Stop the service (must stop before replacing — Linux won't overwrite a running binary)
 sudo systemctl stop nexus-node
 
-# 4. Replace the binary
+# 4. Backup and replace the binary
+sudo cp /usr/local/bin/nexus-node /usr/local/bin/nexus-node.bak
 sudo cp target/release/nexus-node /usr/local/bin/nexus-node
 
-# 5. Restart
+# 5. Start
 sudo systemctl start nexus-node
 sudo systemctl status nexus-node
 ```

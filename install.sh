@@ -754,9 +754,13 @@ main() {
         info "Update mode — rebuilding and restarting nexus-node..."
         install_system_deps
         install_rust
+        # Stop the running service before replacing the binary to avoid
+        # "Text file busy" errors (Linux prevents overwriting a running executable)
+        info "Stopping nexus-node before binary replacement..."
+        systemctl stop nexus-node 2>/dev/null || true
         build_nexus
-        info "Restarting nexus-node..."
-        systemctl restart nexus-node
+        info "Starting nexus-node..."
+        systemctl start nexus-node
         sleep 2
         if systemctl is-active --quiet nexus-node; then
             ok "nexus-node updated and running"
