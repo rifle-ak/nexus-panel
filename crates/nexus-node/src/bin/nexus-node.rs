@@ -372,6 +372,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth: web_auth_config.clone(),
             sessions: web_sessions.clone(),
             update_jobs: Arc::new(nexus_node::update::UpdateJobStore::new()),
+            install_jobs: Arc::new(nexus_node::install::InstallJobStore::new()),
             mod_jobs: Arc::new(nexus_node::mods::ModInstallJobStore::new()),
         };
         tokio::spawn(async move {

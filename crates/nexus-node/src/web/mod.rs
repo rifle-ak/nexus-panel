@@ -84,6 +84,7 @@ pub struct AppState {
     pub sessions: Arc<auth::SessionStore>,
     pub update_jobs: crate::update::SharedUpdateJobStore,
     pub mod_jobs: crate::mods::SharedModInstallJobStore,
+    pub install_jobs: crate::install::SharedInstallJobStore,
 }
 
 type S = Arc<AppState>;
@@ -185,6 +186,11 @@ pub async fn start_web_server(
         .route(
             "/api/v1/containers/:id/mods/install",
             get(api_install_mod_status).post(api_install_mod),
+        )
+        // ── Game-file install (runs once, before first start) ────────
+        .route(
+            "/api/v1/containers/:id/install",
+            get(api_install_status).post(api_start_install),
         )
         // ── Game-file update (SteamCMD / DepotDownloader) ────────────
         .route(
@@ -689,11 +695,131 @@ async fn api_create_container(
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
 
-    if body.auto_start.unwrap_or(false) {
+    // Choosing a game *is* choosing to install it: a server is useless until
+    // its game files are there, so the install starts as soon as it is
+    // created rather than waiting for the operator to find a button. The
+    // client polls `GET .../install` for progress.
+    let auto_start = body.auto_start.unwrap_or(false);
+    let installing = spawn_install(&s, &id, auto_start).await.is_some();
+
+    if auto_start && !installing {
         let _ = s.manager.start_container(&id).await;
     }
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": id, "installing": installing })),
+    ))
+}
+
+/// Start a server's install in the background, if it has one to run.
+///
+/// With `auto_start`, a successful install is followed by starting the server
+/// — which is what "auto-start after creation" has to mean for a game whose
+/// files did not exist yet at creation time.
+///
+/// Returns the job it registered, or `None` when this blueprint needs no
+/// install or one is already running.
+async fn spawn_install(s: &S, id: &str, auto_start: bool) -> Option<crate::install::InstallJob> {
+    let plan = s.manager.install_plan(id).await?;
+
+    let job = s.install_jobs.start(id, &plan.image).await.ok()?;
+
+    let manager = s.manager.clone();
+    let jobs = s.install_jobs.clone();
+    let container_id = id.to_string();
+    tokio::spawn(async move {
+        // Output is appended as it arrives so a half-hour download shows
+        // progress rather than a spinner.
+        let sink_jobs = jobs.clone();
+        let sink_id = container_id.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let pump = tokio::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                sink_jobs.append_log(&sink_id, &line).await;
+            }
+        });
+
+        let result = manager
+            .run_install(&container_id, |line| {
+                let _ = tx.send(line);
+            })
+            .await;
+
+        drop(tx);
+        let _ = pump.await;
+
+        match result {
+            Ok(code) => {
+                jobs.finish(&container_id, Some(code)).await;
+                if code == 0 && auto_start {
+                    if let Err(e) = manager.start_container(&container_id).await {
+                        warn!(
+                            "Auto-start after install failed for {}: {}",
+                            container_id, e
+                        );
+                    }
+                }
+            }
+            Err(e) => jobs.fail(&container_id, e.to_string()).await,
+        }
+    });
+
+    Some(job)
+}
+
+/// Kick off (or re-run) a server's game-file install.
+///
+/// Re-running is the "reinstall" path: the script is the blueprint's own, and
+/// SteamCMD-style installs are incremental, so this is also how an operator
+/// repairs a server whose files were damaged.
+async fn api_start_install(
+    State(s): State<S>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::install::InstallJob>, (StatusCode, Json<ApiError>)> {
+    let state = s
+        .manager
+        .get_state(&id)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+
+    // Installing under a running server would rewrite the files it is reading.
+    if state.status.is_running() {
+        return Err(err_json(
+            StatusCode::CONFLICT,
+            "stop the server before installing its game files",
+        ));
+    }
+
+    if s.manager.install_plan(&id).await.is_none() {
+        return Err(err_json(
+            StatusCode::BAD_REQUEST,
+            "this server's blueprint declares no install step — its image is self-contained",
+        ));
+    }
+
+    // An explicit install is a repair, not a deployment: leave the server
+    // stopped so the operator can look at the result first.
+    spawn_install(&s, &id, false).await.map(Json).ok_or_else(|| {
+        err_json(
+            StatusCode::CONFLICT,
+            "an install is already running for this server",
+        )
+    })
+}
+
+/// Return the current/most-recent install job for a server.
+async fn api_install_status(
+    State(s): State<S>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::install::InstallJob>, (StatusCode, Json<ApiError>)> {
+    match s.install_jobs.get(&id).await {
+        Some(job) => Ok(Json(job)),
+        None => Err(err_json(
+            StatusCode::NOT_FOUND,
+            "no install has been run for this server on this node",
+        )),
+    }
 }
 
 async fn api_start_container(

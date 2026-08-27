@@ -202,6 +202,33 @@ grpcurl -plaintext localhost:8080 nexus.node.v1.NodeService/HealthCheck
 | `FAILED` | Container crashed or failed |
 | `SUSPENDED` | Container is suspended (admin action) |
 
+## Game-File Install States
+
+A server's `install_state` records whether its game files are actually there.
+A server cannot be started until they are: its startup command lives in that
+directory and does not exist before the install runs.
+
+| State | Description |
+|-------|-------------|
+| `pending` | The blueprint declares an install that has not run yet |
+| `running` | The install is running now |
+| `installed` | Game files are in place; the server can start |
+| `failed` | The last install failed; the server will not start |
+| `not_required` | This blueprint needs no install — its image is self-contained |
+| `unknown` | A server created before install state was tracked; reconciled from its directory on the next node restart |
+
+### Install endpoints (REST)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/containers/:id/install` | Start (or re-run) the install. The server must be stopped. 400 if the blueprint declares no install; 409 if one is already running |
+| `GET` | `/api/v1/containers/:id/install` | Poll the current/most-recent install job: `status`, `image`, `log`, `exit_code`, `error`, timestamps |
+
+Creating a server starts its install automatically — choosing a game is
+choosing to install it — so `POST /api/v1/containers` returns
+`{"id": …, "installing": true}` when one was kicked off. With `auto_start`,
+the server is started once the install succeeds.
+
 ## Error Codes
 
 | Code | Status | Description |

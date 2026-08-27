@@ -388,6 +388,26 @@ sudo cp /usr/local/bin/nexus-node.bak /usr/local/bin/nexus-node
 sudo systemctl restart nexus-node
 ```
 
+## Installing a Game's Files
+
+Creating a server installs its game files automatically: the blueprint's
+install script runs in its own short-lived container with the server's
+directory mounted into it, and the server stays un-startable until it
+succeeds. Progress is in the panel's **Install** tab, or over the API:
+
+```bash
+# Re-run an install (repair, or after fixing a Steam credential)
+curl -X POST http://localhost:8080/api/v1/containers/<id>/install
+curl http://localhost:8080/api/v1/containers/<id>/install    # poll
+```
+
+Two things worth knowing when planning a node:
+
+* **Egress.** SteamCMD talks Steam's own protocol, not only HTTPS, so a node
+  behind an HTTPS-only proxy cannot install Steam games.
+* **Disk.** Installs land in `DATA_DIR/<server-id>`, and a modern game is tens
+  of gigabytes.
+
 ## Pre-pull Game Images (optional)
 
 The node pulls a blueprint's image itself the first time a server is created

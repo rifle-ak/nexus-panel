@@ -262,6 +262,10 @@ async function renderServerDetail(id) {
         <span class="status-item-value">${statusBadge(c.status)}</span>
       </div>
       <div class="status-item">
+        <span class="status-item-label">Game files</span>
+        <span class="status-item-value">${installBadge(c.install_state)}</span>
+      </div>
+      <div class="status-item">
         <span class="status-item-label">Image</span>
         <span class="status-item-value text-sm">${esc(c.image)}</span>
       </div>
@@ -279,16 +283,29 @@ async function renderServerDetail(id) {
       </div>
     `;
 
-    // Action buttons
+    // Action buttons. A server whose game files are not installed cannot
+    // start, so it is offered the install instead of a button that fails.
+    const needsInstall = c.install_state === 'pending' || c.install_state === 'failed';
+    const installing = c.install_state === 'running';
     document.getElementById('detail-actions').innerHTML = `
       ${c.status === 'running'
         ? `<button class="btn btn-sm btn-danger" onclick="NX.stopServer('${id}')">Stop</button>
            <button class="btn btn-sm" onclick="NX.restartServer('${id}')">Restart</button>
            <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+        : installing
+        ? `<button class="btn btn-sm" onclick="NX.switchTab('install')">Installing…</button>
+           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+        : needsInstall
+        ? `<button class="btn btn-sm btn-primary" onclick="NX.switchTab('install')">Install game files</button>
+           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
         : `<button class="btn btn-sm btn-success" onclick="NX.startServer('${id}')">Start</button>
            <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
       }
     `;
+
+    // An install kicked off at creation time is already running when the
+    // operator first opens the server; follow it without being asked.
+    if (installing) NX.pollInstall();
 
     // Init console tab
     initConsole();
@@ -328,6 +345,115 @@ NX.switchTab = function(tab) {
   if (tab === 'schedules') loadSchedules();
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
   if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
+  if (tab === 'install') NX.refreshInstall();
+};
+
+// ── Install game files ────────────────────────────────────────────
+
+// How a server's install state reads in the UI.
+const INSTALL_STATE_LABEL = {
+  pending: ['badge-warning', 'Not installed'],
+  running: ['badge-warning', 'Installing…'],
+  installed: ['badge-success', 'Installed'],
+  failed: ['badge-danger', 'Install failed'],
+  not_required: ['badge-success', 'No install needed'],
+  unknown: ['badge-secondary', 'Unknown'],
+};
+
+function installBadge(state) {
+  const [cls, label] = INSTALL_STATE_LABEL[state] || ['badge-secondary', state || 'unknown'];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+// Show where this server stands and whether installing is possible now.
+NX.refreshInstall = async function() {
+  if (!NX.currentServer) return;
+  const summary = document.getElementById('install-summary');
+  const btn = document.getElementById('install-run');
+
+  try {
+    const c = await api(`/containers/${NX.currentServer}`);
+    NX.installState = c.install_state;
+    if (summary) {
+      summary.innerHTML = `
+        <div class="text-sm"><strong>Status</strong> ${installBadge(c.install_state)}</div>
+        <div class="text-muted text-sm" style="margin-top:0.35rem">
+          ${c.install_state === 'not_required'
+            ? 'This game needs no install step — its image is self-contained.'
+            : 'Installing downloads this game into the server folder. The server must be stopped.'}
+        </div>`;
+    }
+    if (btn) {
+      btn.disabled = c.status === 'running' || c.install_state === 'not_required';
+      btn.textContent = c.install_state === 'installed' ? 'Reinstall game files' : 'Install game files';
+    }
+  } catch (_) { /* server list will report this */ }
+
+  try {
+    const job = await api(`/containers/${NX.currentServer}/install`);
+    NX.renderInstallJob(job);
+    if (job.status === 'running') NX.pollInstall();
+  } catch (_) {
+    // Nothing installed on this node yet — the button is the next step.
+  }
+};
+
+NX.startInstall = async function() {
+  if (!NX.currentServer) return;
+  const status = document.getElementById('install-status');
+  const btn = document.getElementById('install-run');
+  status.innerHTML = '<span class="text-muted">Starting install…</span>';
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/containers/${NX.currentServer}/install`, { method: 'POST' });
+    toast('Install started', 'success');
+    NX.pollInstall();
+  } catch (e) {
+    status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
+    if (btn) btn.disabled = false;
+  }
+};
+
+NX.renderInstallJob = function(job) {
+  const status = document.getElementById('install-status');
+  const out = document.getElementById('install-output');
+  const btn = document.getElementById('install-run');
+  if (!status) return;
+  const badge = {
+    running: '<span class="badge badge-warning">Installing…</span>',
+    succeeded: '<span class="badge badge-success">Installed</span>',
+    failed: '<span class="badge badge-danger">Failed</span>',
+  }[job.status] || esc(job.status);
+  let line = `${badge} <span class="text-muted text-sm">in ${esc(job.image)}</span>`;
+  if (job.exit_code !== null && job.exit_code !== undefined) {
+    line += ` <span class="text-muted text-sm">(exit ${job.exit_code})</span>`;
+  }
+  status.innerHTML = line;
+  const text = [job.log, job.error ? `error: ${job.error}` : ''].filter(Boolean).join('\n');
+  if (text && out) {
+    out.textContent = text;
+    out.classList.remove('hidden');
+    out.scrollTop = out.scrollHeight;
+  }
+  if (btn) btn.disabled = job.status === 'running';
+};
+
+NX.pollInstall = function() {
+  clearTimeout(NX.installPollTimer);
+  NX.installPollTimer = setTimeout(async () => {
+    if (!NX.currentServer) return;
+    try {
+      const job = await api(`/containers/${NX.currentServer}/install`);
+      NX.renderInstallJob(job);
+      if (job.status === 'running') {
+        NX.pollInstall();
+      } else {
+        // The server's own state changed with it: Start may now be allowed.
+        NX.refreshInstall();
+        renderServerDetail(NX.currentServer);
+      }
+    } catch (_) {}
+  }, 2000);
 };
 
 // ── Update game files ─────────────────────────────────────────────
@@ -897,6 +1023,7 @@ networking:
     <div class="form-group">
       <label class="form-label">
         <input type="checkbox" id="create-autostart" checked> Auto-start after creation
+        <span class="text-muted text-sm">(games that need installing start once their files are in place)</span>
       </label>
     </div>
     <div style="text-align:right">
@@ -915,9 +1042,14 @@ NX.doCreateServer = async function() {
       method: 'POST',
       body: JSON.stringify({ config_yaml: yaml, auto_start: autoStart })
     });
-    toast('Server created: ' + res.id, 'success');
+    toast(res.installing
+      ? 'Server created — installing game files'
+      : 'Server created: ' + res.id, 'success');
     NX.closeModal();
     location.hash = '#/servers/' + res.id;
+    // The install starts with the server; open on it so the download is
+    // visible rather than looking like a server that will not start.
+    if (res.installing) setTimeout(() => NX.switchTab('install'), 100);
   } catch (e) { toast(e.message, 'error'); }
 };
 

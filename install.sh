@@ -632,6 +632,11 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# A container can never be granted a higher open-file limit than this process
+# holds, and game servers plus SteamCMD want considerably more than the
+# systemd default.
+LimitNOFILE=1048576
+
 # Security hardening
 NoNewPrivileges=false
 ProtectSystem=strict

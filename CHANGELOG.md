@@ -6,6 +6,53 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Game files are now installed.** A blueprint's image supplies the tooling a
+  game needs — a JVM, a .NET runtime, the 32-bit libraries SteamCMD links
+  against — but never the game itself, and nothing fetched it:
+  `ghcr.io/parkervcp/steamcmd:debian` does not even contain SteamCMD. Every
+  server therefore came up with an empty directory and a startup command that
+  did not exist. Creating a server now runs its install first, as a one-shot
+  container with the server's directory mounted into it, and the server is not
+  startable until that succeeds.
+  - **Where the install comes from.** An explicit `install:` block in the
+    blueprint (image, entrypoint, script, server directory, timeout), else the
+    `startup.lifecycle.pre_start` actions the shipped blueprints declare, else
+    the `updates.apply` strategy — installing into an empty directory and
+    updating in place are the same operation. A blueprint that declares none of
+    these needs no install and its server starts immediately.
+  - **The tools get installed too.** The shipped blueprints call
+    `./steamcmd/steamcmd.sh`, which no game image provides; the generated
+    script fetches SteamCMD (and DepotDownloader, for the Carbon blueprint)
+    into the server directory first, the way Pterodactyl's own install
+    container does. Both spellings work: the literal path and a bare
+    `steamcmd` on `PATH`.
+  - **`{{VARIABLE}}` placeholders are substituted** in install scripts, so the
+    Paper blueprint's templated download URL resolves instead of 404ing on a
+    literal `{{MC_VERSION}}`. An unknown placeholder is left visible rather
+    than blanked, so a missing variable is legible in the failure.
+  - **Progress is visible.** `POST /api/v1/containers/:id/install` starts one
+    and `GET` polls it; the panel gains an Install tab with live output, the
+    server's game-file state in its status bar, and an install button in place
+    of a Start that could only fail. A server created with auto-start begins
+    once its files are in place.
+  - Installs are one at a time per server, are killed at the blueprint's
+    timeout (one hour by default), and abort on the first failing step, so a
+    server is never reported ready with half a game in it.
+
+### Changed
+- **Imported eggs keep their installation script.** The egg importer only
+  carried the script across when it mentioned `steamcmd`, silently discarding
+  it otherwise — importing a game that could never install itself. Every egg's
+  script now becomes the blueprint's `install` block, along with the installer
+  image and entrypoint it names, and Pterodactyl's `/mnt/server` convention.
+- **Containers get a usable open-file limit.** The OCI spec pinned
+  `RLIMIT_NOFILE` at 1024, below what SteamCMD asks for before a single player
+  connects; blueprints can now set it (`performance.kernel.ulimits.nofile`) and
+  the default is 65536, capped at what the node process itself holds — asking
+  for more than that makes runc refuse the container outright. The installer's
+  systemd unit raises the node's own limit to match.
+
 ### Security
 - The web panel and REST API now require authentication. A password/API-key
   login issues a short-lived session token, and an Axum middleware gates every

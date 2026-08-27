@@ -877,6 +877,19 @@ impl ContainerRuntime for ContainerdRuntime {
         Ok(exit_code)
     }
 
+    async fn wait(&self, id: &str, timeout: Duration) -> Result<i32> {
+        debug!("[Containerd] Waiting for container {} to exit", id);
+
+        match tokio::time::timeout(timeout, self.wait_task(id)).await {
+            Ok(result) => result,
+            Err(_) => Err(NodeError::ContainerdError(format!(
+                "Container {} did not exit within {}s",
+                id,
+                timeout.as_secs()
+            ))),
+        }
+    }
+
     async fn delete(&self, id: &str) -> Result<()> {
         info!("[Containerd] Deleting container: {}", id);
 
@@ -919,6 +932,12 @@ impl ContainerRuntime for ContainerdRuntime {
         if let Some(dir) = io_dir.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
+
+        // Drop the console log with the container. Keeping it would leave a
+        // deleted server's output on disk forever, and — because a container
+        // id can be reused, as the per-server install container's is — the
+        // next occupant would start by reading the last one's output.
+        let _ = std::fs::remove_file(self.log_path(id));
 
         info!("Successfully deleted container: {}", id);
         Ok(())
@@ -1279,6 +1298,22 @@ impl ContainerdRuntime {
     }
 }
 
+/// This process's hard limit on open files, which is the most it can grant a
+/// container it starts.
+fn max_open_files() -> u64 {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` only writes into the struct we hand it.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        limit.rlim_max
+    } else {
+        // Fall back to the conservative floor every Linux system allows.
+        1024
+    }
+}
+
 /// Locate containerd's `ctr` client.
 ///
 /// Checked against `PATH` first, then the usual install locations, because the
@@ -1475,6 +1510,14 @@ fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
 
     let env = merge_env(&image.env, &spec.env);
 
+    // A container cannot be given a higher hard limit than the runtime that
+    // launches it already holds — runc refuses the whole container with
+    // "operation not permitted" rather than clamping. Asking for more than we
+    // have would turn a working server into one that will not start, so the
+    // request is capped at what this process can actually confer. Raise the
+    // node's own `LimitNOFILE` to raise this ceiling.
+    let nofile = spec.resources.nofile.min(max_open_files());
+
     let working_dir = if !spec.working_dir.is_empty() {
         spec.working_dir.clone()
     } else {
@@ -1517,8 +1560,8 @@ fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
             "rlimits": [
                 {
                     "type": "RLIMIT_NOFILE",
-                    "hard": 1024,
-                    "soft": 1024
+                    "hard": nofile,
+                    "soft": nofile
                 }
             ]
         },
@@ -1641,24 +1684,35 @@ impl ContainerdConsoleStream {
         }
     }
 
-    /// Open the console log, once.
+    /// Open the console log.
+    ///
+    /// The shim creates the log when the task starts, which can be after a
+    /// reader attaches — so a missing file is retried rather than latched as
+    /// "no output", which would silently swallow everything a short-lived
+    /// container prints.
     async fn init(&mut self) -> Result<()> {
         if self.initialized {
             return Ok(());
         }
-        self.initialized = true;
-
-        debug!(
-            "Opening console log for container {}: {:?}",
-            self.container_id, self.log_path
-        );
 
         match open_console_log(&self.log_path).await {
-            Ok(reader) => self.reader = reader,
-            Err(e) => warn!(
-                "Failed to open console log for container {}: {}",
-                self.container_id, e
-            ),
+            Ok(Some(reader)) => {
+                debug!(
+                    "Opened console log for container {}: {:?}",
+                    self.container_id, self.log_path
+                );
+                self.reader = Some(reader);
+                self.initialized = true;
+            }
+            // Not there yet; try again on the next read.
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    "Failed to open console log for container {}: {}",
+                    self.container_id, e
+                );
+                self.initialized = true;
+            }
         }
 
         Ok(())
@@ -1712,19 +1766,25 @@ impl ContainerdBidirectionalConsole {
         }
     }
 
-    /// Open the console log, once.
+    /// Open the console log, retrying while the shim has yet to create it.
     async fn init(&mut self) -> Result<()> {
         if self.initialized {
             return Ok(());
         }
-        self.initialized = true;
 
         match open_console_log(&self.log_path).await {
-            Ok(reader) => self.stdout_reader = reader,
-            Err(e) => warn!(
-                "Failed to open console log for container {}: {}",
-                self.container_id, e
-            ),
+            Ok(Some(reader)) => {
+                self.stdout_reader = Some(reader);
+                self.initialized = true;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    "Failed to open console log for container {}: {}",
+                    self.container_id, e
+                );
+                self.initialized = true;
+            }
         }
 
         Ok(())

@@ -35,6 +35,7 @@ Nexus uses **Blueprints** - a superior alternative to Pterodactyl eggs with feat
 | Backup Config | No | Paths, exclusions, retention, scheduling |
 | Clustering | No | Multi-instance load balancing |
 | Dependencies | No | Database, Redis auto-provisioning |
+| Game Install | Install script + container | Same, plus derived from lifecycle/update config, with SteamCMD bootstrapped for you |
 
 ### Official Blueprints
 
@@ -181,6 +182,21 @@ mods:
   mods_dir: /plugins
   marketplaces: [spigot, modrinth]
   auto_update: false
+
+# How the game's own files get there. A container image supplies the tooling —
+# a JVM, SteamCMD's libraries — not the game, so this runs once, in its own
+# container, with the server's directory mounted into it, before the server is
+# ever started. Optional: omit it and the install is derived from
+# `startup.lifecycle.pre_start`, then from `updates.apply`.
+install:
+  # Defaults to container.image; imported eggs name their own installer image.
+  image: ghcr.io/parkervcp/installers:debian
+  entrypoint: bash
+  server_dir: /home/container
+  timeout: 3600s
+  script: |
+    curl -fsSL -o paper.jar \
+      "https://api.papermc.io/v2/projects/paper/versions/{{MC_VERSION}}/builds/{{PAPER_BUILD}}/downloads/paper-{{MC_VERSION}}-{{PAPER_BUILD}}.jar"
 
 # Nexus-exclusive: Update detection
 updates:

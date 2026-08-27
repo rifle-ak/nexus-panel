@@ -198,12 +198,22 @@ Error: Container start failed: <server-id>: Containerd error: Failed to create
 task: ... exec: "./DayZServer": stat ./DayZServer: no such file or directory
 ```
 
-The message names the cause. The most common one is the above: the game's
-files are not there. A blueprint's container image supplies the *tooling*
-(SteamCMD, a JVM), not the game itself, so a server whose files have never been
-downloaded has nothing to execute — its file manager shows an empty directory
-for the same reason. Run the server's update/reinstall action to fetch the game
-files, or put them in `/var/lib/nexus-node/<server-id>/` yourself.
+The message names the cause. If it is the above — the startup binary does not
+exist — the server's game files were never installed. A blueprint's image
+supplies the *tooling* (SteamCMD's libraries, a JVM), not the game itself, so
+until the install has run there is nothing to execute, and the file manager
+shows an empty directory for the same reason.
+
+The panel refuses to start such a server and offers **Install game files**
+instead; the Install tab shows the install's own output. From the API:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/containers/<id>/install
+curl http://localhost:8080/api/v1/containers/<id>/install   # poll for progress
+```
+
+If the install itself is what failed, its log is the thing to read — a Steam
+login refusal or an unreachable CDN appears there verbatim.
 
 **Solutions:**
 
@@ -234,6 +244,32 @@ files, or put them in `/var/lib/nexus-node/<server-id>/` yourself.
    ```bash
    sudo ctr -n nexus-panel run --rm docker.io/image:tag test-run
    ```
+
+### Install Failed
+
+**Symptoms:** the Install tab reports a non-zero exit, and the server stays
+un-startable.
+
+**Solutions:**
+
+1. Read the install log in the panel (or `GET
+   /api/v1/containers/<id>/install`). The install runs the blueprint's own
+   script, so the failure is usually the game's installer talking.
+
+2. `Steamcmd needs to be online` / connection failures: SteamCMD uses Steam's
+   own protocol, not just HTTPS. Check the node's egress — a proxy that only
+   permits HTTPS is not enough.
+
+3. `Please login` / anonymous refusals: some games (DayZ, Arma) will not serve
+   their server files to an anonymous Steam account. Set `STEAM_USERNAME` on
+   the node and prime SteamCMD's cached credentials once by hand.
+
+4. Disk space: a game install is tens of gigabytes. Check `df -h` against
+   `DATA_DIR`.
+
+5. Re-running an install is safe and incremental — SteamCMD validates what is
+   already there rather than re-downloading it — so a failed install can simply
+   be retried once its cause is fixed.
 
 ### TLS/mTLS Errors
 
