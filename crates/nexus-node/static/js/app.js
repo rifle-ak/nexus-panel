@@ -305,7 +305,7 @@ async function renderServerDetail(id) {
 
     // An install kicked off at creation time is already running when the
     // operator first opens the server; follow it without being asked.
-    if (installing) NX.pollInstall();
+    if (installing) NX.pollGameFiles();
 
     // Init console tab
     initConsole();
@@ -345,7 +345,7 @@ NX.switchTab = function(tab) {
   if (tab === 'schedules') loadSchedules();
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
   if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
-  if (tab === 'install') NX.refreshInstall();
+  if (tab === 'install') NX.refreshGameFiles();
 };
 
 // ── Install game files ────────────────────────────────────────────
@@ -366,14 +366,14 @@ function installBadge(state) {
 }
 
 // Show where this server stands and whether installing is possible now.
-NX.refreshInstall = async function() {
+NX.refreshGameFiles = async function() {
   if (!NX.currentServer) return;
-  const summary = document.getElementById('install-summary');
-  const btn = document.getElementById('install-run');
+  const summary = document.getElementById('gamefiles-summary');
+  const btn = document.getElementById('gamefiles-run');
 
   try {
     const c = await api(`/containers/${NX.currentServer}`);
-    NX.installState = c.install_state;
+    NX.gameFilesState = c.install_state;
     if (summary) {
       summary.innerHTML = `
         <div class="text-sm"><strong>Status</strong> ${installBadge(c.install_state)}</div>
@@ -391,33 +391,33 @@ NX.refreshInstall = async function() {
 
   try {
     const job = await api(`/containers/${NX.currentServer}/install`);
-    NX.renderInstallJob(job);
-    if (job.status === 'running') NX.pollInstall();
+    NX.renderGameFilesJob(job);
+    if (job.status === 'running') NX.pollGameFiles();
   } catch (_) {
     // Nothing installed on this node yet — the button is the next step.
   }
 };
 
-NX.startInstall = async function() {
+NX.startGameFilesInstall = async function() {
   if (!NX.currentServer) return;
-  const status = document.getElementById('install-status');
-  const btn = document.getElementById('install-run');
+  const status = document.getElementById('gamefiles-status');
+  const btn = document.getElementById('gamefiles-run');
   status.innerHTML = '<span class="text-muted">Starting install…</span>';
   if (btn) btn.disabled = true;
   try {
     await api(`/containers/${NX.currentServer}/install`, { method: 'POST' });
     toast('Install started', 'success');
-    NX.pollInstall();
+    NX.pollGameFiles();
   } catch (e) {
     status.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
     if (btn) btn.disabled = false;
   }
 };
 
-NX.renderInstallJob = function(job) {
-  const status = document.getElementById('install-status');
-  const out = document.getElementById('install-output');
-  const btn = document.getElementById('install-run');
+NX.renderGameFilesJob = function(job) {
+  const status = document.getElementById('gamefiles-status');
+  const out = document.getElementById('gamefiles-output');
+  const btn = document.getElementById('gamefiles-run');
   if (!status) return;
   const badge = {
     running: '<span class="badge badge-warning">Installing…</span>',
@@ -438,18 +438,18 @@ NX.renderInstallJob = function(job) {
   if (btn) btn.disabled = job.status === 'running';
 };
 
-NX.pollInstall = function() {
-  clearTimeout(NX.installPollTimer);
-  NX.installPollTimer = setTimeout(async () => {
+NX.pollGameFiles = function() {
+  clearTimeout(NX.gameFilesPollTimer);
+  NX.gameFilesPollTimer = setTimeout(async () => {
     if (!NX.currentServer) return;
     try {
       const job = await api(`/containers/${NX.currentServer}/install`);
-      NX.renderInstallJob(job);
+      NX.renderGameFilesJob(job);
       if (job.status === 'running') {
-        NX.pollInstall();
+        NX.pollGameFiles();
       } else {
         // The server's own state changed with it: Start may now be allowed.
-        NX.refreshInstall();
+        NX.refreshGameFiles();
         renderServerDetail(NX.currentServer);
       }
     } catch (_) {}
