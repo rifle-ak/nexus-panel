@@ -85,6 +85,11 @@ pub struct AppState {
     pub update_jobs: crate::update::SharedUpdateJobStore,
     pub mod_jobs: crate::mods::SharedModInstallJobStore,
     pub install_jobs: crate::install::SharedInstallJobStore,
+    /// Applies updates to the node itself.
+    pub updater: crate::selfupdate::SelfUpdater,
+    /// Shared outbound HTTP client, so an update check does not build a new
+    /// TLS stack per request.
+    pub http: reqwest::Client,
 }
 
 type S = Arc<AppState>;
@@ -120,6 +125,10 @@ pub async fn start_web_server(
         .route("/api/v1/node/health", get(api_node_health))
         .route("/api/v1/node/metrics", get(api_node_metrics))
         .route("/api/v1/node/update-check", get(api_update_check))
+        .route(
+            "/api/v1/node/update",
+            get(api_self_update_status).post(api_apply_update),
+        )
         // ── Container CRUD ───────────────────────────────────────────
         .route(
             "/api/v1/containers",
@@ -1684,59 +1693,61 @@ async fn api_marketplace_get_mod(
 // Update check API handler
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct UpdateCheckResponse {
-    current_version: String,
-    latest_version: String,
-    update_available: bool,
-}
-
+/// What this node is running, and what its channel has available.
 async fn api_update_check(
-    State(_s): State<S>,
-) -> Result<Json<UpdateCheckResponse>, (StatusCode, Json<ApiError>)> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
-
-    // Check the latest release from the GitHub API
-    let latest = match reqwest::Client::new()
-        .get("https://api.github.com/repos/rifle-ak/nexus-panel/releases/latest")
-        .header("User-Agent", "nexus-panel")
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                body["tag_name"]
-                    .as_str()
-                    .unwrap_or(&current)
-                    .trim_start_matches('v')
-                    .to_string()
-            } else {
-                current.clone()
-            }
-        }
-        Err(_) => current.clone(),
-    };
-
-    let update_available = is_newer(&latest, &current);
-
-    Ok(Json(UpdateCheckResponse {
-        current_version: current,
-        latest_version: latest,
-        update_available,
-    }))
+    State(s): State<S>,
+) -> Result<Json<crate::version::UpdateStatus>, (StatusCode, Json<ApiError>)> {
+    let channel = crate::version::Channel::from_env();
+    Ok(Json(crate::version::check(&s.http, channel).await))
 }
 
-/// Whether `latest` is a strictly newer release than `current`, compared with
-/// semantic-version ordering (so 0.10.0 correctly beats 0.9.0). Falls back to a
-/// plain string inequality only if either value is not valid semver.
-fn is_newer(latest: &str, current: &str) -> bool {
-    match (
-        semver::Version::parse(latest),
-        semver::Version::parse(current),
-    ) {
-        (Ok(l), Ok(c)) => l > c,
-        _ => latest != current,
+/// Start applying an update to the node itself.
+///
+/// Returns as soon as the updater is launched. It deliberately outlives this
+/// process — finishing the job means restarting the service — so the client
+/// polls `GET` for the result, which survives the node going away and coming
+/// back.
+async fn api_apply_update(
+    State(s): State<S>,
+) -> Result<Json<crate::selfupdate::SelfUpdateJob>, (StatusCode, Json<ApiError>)> {
+    // Updating restarts the node, and a restart mid-install leaves a server
+    // with a half-downloaded game. Running game servers are fine: their
+    // containerd shims are independent of this process.
+    for state in s.manager.list_containers().await {
+        if state.install_state == crate::install::InstallState::Running {
+            return Err(err_json(
+                StatusCode::CONFLICT,
+                format!(
+                    "server {} is installing its game files — updating now would interrupt it",
+                    state.name
+                ),
+            ));
+        }
+    }
+
+    let channel = crate::version::Channel::from_env();
+    let build = crate::version::BuildInfo::current();
+
+    s.updater.start(channel.as_str(), &build.version).map(Json).map_err(|e| {
+        let status = match e {
+            crate::selfupdate::StartError::AlreadyRunning => StatusCode::CONFLICT,
+            crate::selfupdate::StartError::Unsupported(_) => StatusCode::NOT_IMPLEMENTED,
+            crate::selfupdate::StartError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        err_json(status, e.to_string())
+    })
+}
+
+/// The current or most recent self-update, with its log.
+async fn api_self_update_status(
+    State(s): State<S>,
+) -> Result<Json<crate::selfupdate::SelfUpdateJob>, (StatusCode, Json<ApiError>)> {
+    match s.updater.current() {
+        Some(job) => Ok(Json(job)),
+        None => Err(err_json(
+            StatusCode::NOT_FOUND,
+            "this node has not been updated from the panel",
+        )),
     }
 }
 
@@ -1812,9 +1823,7 @@ fn task_from_json(t: ScheduleTaskJson) -> ScheduleTask {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        default_mods_dir, is_newer, mods_dir_for, StartUpdateReq, APP_JS, SHIPPED_BLUEPRINTS,
-    };
+    use super::{default_mods_dir, mods_dir_for, StartUpdateReq, APP_JS, SHIPPED_BLUEPRINTS};
 
     /// No two panel features may claim the same `NX.<name>` handler.
     ///
@@ -1983,17 +1992,5 @@ mod tests {
         // an `@Mod` folder into oxide/plugins would leave it unloadable.
         assert_eq!(mods_dir_for(Some("carbon"), "steam_workshop"), ".");
         assert_eq!(mods_dir_for(None, "steam_workshop"), ".");
-    }
-
-    #[test]
-    fn semver_update_comparison() {
-        // The bug this replaces: string comparison ranked 0.9.0 above 0.10.0.
-        assert!(is_newer("0.10.0", "0.9.0"));
-        assert!(!is_newer("0.9.0", "0.10.0"));
-        assert!(is_newer("1.0.0", "0.1.0"));
-        assert!(!is_newer("0.1.0", "0.1.0"));
-        assert!(!is_newer("0.1.0", "0.2.0"));
-        // Non-semver values fall back to inequality (no false "update").
-        assert!(!is_newer("unknown", "unknown"));
     }
 }

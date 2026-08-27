@@ -692,7 +692,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "egg-importer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "nexus-config",
@@ -1753,7 +1753,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "nexus-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -1767,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-marketplace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-node"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-panel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-whmcs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",

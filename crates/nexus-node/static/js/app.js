@@ -1393,26 +1393,157 @@ NX.renderInstallJob = function(server, job) {
 // ── Update check ─────────────────────────────────────────────────
 
 NX.checkForUpdates = async function() {
-  const el = document.getElementById('update-status');
+  const el = document.getElementById('node-update');
   if (!el) return;
-  el.innerHTML = '<span class="text-muted">Checking for updates...</span>';
+  el.innerHTML = '<span class="text-muted">Checking for updates…</span>';
+
   try {
     const info = await api('/node/update-check');
-    if (info.update_available) {
-      el.innerHTML = `
-        <span class="badge badge-warning" style="margin-right:0.5rem">Update Available</span>
-        <span>v${esc(info.latest_version)} is available (you have v${esc(info.current_version)})</span>
-        <div style="margin-top:0.75rem">
-          <p class="text-sm text-muted">Run the installer to update:</p>
-          <code class="text-sm" style="display:block;margin-top:0.5rem;padding:0.5rem;background:var(--bg-primary);border-radius:var(--radius-sm)">curl -fsSL https://get.nexuspanel.io | sudo bash</code>
-        </div>
-      `;
+    NX.nodeUpdate = info;
+    const c = info.current;
+    const built = `v${esc(c.version)}`
+      + (c.commit_short && c.commit_short !== 'unknown' ? ` · <code>${esc(c.commit_short)}</code>` : '')
+      + (c.dirty ? ' <span class="badge badge-warning">modified</span>' : '');
+
+    let headline;
+    if (info.error) {
+      // Could not reach a conclusion. Saying "up to date" here would be a
+      // guess, and the wrong one to guess.
+      headline = `<span class="badge badge-secondary" style="margin-right:0.5rem">Unknown</span>`
+        + `<span class="text-muted">${esc(info.error)}</span>`;
+    } else if (info.update_available) {
+      const behind = info.commits_behind
+        ? ` — ${info.commits_behind} commit${info.commits_behind === 1 ? '' : 's'} behind`
+        : '';
+      headline = `<span class="badge badge-warning" style="margin-right:0.5rem">Update available</span>`
+        + `<span>${esc(info.latest)} on the <strong>${esc(info.channel)}</strong> channel${esc(behind)}</span>`;
     } else {
-      el.innerHTML = `<span class="badge badge-success" style="margin-right:0.5rem">Up to Date</span><span>v${esc(info.current_version)}</span>`;
+      headline = `<span class="badge badge-success" style="margin-right:0.5rem">Up to date</span>`
+        + `<span class="text-muted">on the <strong>${esc(info.channel)}</strong> channel</span>`;
     }
+
+    el.innerHTML = `${headline}
+      <div class="text-muted text-sm" style="margin-top:0.5rem">Running ${built}</div>`;
+
+    NX.renderNodeUpdateActions();
   } catch (e) {
     el.innerHTML = `<span class="text-muted">Could not check for updates: ${esc(e.message)}</span>`;
   }
+
+  NX.refreshNodeUpdateJob();
+};
+
+// The Update button, shown only when there is something to apply.
+NX.renderNodeUpdateActions = function() {
+  const box = document.getElementById('node-update-actions');
+  if (!box) return;
+  const info = NX.nodeUpdate;
+  const applicable = info && info.update_available;
+  box.innerHTML = `
+    <button class="btn btn-primary" id="node-update-run" onclick="NX.applyNodeUpdate()"
+      ${applicable ? '' : 'disabled'}>Update panel</button>
+    <span class="text-muted text-sm" style="margin-left:0.75rem">
+      ${applicable
+        ? 'Rebuilds and restarts the node. Running game servers keep running; the panel is briefly unavailable.'
+        : 'Nothing to apply.'}
+    </span>`;
+};
+
+NX.applyNodeUpdate = async function() {
+  if (!confirm('Update the panel now?\n\nThe node rebuilds and restarts, so the panel will be '
+    + 'unavailable for a few minutes. Running game servers are not affected. If the new build '
+    + 'fails to start, the previous one is restored automatically.')) return;
+
+  const btn = document.getElementById('node-update-run');
+  if (btn) btn.disabled = true;
+  try {
+    const job = await api('/node/update', { method: 'POST' });
+    toast('Update started', 'success');
+    NX.renderNodeUpdateJob(job);
+    NX.pollNodeUpdate();
+  } catch (e) {
+    toast(e.message, 'error');
+    if (btn) btn.disabled = false;
+  }
+};
+
+NX.refreshNodeUpdateJob = async function() {
+  try {
+    const job = await api('/node/update');
+    NX.renderNodeUpdateJob(job);
+    if (job.status === 'running') NX.pollNodeUpdate();
+  } catch (_) {
+    // Never updated from the panel — nothing to show.
+  }
+};
+
+NX.renderNodeUpdateJob = function(job) {
+  const box = document.getElementById('node-update-job');
+  const log = document.getElementById('node-update-log');
+  if (!box) return;
+
+  const badge = {
+    running: '<span class="badge badge-warning">Updating…</span>',
+    succeeded: '<span class="badge badge-success">Updated</span>',
+    failed: '<span class="badge badge-danger">Update failed</span>',
+    rolled_back: '<span class="badge badge-danger">Rolled back</span>',
+  }[job.status] || esc(job.status);
+
+  let line = `${badge} <span class="text-muted text-sm">from v${esc(job.from_version)} · ${esc(job.channel)} channel</span>`;
+  if (job.error) line += `<div class="text-danger text-sm" style="margin-top:0.35rem">${esc(job.error)}</div>`;
+  if (job.status === 'rolled_back') {
+    line += '<div class="text-muted text-sm" style="margin-top:0.35rem">The previous version was '
+      + 'restored, so this node is still running — but it is still on the old build.</div>';
+  }
+  box.innerHTML = line;
+
+  if (job.log && log) {
+    log.textContent = job.log;
+    log.classList.remove('hidden');
+    log.scrollTop = log.scrollHeight;
+  }
+
+  const btn = document.getElementById('node-update-run');
+  if (btn) btn.disabled = job.status === 'running';
+};
+
+// Follow an update across the restart it causes.
+//
+// The node goes away part-way through — that is the update working, not a
+// failure — so a failed poll is retried rather than surfaced. Only once the
+// node answers again does its status file decide the outcome.
+NX.pollNodeUpdate = function() {
+  clearTimeout(NX.nodeUpdatePollTimer);
+  NX.nodeUpdatePollTimer = setTimeout(async () => {
+    try {
+      const job = await api('/node/update');
+      NX.nodeUpdateUnreachable = 0;
+      NX.renderNodeUpdateJob(job);
+      if (job.status === 'running') {
+        NX.pollNodeUpdate();
+      } else {
+        // Whatever it is now, the version banner is stale.
+        NX.checkForUpdates();
+      }
+    } catch (_) {
+      NX.nodeUpdateUnreachable = (NX.nodeUpdateUnreachable || 0) + 1;
+      const box = document.getElementById('node-update-job');
+      if (box) {
+        box.innerHTML = '<span class="badge badge-warning">Restarting…</span>'
+          + '<span class="text-muted text-sm" style="margin-left:0.5rem">'
+          + 'The node is restarting into the new build. This page reconnects on its own.</span>';
+      }
+      // Roughly ten minutes of a node that never comes back is long enough to
+      // stop pretending it is coming back.
+      if (NX.nodeUpdateUnreachable < 200) {
+        NX.pollNodeUpdate();
+      } else if (box) {
+        box.innerHTML = '<span class="badge badge-danger">Node did not come back</span>'
+          + '<span class="text-muted text-sm" style="margin-left:0.5rem">'
+          + 'Check <code>journalctl -u nexus-node -n 50</code> on the host.</span>';
+      }
+    }
+  }, 3000);
 };
 
 // ── Modal ─────────────────────────────────────────────────────────

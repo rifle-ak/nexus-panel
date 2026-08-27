@@ -52,7 +52,9 @@ pub mod mods;
 pub mod runtime;
 pub mod schedule;
 pub mod secrets;
+pub mod selfupdate;
 pub mod update;
+pub mod version;
 
 // Management modules
 pub mod allocation;

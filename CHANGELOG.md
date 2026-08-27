@@ -7,6 +7,45 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **The panel can update itself.** Settings gains an Update panel: what this
+  node is running, what its channel has available, and a button that applies
+  it. The updater runs in its own transient systemd unit rather than as a child
+  of the node, because applying an update means restarting the node — a child
+  would be killed half-way through replacing the binary. Its status and log
+  live on disk for the same reason: the process that starts the job is not
+  around to finish it, and the panel reads the result back after the node
+  returns. The UI follows the update across that restart instead of reporting
+  the node's absence as a failure.
+- **Failed updates roll back on their own.** If the new binary will not start,
+  the previous one is restored and started, and the panel says so. An update
+  that leaves a game host down until someone notices is not an update anyone
+  should press.
+- **Update channels.** `UPDATE_CHANNEL=stable` (the default) follows published
+  release tags; `UPDATE_CHANNEL=main` follows the branch, which is what the
+  installer's default build already tracks.
+- **The binary knows what it was built from.** `build.rs` stamps the git
+  commit, its date, and whether the tree was dirty, so a node tracking `main`
+  can report how many commits behind it is. Builds without git (a source
+  tarball) say `unknown` rather than failing.
+
+### Fixed
+- **The update check reported a permanent phantom update.** It compared the
+  crate version against the latest release tag, and the manifest still said
+  `0.1.0` while `v0.1.1` was published — so every node claimed an update was
+  available forever, including one running the newest code. The manifest now
+  matches the published release, and an update check that cannot reach a
+  conclusion says so instead of guessing "up to date", which is the one answer
+  that actively misleads.
+- **`install.sh --update` silently skipped everything but the binary.** It
+  never refreshed the systemd unit or the config, so changes to either — the
+  raised `LimitNOFILE`, any new setting — never reached an existing node, on
+  any update, ever. Update mode now reinstalls the unit and merges genuinely
+  new config keys, leaving every value the operator set alone: a changed value
+  stays changed, and a key they commented out stays commented out. Customise
+  the unit with `systemctl edit nexus-node`, since the unit file itself is
+  now managed.
+
+### Added
 - **Game files are now installed.** A blueprint's image supplies the tooling a
   game needs — a JVM, a .NET runtime, the 32-bit libraries SteamCMD links
   against — but never the game itself, and nothing fetched it:

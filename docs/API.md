@@ -229,6 +229,24 @@ choosing to install it — so `POST /api/v1/containers` returns
 `{"id": …, "installing": true}` when one was kicked off. With `auto_start`,
 the server is started once the install succeeds.
 
+## Node Update Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/node/update-check` | What this node is running and what its channel has available |
+| `POST` | `/api/v1/node/update` | Apply an update. 409 if one is running or a server is installing; 501 without systemd |
+| `GET` | `/api/v1/node/update` | The current/most-recent update, with its log. Survives the restart the update causes |
+
+`update-check` reports the running build (`version`, `commit`, `commit_date`,
+`dirty`), the `channel`, the `latest` available on it, `update_available`, and
+`commits_behind` on the `main` channel. When the check cannot reach a
+conclusion it sets `error` and leaves `update_available` false — an unreachable
+GitHub is not evidence of being up to date.
+
+`POST /node/update` returns as soon as the updater is launched; it cannot
+report completion, because completing means restarting the node serving the
+request. Poll `GET` for `running`, `succeeded`, `failed`, or `rolled_back`.
+
 ## Error Codes
 
 | Code | Status | Description |
