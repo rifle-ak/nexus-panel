@@ -8,6 +8,10 @@ use tokio::sync::RwLock;
 /// Mock container runtime for testing
 pub struct MockRuntime {
     containers: Arc<RwLock<HashMap<String, MockContainer>>>,
+    /// Every console command sent, as `(container, command)`.
+    commands: Arc<RwLock<Vec<(String, String)>>>,
+    /// Every signal sent, as `(container, signal)`.
+    signals: Arc<RwLock<Vec<(String, i32)>>>,
 }
 
 #[derive(Clone)]
@@ -24,6 +28,8 @@ impl Default for MockRuntime {
     fn default() -> Self {
         Self {
             containers: Arc::new(RwLock::new(HashMap::new())),
+            commands: Arc::new(RwLock::new(Vec::new())),
+            signals: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -32,6 +38,71 @@ impl MockRuntime {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Make a running mock container exit on its own, as a crashed game
+    /// process would. Anything waiting on it wakes up with `exit_code`.
+    pub async fn simulate_exit(&self, id: &str, exit_code: i32) -> Result<()> {
+        let mut containers = self.containers.write().await;
+        let container = containers
+            .get_mut(id)
+            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+        container.pid = None;
+        container.status = "stopped".to_string();
+        container.exit_code = Some(exit_code);
+        Ok(())
+    }
+
+    /// Whether a container exists in the mock runtime.
+    pub async fn exists(&self, id: &str) -> bool {
+        self.containers.read().await.contains_key(id)
+    }
+
+    /// Console commands sent to `id`, in order.
+    pub async fn commands_sent(&self, id: &str) -> Vec<String> {
+        self.commands
+            .read()
+            .await
+            .iter()
+            .filter(|(c, _)| c == id)
+            .map(|(_, cmd)| cmd.clone())
+            .collect()
+    }
+
+    /// Signals sent to `id`, in order.
+    pub async fn signals_sent(&self, id: &str) -> Vec<i32> {
+        self.signals
+            .read()
+            .await
+            .iter()
+            .filter(|(c, _)| c == id)
+            .map(|(_, sig)| *sig)
+            .collect()
+    }
+}
+
+impl MockRuntime {
+    /// Have a container exit shortly, as a game does after being told to.
+    fn schedule_exit(&self, id: &str, exit_code: i32) {
+        let containers = self.containers.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let mut containers = containers.write().await;
+            if let Some(c) = containers.get_mut(&id) {
+                if c.status == "running" {
+                    c.pid = None;
+                    c.status = "stopped".to_string();
+                    c.exit_code = Some(exit_code);
+                }
+            }
+        });
+    }
+}
+
+/// One-shot install containers are named `<server>-install`; the mock has no
+/// process to run, so they "finish" the moment they start.
+fn is_install_container(id: &str) -> bool {
+    id.ends_with("-install")
 }
 
 #[async_trait]
@@ -75,10 +146,39 @@ impl ContainerRuntime for MockRuntime {
 
         // Simulate PID assignment
         let pid = std::process::id();
-        container.pid = Some(pid);
-        container.status = "running".to_string();
+        if is_install_container(id) {
+            container.pid = None;
+            container.status = "stopped".to_string();
+            container.exit_code = Some(0);
+        } else {
+            container.pid = Some(pid);
+            container.status = "running".to_string();
+            container.exit_code = None;
+        }
 
         Ok(pid)
+    }
+
+    async fn kill(&self, id: &str, signal: i32) -> Result<()> {
+        tracing::info!("[MOCK] Signal {} to container {}", signal, id);
+        {
+            let containers = self.containers.read().await;
+            let container =
+                containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+            if container.status != "running" {
+                return Err(NodeError::InvalidInput(format!(
+                    "Container {} is not running",
+                    id
+                )));
+            }
+        }
+        self.signals.write().await.push((id.to_string(), signal));
+        // The imaginary game honours SIGINT and SIGTERM the way a real one
+        // should: it shuts down.
+        if signal == libc::SIGINT || signal == libc::SIGTERM {
+            self.schedule_exit(id, 0);
+        }
+        Ok(())
     }
 
     async fn stop(&self, id: &str, _timeout_secs: u32) -> Result<i32> {
@@ -96,22 +196,32 @@ impl ContainerRuntime for MockRuntime {
         Ok(0)
     }
 
-    /// A mock container's process is imaginary, so it "exits" cleanly the
-    /// moment it is waited on — enough for tests that drive the install flow
-    /// without a container runtime.
-    async fn wait(&self, id: &str, _timeout: std::time::Duration) -> Result<i32> {
+    /// Block until the mock container is stopped — by `stop`, `kill`
+    /// followed by a stop, or [`MockRuntime::simulate_exit`] — the way a real
+    /// runtime's wait blocks on the process. Install containers exit at
+    /// start, so a wait on one returns at once.
+    async fn wait(&self, id: &str, timeout: std::time::Duration) -> Result<i32> {
         tracing::info!("[MOCK] Waiting for container: {}", id);
-
-        let mut containers = self.containers.write().await;
-        let container = containers
-            .get_mut(id)
-            .ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
-
-        container.pid = None;
-        container.status = "stopped".to_string();
-        container.exit_code = Some(0);
-
-        Ok(0)
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            {
+                let containers = self.containers.read().await;
+                match containers.get(id) {
+                    // Deleted while we waited: gone is as exited as it gets.
+                    None => return Ok(0),
+                    Some(c) if c.status != "running" => return Ok(c.exit_code.unwrap_or(0)),
+                    Some(_) => {}
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(NodeError::ContainerdError(format!(
+                    "Container {} did not exit within {}s",
+                    id,
+                    timeout.as_secs()
+                )));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
     }
 
     async fn delete(&self, id: &str) -> Result<()> {
@@ -183,6 +293,11 @@ impl ContainerRuntime for MockRuntime {
 
         // Simulate command being sent
         tracing::debug!("[MOCK] Command received: {}", command);
+        self.commands.write().await.push((id.to_string(), command.to_string()));
+        // The imaginary game obeys the usual shutdown commands.
+        if matches!(command.trim(), "stop" | "quit" | "exit") {
+            self.schedule_exit(id, 0);
+        }
         Ok(())
     }
 

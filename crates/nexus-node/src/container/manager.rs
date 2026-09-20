@@ -1,17 +1,19 @@
+use crate::container::startup::render_argv;
 use crate::container::state::{ContainerState, ContainerStatus};
 use crate::error::{NodeError, Result};
 use crate::install::{InstallPlan, InstallState};
 use crate::metrics::Metrics;
 use crate::runtime::{
-    ContainerInfo, ContainerRuntime, ContainerSpec, Mount, PortMapping, ResourceLimits,
+    container_user, resolve_capabilities, rlimit_name, ContainerInfo, ContainerRuntime,
+    ContainerSpec, Mount, PortMapping, ResourceLimits, Rlimit, SeccompProfile, SecurityOptions,
 };
-use nexus_config::GameConfig;
+use nexus_config::{GameConfig, LifecycleAction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Subdirectory of `DATA_DIR` where container tracking state is persisted.
@@ -32,7 +34,35 @@ const INSTALL_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// How often an install's output is pulled from its console while it runs.
 const INSTALL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// How long a server gets to shut down when neither the caller nor the
+/// blueprint says.
+const DEFAULT_STOP_TIMEOUT: u32 = 30;
+
+/// Longest a `pre_stop` command's `delay` is honoured; a blueprint cannot
+/// make a stop take minutes by asking for a pause.
+const MAX_PRE_STOP_DELAY: Duration = Duration::from_secs(60);
+
+/// A watcher re-issues its wait this often; the runtime's wait is otherwise
+/// unbounded.
+const WATCH_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// A server over its disk allowance is stopped once it has stayed over for
+/// this long, so a save that briefly overshoots does not kill the game.
+const DISK_GRACE: Duration = Duration::from_secs(60);
+
+/// How often disk usage is measured and console logs are trimmed.
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Console log size at which the log is trimmed, and how much of its tail
+/// survives. `NEXUS_CONSOLE_LOG_MAX_BYTES` overrides the first.
+const DEFAULT_LOG_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const LOG_KEEP_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Manages container lifecycle and state
+///
+/// Cheap to clone: every field is a shared handle, so background work (the
+/// per-server exit watcher, the maintenance loop) holds its own copy.
+#[derive(Clone)]
 pub struct ContainerManager {
     /// Container runtime (Containerd, Docker, or Mock)
     runtime: Arc<dyn ContainerRuntime>,
@@ -45,17 +75,26 @@ pub struct ContainerManager {
 
     /// Metrics collector
     metrics: Arc<Metrics>,
+
+    /// Per-container start generation. Bumped on every start and every
+    /// deliberate stop, so an exit watcher can tell "the process I was
+    /// watching died" from "someone stopped it, and maybe started it again".
+    generations: Arc<RwLock<HashMap<String, u64>>>,
+
+    /// When each container last crashed, for the restart policy's window.
+    crashes: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
+
+    /// When each container first went over its disk allowance.
+    disk_over_since: Arc<RwLock<HashMap<String, Instant>>>,
+
+    /// The unprivileged user game servers run as and their files belong to.
+    game_user: (u32, u32),
 }
 
 impl ContainerManager {
     /// Create a new container manager with a specific runtime
     pub fn with_runtime(runtime: Arc<dyn ContainerRuntime>, data_dir: PathBuf) -> Self {
-        Self {
-            runtime,
-            states: Arc::new(RwLock::new(HashMap::new())),
-            data_dir,
-            metrics: Arc::new(Metrics::default()),
-        }
+        Self::with_runtime_and_metrics(runtime, data_dir, Arc::new(Metrics::default()))
     }
 
     /// Create a new container manager with metrics
@@ -69,7 +108,16 @@ impl ContainerManager {
             states: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
             metrics,
+            generations: Arc::new(RwLock::new(HashMap::new())),
+            crashes: Arc::new(RwLock::new(HashMap::new())),
+            disk_over_since: Arc::new(RwLock::new(HashMap::new())),
+            game_user: container_user(),
         }
+    }
+
+    /// The uid/gid game servers run as and their files belong to.
+    pub fn game_user(&self) -> (u32, u32) {
+        self.game_user
     }
 
     /// Create a new container manager with mock runtime (for testing)
@@ -245,11 +293,20 @@ impl ContainerManager {
                 Ok(info) => reconcile_state(&mut state, &info),
                 Err(_) => {
                     // The runtime no longer knows this container, so it cannot
-                    // be running. Keep our metadata but clear the running view.
+                    // be running. Its files and blueprint are still here, so
+                    // rebuild the container record from them rather than
+                    // leave a server that can never be started again.
                     if state.status.is_running() {
                         state.status = ContainerStatus::Stopped;
                         state.pid = None;
                     }
+                    self.recreate_from_blueprint(&state.id).await;
+                }
+            }
+
+            if state.disk_limit_bytes == 0 {
+                if let Some(config) = self.load_blueprint(&state.id).await {
+                    state.disk_limit_bytes = parse_size(&config.resources.disk.min).unwrap_or(0);
                 }
             }
 
@@ -258,6 +315,13 @@ impl ContainerManager {
                 states.insert(state.id.clone(), state.clone());
             }
             self.persist_state(&state).await;
+
+            // A server still running under the restarted node needs someone
+            // watching for its exit again.
+            if state.status.is_running() {
+                let generation = self.bump_generation(&state.id).await;
+                self.spawn_exit_watcher(state.id.clone(), generation);
+            }
             restored += 1;
         }
 
@@ -266,6 +330,36 @@ impl ContainerManager {
             self.update_container_count_metrics().await;
         }
         restored
+    }
+
+    /// Rebuild the runtime's record of a container from its stored blueprint.
+    ///
+    /// Used when containerd has lost the container (a namespace wipe, a
+    /// reinstall of containerd) but the server's files and blueprint survive.
+    async fn recreate_from_blueprint(&self, id: &str) {
+        let Some(config) = self.load_blueprint(id).await else {
+            warn!(
+                "Container {} is gone from the runtime and has no stored blueprint; it cannot be started until it is recreated",
+                id
+            );
+            return;
+        };
+        let server_dir = self.data_dir.join(id);
+        let spec = match Self::config_to_spec(&config, &server_dir, self.game_user) {
+            Ok(spec) => spec,
+            Err(e) => {
+                warn!("Cannot rebuild container {} from its blueprint: {}", id, e);
+                return;
+            }
+        };
+        if let Err(e) = self.runtime.pull_image(&config.container.image).await {
+            warn!("Cannot rebuild container {}: image pull failed: {}", id, e);
+            return;
+        }
+        match self.runtime.create(id, spec).await {
+            Ok(_) => info!("Rebuilt container {} from its stored blueprint", id),
+            Err(e) => warn!("Cannot rebuild container {}: {}", id, e),
+        }
     }
 
     /// Create a new container from a Nexus config
@@ -296,12 +390,13 @@ impl ContainerManager {
             }
         }
 
-        // Create server data directory
+        // Create server data directory, owned by the user the game runs as.
         let server_dir = self.data_dir.join(&container_id);
         std::fs::create_dir_all(&server_dir).map_err(|e| {
             self.metrics.record_container_operation("create", "error", start.elapsed());
             NodeError::Internal(format!("Failed to create server directory: {}", e))
         })?;
+        chown_path(&server_dir, self.game_user);
 
         // Pull image first
         info!("Pulling image: {}", config.container.image);
@@ -318,7 +413,7 @@ impl ContainerManager {
         }
 
         // Convert config to container spec
-        let spec = Self::config_to_spec(config, &server_dir)?;
+        let spec = Self::config_to_spec(config, &server_dir, self.game_user)?;
 
         // Create container via runtime
         let _container_info = self.runtime.create(&container_id, spec).await.map_err(|e| {
@@ -342,6 +437,7 @@ impl ContainerManager {
         } else {
             InstallState::NotRequired
         };
+        state.disk_limit_bytes = parse_size(&config.resources.disk.min).unwrap_or(0);
 
         // Store state (in memory + on disk)
         self.set_state(state).await;
@@ -474,12 +570,19 @@ impl ContainerManager {
             // not the memory headroom the game itself will need.
             resources: ResourceLimits {
                 cpu_shares: 1024,
+                cpu_millicores: None,
                 memory_bytes: INSTALL_MEMORY_BYTES,
                 memory_swap_bytes: 0,
+                pids_limit: Some(2048),
+                rlimits: Vec::new(),
                 // SteamCMD raises its own descriptor limit to 2048 and warns
                 // loudly when it cannot.
                 nofile: crate::runtime::DEFAULT_NOFILE,
             },
+            // The script lays files down as root; they are handed to the
+            // game's user once it has finished.
+            security: SecurityOptions::for_install(),
+            hostname: format!("install-{}", short_id(container_id)),
         };
 
         self.runtime.create(&install_id, spec).await?;
@@ -502,6 +605,11 @@ impl ContainerManager {
             let _ = self.runtime.stop(&install_id, 5).await;
         }
         let _ = self.runtime.delete(&install_id).await;
+
+        // Whatever the script wrote belongs to the game now.
+        let dir = server_dir.to_path_buf();
+        let user = self.game_user;
+        let _ = tokio::task::spawn_blocking(move || chown_recursive(&dir, user)).await;
 
         exit_code
     }
@@ -560,6 +668,15 @@ impl ContainerManager {
             return Ok(());
         }
 
+        // A suspended server is one the billing system said may not run.
+        if state.status.is_suspended() {
+            self.metrics.record_container_operation("start", "suspended", start.elapsed());
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is suspended",
+                container_id
+            )));
+        }
+
         // A server whose game files were never installed cannot start: its
         // startup command does not exist yet. Saying so beats letting runc
         // report a missing binary.
@@ -568,6 +685,25 @@ impl ContainerManager {
                 .record_container_operation("start", "not_installed", start.elapsed());
             return Err(NodeError::InvalidInput(reason.to_string()));
         }
+
+        // Over its disk allowance: refuse rather than let it write more.
+        if state.disk_exceeded() {
+            self.metrics
+                .record_container_operation("start", "disk_exceeded", start.elapsed());
+            return Err(NodeError::InvalidInput(format!(
+                "Container {} is over its disk allowance ({} of {} MiB used); free space before starting it",
+                container_id,
+                state.disk_used_bytes / (1024 * 1024),
+                state.disk_limit_bytes / (1024 * 1024)
+            )));
+        }
+
+        // Files the panel or an install wrote as root must be the game's
+        // before it runs as its own user.
+        self.ensure_ownership(container_id).await;
+
+        // Any watcher from a previous run is now stale.
+        let generation = self.bump_generation(container_id).await;
 
         // Start container via runtime
         let pid = self.runtime.start(container_id).await.map_err(|e| {
@@ -583,6 +719,9 @@ impl ContainerManager {
         // Update state (in memory + on disk)
         self.set_state(state).await;
 
+        // Watch for the process exiting on its own.
+        self.spawn_exit_watcher(container_id.to_string(), generation);
+
         // Update metrics
         self.metrics.record_container_operation("start", "success", start.elapsed());
         self.update_container_count_metrics().await;
@@ -592,14 +731,32 @@ impl ContainerManager {
         Ok(())
     }
 
-    /// Stop a container
+    /// Stop a container.
+    ///
+    /// The shutdown is as graceful as the blueprint allows: `pre_stop`
+    /// console commands first (`save-all`, `stop`), or the blueprint's
+    /// `stop_signal`, and only then the runtime's SIGTERM/SIGKILL. A game
+    /// that is told to stop saves its world; one that is killed loses it.
     pub async fn stop_container(&self, container_id: &str, timeout: Option<u32>) -> Result<()> {
         let start = Instant::now();
-        let timeout = timeout.unwrap_or(30);
+        let blueprint = self.load_blueprint(container_id).await;
+        let timeout = timeout
+            .or_else(|| {
+                blueprint
+                    .as_ref()
+                    .and_then(|c| c.startup.stop_timeout.as_deref())
+                    .and_then(nexus_config::parse_duration)
+                    .map(|d| d.as_secs() as u32)
+            })
+            .unwrap_or(DEFAULT_STOP_TIMEOUT);
         info!(
             "Stopping container: {} (timeout: {}s)",
             container_id, timeout
         );
+
+        // This stop is deliberate: the exit watcher must not treat the exit
+        // it is about to see as a crash.
+        self.bump_generation(container_id).await;
 
         // Get current state
         let mut state = {
@@ -621,8 +778,14 @@ impl ContainerManager {
             return Ok(());
         }
 
-        // Stop container via runtime (handles graceful shutdown)
-        let exit_code = self.runtime.stop(container_id, timeout).await.map_err(|e| {
+        // Ask nicely the way the blueprint says, then let the runtime
+        // finish the job (or reap the task if the ask worked).
+        let remaining = if state.status.is_running() {
+            self.graceful_shutdown(container_id, blueprint.as_ref(), timeout).await
+        } else {
+            timeout
+        };
+        let exit_code = self.runtime.stop(container_id, remaining).await.map_err(|e| {
             self.metrics.record_container_operation("stop", "error", start.elapsed());
             NodeError::StopFailed {
                 container_id: container_id.to_string(),
@@ -630,7 +793,11 @@ impl ContainerManager {
             }
         })?;
 
+        // A stop that was asked for is not a crash, whatever the exit code:
+        // many games exit non-zero on a console `stop`.
         state.mark_stopped(exit_code);
+        state.status = ContainerStatus::Stopped;
+        self.disk_over_since.write().await.remove(container_id);
 
         // Update state (in memory + on disk)
         self.set_state(state).await;
@@ -642,6 +809,337 @@ impl ContainerManager {
         info!("Container {} stopped successfully", container_id);
 
         Ok(())
+    }
+
+    /// Run the blueprint's shutdown sequence and wait for the process to
+    /// exit. Returns how much of `timeout` is left for the runtime's own stop.
+    async fn graceful_shutdown(
+        &self,
+        container_id: &str,
+        blueprint: Option<&GameConfig>,
+        timeout: u32,
+    ) -> u32 {
+        let Some(config) = blueprint else {
+            return timeout;
+        };
+        let started = Instant::now();
+        let budget = Duration::from_secs(timeout as u64);
+
+        let commands: Vec<&LifecycleAction> = config
+            .startup
+            .lifecycle
+            .as_ref()
+            .map(|l| l.pre_stop.iter().collect())
+            .unwrap_or_default();
+
+        let mut asked = false;
+        for action in commands {
+            if let LifecycleAction::SendCommand { command, delay } = action {
+                match self.runtime.send_command(container_id, command).await {
+                    Ok(()) => asked = true,
+                    Err(e) => {
+                        warn!(
+                            "pre_stop command {:?} for {} could not be sent: {}",
+                            command, container_id, e
+                        );
+                        break;
+                    }
+                }
+                if let Some(delay) = delay.as_deref().and_then(nexus_config::parse_duration) {
+                    tokio::time::sleep(delay.min(MAX_PRE_STOP_DELAY)).await;
+                }
+            }
+        }
+
+        if !asked {
+            if let Some(signal) = config.startup.stop_signal.as_deref().and_then(signal_number) {
+                if signal != libc::SIGTERM {
+                    match self.runtime.kill(container_id, signal).await {
+                        Ok(()) => asked = true,
+                        Err(e) => warn!(
+                            "stop signal {} for {} could not be sent: {}",
+                            signal, container_id, e
+                        ),
+                    }
+                }
+            }
+        }
+
+        if !asked {
+            return timeout;
+        }
+
+        let left = budget.saturating_sub(started.elapsed());
+        match self.runtime.wait(container_id, left).await {
+            Ok(_) => {
+                info!("Container {} shut down cleanly", container_id);
+                // Just enough for the runtime to reap the exited task.
+                5
+            }
+            Err(_) => {
+                warn!(
+                    "Container {} ignored its shutdown request for {}s; forcing",
+                    container_id,
+                    left.as_secs()
+                );
+                // The graceful budget is spent; a short SIGTERM grace remains.
+                5
+            }
+        }
+    }
+
+    // ── Exit watching and crash recovery ─────────────────────────────
+
+    async fn bump_generation(&self, container_id: &str) -> u64 {
+        let mut generations = self.generations.write().await;
+        let next = generations.get(container_id).copied().unwrap_or(0) + 1;
+        generations.insert(container_id.to_string(), next);
+        next
+    }
+
+    async fn current_generation(&self, container_id: &str) -> u64 {
+        self.generations.read().await.get(container_id).copied().unwrap_or(0)
+    }
+
+    /// Follow a started container until its process exits, then record what
+    /// happened and apply the blueprint's restart policy.
+    fn spawn_exit_watcher(&self, container_id: String, generation: u64) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match this.runtime.wait(&container_id, WATCH_INTERVAL).await {
+                    Ok(code) => {
+                        this.handle_exit(&container_id, generation, code).await;
+                        return;
+                    }
+                    Err(_) => {
+                        // The wait timed out or the runtime hiccuped. Stop
+                        // watching if this run is over; otherwise look at the
+                        // runtime's view before waiting again.
+                        if this.current_generation(&container_id).await != generation {
+                            return;
+                        }
+                        match this.runtime.inspect(&container_id).await {
+                            Ok(info) if info.status == "running" => continue,
+                            Ok(info) => {
+                                let code = info.exit_code.unwrap_or(-1);
+                                this.handle_exit(&container_id, generation, code).await;
+                                return;
+                            }
+                            Err(_) => {
+                                this.handle_exit(&container_id, generation, -1).await;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// The process behind `container_id` exited without being asked to.
+    async fn handle_exit(&self, container_id: &str, generation: u64, exit_code: i32) {
+        {
+            // A deliberate stop (or a newer start) already moved on.
+            let mut generations = self.generations.write().await;
+            if generations.get(container_id).copied().unwrap_or(0) != generation {
+                return;
+            }
+            generations.insert(container_id.to_string(), generation + 1);
+        }
+
+        let mut state = {
+            let states = self.states.read().await;
+            match states.get(container_id) {
+                Some(state) if state.status.is_running() => state.clone(),
+                _ => return,
+            }
+        };
+
+        let crashed = exit_code != 0;
+        state.mark_stopped(exit_code);
+        if crashed {
+            state.crash_count += 1;
+            self.metrics.record_container_operation("crash", "detected", Duration::ZERO);
+            warn!(
+                "Container {} ({}) exited unexpectedly with code {} (crash #{})",
+                container_id, state.name, exit_code, state.crash_count
+            );
+        } else {
+            info!(
+                "Container {} ({}) exited cleanly on its own",
+                container_id, state.name
+            );
+        }
+        let name = state.name.clone();
+        self.set_state(state).await;
+        self.update_container_count_metrics().await;
+
+        // Reap the exited task so the next start does not collide with it.
+        let _ = self.runtime.stop(container_id, 1).await;
+
+        if !crashed {
+            return;
+        }
+
+        let Some(config) = self.load_blueprint(container_id).await else {
+            return;
+        };
+        let policy = &config.startup.restart;
+        if !policy.on_crash {
+            return;
+        }
+        let reset_after =
+            nexus_config::parse_duration(&policy.reset_after).unwrap_or(Duration::from_secs(600));
+        let delay = nexus_config::parse_duration(&policy.delay).unwrap_or(Duration::from_secs(5));
+
+        let recent = {
+            let mut crashes = self.crashes.write().await;
+            let entry = crashes.entry(container_id.to_string()).or_default();
+            let now = Instant::now();
+            entry.retain(|t| now.duration_since(*t) < reset_after);
+            entry.push(now);
+            entry.len() as u32
+        };
+        if recent > policy.max_retries {
+            error!(
+                "Container {} ({}) crashed {} times within {}; not restarting it again",
+                container_id, name, recent, policy.reset_after
+            );
+            return;
+        }
+
+        info!(
+            "Restarting container {} ({}) in {}s (crash {} of {} allowed)",
+            container_id,
+            name,
+            delay.as_secs(),
+            recent,
+            policy.max_retries
+        );
+        let this = self.clone();
+        let id = container_id.to_string();
+        let expected = generation + 1;
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            // Someone may have stopped or started it by hand meanwhile.
+            if this.current_generation(&id).await != expected {
+                return;
+            }
+            if let Err(e) = this.start_container(&id).await {
+                error!("Crash restart of container {} failed: {}", id, e);
+            } else {
+                this.metrics.record_container_operation("crash", "restarted", Duration::ZERO);
+            }
+        });
+    }
+
+    // ── Ownership ────────────────────────────────────────────────────
+
+    /// Make sure a server's directory belongs to the game's user.
+    ///
+    /// Cheap when it already does (one `stat`); a full walk only when the
+    /// top level is wrong, which is the case for servers created before
+    /// games ran unprivileged.
+    async fn ensure_ownership(&self, container_id: &str) {
+        let dir = self.data_dir.join(container_id);
+        let user = self.game_user;
+        let _ = tokio::task::spawn_blocking(move || {
+            use std::os::unix::fs::MetadataExt;
+            match std::fs::metadata(&dir) {
+                Ok(meta) if meta.uid() == user.0 && meta.gid() == user.1 => {}
+                Ok(_) => chown_recursive(&dir, user),
+                Err(_) => {}
+            }
+        })
+        .await;
+    }
+
+    // ── Disk usage and log housekeeping ──────────────────────────────
+
+    /// Measure every server's directory and stop any that has stayed over
+    /// its allowance.
+    pub async fn refresh_disk_usage(&self) {
+        let ids: Vec<String> = self.states.read().await.keys().cloned().collect();
+        for id in ids {
+            let dir = self.data_dir.join(&id);
+            let used = tokio::task::spawn_blocking(move || crate::provision::dir_size(&dir))
+                .await
+                .unwrap_or(0);
+
+            let (exceeded, running, name) = {
+                let mut states = self.states.write().await;
+                let Some(state) = states.get_mut(&id) else {
+                    continue;
+                };
+                state.disk_used_bytes = used;
+                (
+                    state.disk_exceeded(),
+                    state.status.is_running(),
+                    state.name.clone(),
+                )
+            };
+
+            if !exceeded {
+                self.disk_over_since.write().await.remove(&id);
+                continue;
+            }
+            if !running {
+                continue;
+            }
+            let since = {
+                let mut over = self.disk_over_since.write().await;
+                *over.entry(id.clone()).or_insert_with(Instant::now)
+            };
+            if since.elapsed() >= DISK_GRACE {
+                error!(
+                    "Container {} ({}) is over its disk allowance ({} MiB used); stopping it",
+                    id,
+                    name,
+                    used / (1024 * 1024)
+                );
+                if let Err(e) = self.stop_container(&id, None).await {
+                    warn!("Could not stop over-quota container {}: {}", id, e);
+                }
+            } else {
+                warn!(
+                    "Container {} ({}) is over its disk allowance ({} MiB used); stopping in {}s unless it frees space",
+                    id,
+                    name,
+                    used / (1024 * 1024),
+                    DISK_GRACE.saturating_sub(since.elapsed()).as_secs()
+                );
+            }
+        }
+    }
+
+    /// Trim every running server's console log to its cap.
+    pub async fn trim_console_logs(&self) {
+        let max = std::env::var("NEXUS_CONSOLE_LOG_MAX_BYTES")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > LOG_KEEP_BYTES)
+            .unwrap_or(DEFAULT_LOG_MAX_BYTES);
+        let ids: Vec<String> = self.states.read().await.keys().cloned().collect();
+        for id in ids {
+            if let Err(e) = self.runtime.trim_console_log(&id, max, LOG_KEEP_BYTES).await {
+                warn!("Could not trim console log for {}: {}", id, e);
+            }
+        }
+    }
+
+    /// Run disk accounting and log trimming for the life of the process.
+    pub fn start_maintenance(&self) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(MAINTENANCE_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                this.refresh_disk_usage().await;
+                this.trim_console_logs().await;
+            }
+        });
     }
 
     /// Restart a container
@@ -935,6 +1433,7 @@ impl ContainerManager {
         std::fs::create_dir_all(&server_dir).map_err(|e| {
             NodeError::Internal(format!("Failed to create server directory: {}", e))
         })?;
+        chown_path(&server_dir, self.game_user);
 
         // Re-pull the image
         self.runtime.pull_image(&state.image).await?;
@@ -999,7 +1498,7 @@ impl ContainerManager {
         self.runtime.pull_image(&config.container.image).await?;
 
         let server_dir = self.data_dir.join(container_id);
-        let spec = Self::config_to_spec(config, &server_dir)?;
+        let spec = Self::config_to_spec(config, &server_dir, self.game_user)?;
 
         // A missing runtime container is fine here: it is about to exist.
         let _ = self.runtime.delete(container_id).await;
@@ -1013,6 +1512,7 @@ impl ContainerManager {
 
         state.name = config.metadata.name.clone();
         state.image = config.container.image.clone();
+        state.disk_limit_bytes = parse_size(&config.resources.disk.min).unwrap_or(0);
         self.set_state(state).await;
         self.persist_blueprint(container_id, config).await;
 
@@ -1073,10 +1573,13 @@ impl ContainerManager {
     }
 
     /// Convert GameConfig to ContainerSpec
-    fn config_to_spec(config: &GameConfig, server_dir: &std::path::Path) -> Result<ContainerSpec> {
-        // Build command from startup config
-        let mut command = vec![config.startup.command.clone()];
-        command.extend(config.startup.args.clone());
+    fn config_to_spec(
+        config: &GameConfig,
+        server_dir: &std::path::Path,
+        user: (u32, u32),
+    ) -> Result<ContainerSpec> {
+        // The command line, with the server's variables rendered into it.
+        let argv = render_argv(config)?;
 
         // Convert environment variables
         let mut env = config.container.environment.clone();
@@ -1091,64 +1594,160 @@ impl ContainerManager {
             read_only: false,
         }];
 
-        // Convert ports
+        // Ports, resolved through the variables the same way the command
+        // line is. Advisory with host networking, but at least true.
+        let vars = crate::container::startup::startup_vars(config);
         let ports: Vec<PortMapping> = config
             .networking
             .ports
             .iter()
             .filter_map(|port| {
-                // Parse internal port (skip templates)
-                if let Ok(container_port) = port.internal.parse::<u16>() {
-                    let protocol = match port.protocol {
-                        nexus_config::Protocol::Tcp => "tcp",
-                        nexus_config::Protocol::Udp => "udp",
-                        nexus_config::Protocol::Both => "tcp", // Default to TCP for Both
-                    };
-                    Some(PortMapping {
-                        container_port,
-                        host_port: container_port, // Use same port for now
-                        protocol: protocol.to_string(),
-                    })
-                } else {
-                    None
-                }
+                let rendered = crate::install::substitute(&port.internal, &vars);
+                let container_port = rendered.trim().parse::<u16>().ok()?;
+                let protocol = match port.protocol {
+                    nexus_config::Protocol::Tcp => "tcp",
+                    nexus_config::Protocol::Udp => "udp",
+                    nexus_config::Protocol::Both => "both",
+                };
+                Some(PortMapping {
+                    container_port,
+                    host_port: container_port,
+                    protocol: protocol.to_string(),
+                })
             })
             .collect();
 
-        // A blueprint may raise the open-file limit; game servers and SteamCMD
-        // both want more than the conservative default.
-        let nofile = config
+        // ulimits: nofile has its own field; the rest ride along.
+        let ulimits = config
             .performance
             .as_ref()
             .and_then(|p| p.kernel.as_ref())
-            .and_then(|k| k.ulimits.get("nofile").copied())
+            .map(|k| k.ulimits.clone())
+            .unwrap_or_default();
+        let nofile = ulimits
+            .get("nofile")
+            .copied()
             .filter(|n| *n > 0)
             .unwrap_or(crate::runtime::DEFAULT_NOFILE);
+        let rlimits: Vec<Rlimit> = ulimits
+            .iter()
+            .filter(|(k, v)| k.as_str() != "nofile" && **v > 0)
+            .filter_map(|(k, v)| {
+                rlimit_name(k).map(|kind| Rlimit {
+                    kind: kind.to_string(),
+                    soft: *v,
+                    hard: *v,
+                })
+            })
+            .collect();
 
         // Parse resource limits
         let cpu_shares = config.resources.cpu.shares as u64;
+        let cpu_millicores = Some(config.resources.cpu.max).filter(|m| *m > 0);
         let memory_bytes = parse_size(&config.resources.memory.max)?;
         let memory_swap_bytes = if let Some(ref swap) = config.resources.memory.swap {
             parse_size(swap)?
         } else {
-            0 // No swap limit
+            0
+        };
+
+        let security = SecurityOptions {
+            uid: user.0,
+            gid: user.1,
+            capabilities: resolve_capabilities(
+                &config.security.capabilities.drop,
+                &config.security.capabilities.add,
+            ),
+            no_new_privileges: config.security.no_new_privileges,
+            read_only_root: config.security.read_only_root,
+            seccomp: SeccompProfile::parse(&config.security.seccomp_profile),
         };
 
         Ok(ContainerSpec {
             image: config.container.image.clone(),
-            command: vec![], // Base command is empty, args contain everything
-            args: command,   // Full command + args go here
+            command: vec![],
+            args: argv,
             env,
             working_dir: config.startup.working_dir.clone(),
             mounts,
             ports,
             resources: ResourceLimits {
                 cpu_shares,
+                cpu_millicores,
                 memory_bytes,
                 memory_swap_bytes,
+                pids_limit: Some(config.security.pids_limit).filter(|p| *p > 0),
+                rlimits,
                 nofile,
             },
+            security,
+            hostname: server_hostname(config, server_dir),
         })
+    }
+}
+
+/// A hostname for the container: the server's id, which is what appears in
+/// logs, rather than the same word for every server on the node.
+fn server_hostname(config: &GameConfig, server_dir: &Path) -> String {
+    let id = server_dir.file_name().and_then(|f| f.to_str()).unwrap_or(&config.metadata.id);
+    format!("nx-{}", short_id(id))
+}
+
+/// The first 12 characters of an id, for names that must stay short.
+fn short_id(id: &str) -> String {
+    id.chars().take(12).collect()
+}
+
+/// `SIGINT`, `INT` or `2` → 2.
+fn signal_number(name: &str) -> Option<i32> {
+    let upper = name.trim().to_ascii_uppercase();
+    if let Ok(n) = upper.parse::<i32>() {
+        return (n > 0 && n < 65).then_some(n);
+    }
+    let short = upper.strip_prefix("SIG").unwrap_or(&upper);
+    Some(match short {
+        "HUP" => libc::SIGHUP,
+        "INT" => libc::SIGINT,
+        "QUIT" => libc::SIGQUIT,
+        "KILL" => libc::SIGKILL,
+        "USR1" => libc::SIGUSR1,
+        "USR2" => libc::SIGUSR2,
+        "TERM" => libc::SIGTERM,
+        _ => return None,
+    })
+}
+
+/// Give one path to the game's user. Best-effort: a node not running as root
+/// (a development checkout) cannot, and its containers run as it anyway.
+fn chown_path(path: &Path, user: (u32, u32)) {
+    if let Err(e) = std::os::unix::fs::lchown(path, Some(user.0), Some(user.1)) {
+        if e.kind() != std::io::ErrorKind::PermissionDenied {
+            warn!("Could not chown {:?}: {}", path, e);
+        }
+    }
+}
+
+/// Give a whole tree to the game's user, symlinks included but not followed.
+fn chown_recursive(root: &Path, user: (u32, u32)) {
+    use std::os::unix::fs::MetadataExt;
+    let mut changed = 0u64;
+    for entry in walkdir::WalkDir::new(root).follow_links(false).into_iter().flatten() {
+        let already =
+            entry.metadata().map(|m| m.uid() == user.0 && m.gid() == user.1).unwrap_or(true);
+        if already {
+            continue;
+        }
+        match std::os::unix::fs::lchown(entry.path(), Some(user.0), Some(user.1)) {
+            Ok(()) => changed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(e) => warn!("Could not chown {:?}: {}", entry.path(), e),
+        }
+    }
+    if changed > 0 {
+        info!(
+            "Set ownership of {} entries under {:?} to {}:{}",
+            changed, root, user.0, user.1
+        );
     }
 }
 
@@ -1191,8 +1790,15 @@ fn reconcile_state(state: &mut ContainerState, info: &ContainerInfo) {
             state.pid = info.pid;
         }
         "created" => {
+            // A container with no task. One that was never started is
+            // Created; one we thought was running had its task reaped while
+            // we were away, which is a stop with the exit code lost.
             if !state.status.is_suspended() {
-                state.status = ContainerStatus::Created;
+                state.status = if state.status.is_running() {
+                    ContainerStatus::Stopped
+                } else {
+                    ContainerStatus::Created
+                };
             }
             state.pid = None;
         }
@@ -1491,5 +2097,311 @@ security:
         // A restore now finds nothing.
         let manager2 = ContainerManager::new(data_dir);
         assert_eq!(manager2.restore().await, 0);
+    }
+
+    // ── Runtime correctness ──────────────────────────────────────────
+
+    /// A manager over a mock runtime we can also drive directly.
+    fn mock_manager() -> (
+        ContainerManager,
+        Arc<crate::runtime::mock::MockRuntime>,
+        TempDir,
+    ) {
+        let dir = TempDir::new().unwrap();
+        let runtime = Arc::new(crate::runtime::mock::MockRuntime::new());
+        let manager = ContainerManager::with_runtime(runtime.clone(), dir.path().to_path_buf());
+        (manager, runtime, dir)
+    }
+
+    fn config_with(startup_extra: &str, disk: &str) -> GameConfig {
+        let yaml = format!(
+            r#"
+metadata: {{ id: t, name: Test Server, version: "1", game: test, author: t }}
+container: {{ image: example/game:1 }}
+resources:
+  cpu: {{ min: 500, max: 1500, shares: 1024 }}
+  memory: {{ min: 512Mi, max: 1Gi, swap: 256Mi }}
+  disk: {{ min: {} }}
+startup:
+  command: ./game
+  args: ['-port {{{{SERVER_PORT}}}}', '+name "{{{{NAME}}}}"']
+  working_dir: /home/container
+{}
+variables:
+  - {{ name: SERVER_PORT, description: p, default: "27015" }}
+  - {{ name: NAME, description: n, default: "My Server" }}
+networking:
+  ports:
+    - {{ name: game, internal: "{{{{SERVER_PORT}}}}", protocol: udp }}
+security:
+  capabilities: {{ drop: [ALL], add: [net_bind_service] }}
+  pids_limit: 300
+performance:
+  kernel:
+    ulimits: {{ nofile: 4096, nproc: 512, bogus: 1 }}
+"#,
+            disk, startup_extra
+        );
+        GameConfig::from_yaml(&yaml).unwrap()
+    }
+
+    async fn wait_for<F, Fut>(mut check: F) -> bool
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        for _ in 0..200 {
+            if check().await {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[test]
+    fn spec_renders_the_command_line_and_confines_the_process() {
+        let config = config_with("", "10Gi");
+        let dir = Path::new("/data/abcdef123456789");
+        let spec = ContainerManager::config_to_spec(&config, dir, (988, 988)).unwrap();
+
+        assert_eq!(
+            spec.args,
+            vec!["./game", "-port", "27015", "+name", "My Server"]
+        );
+        assert_eq!(spec.hostname, "nx-abcdef123456");
+        assert_eq!(spec.security.uid, 988);
+        assert_eq!(spec.security.capabilities, vec!["CAP_NET_BIND_SERVICE"]);
+        assert!(spec.security.no_new_privileges);
+        assert_eq!(spec.security.seccomp, SeccompProfile::RuntimeDefault);
+        assert_eq!(spec.resources.cpu_millicores, Some(1500));
+        assert_eq!(spec.resources.memory_bytes, 1024 * 1024 * 1024);
+        assert_eq!(spec.resources.memory_swap_bytes, 256 * 1024 * 1024);
+        assert_eq!(spec.resources.pids_limit, Some(300));
+        assert_eq!(spec.resources.nofile, 4096);
+        assert_eq!(
+            spec.resources.rlimits,
+            vec![Rlimit {
+                kind: "RLIMIT_NPROC".into(),
+                soft: 512,
+                hard: 512
+            }],
+            "unknown ulimit keys are dropped, nofile has its own field"
+        );
+        assert_eq!(spec.ports.len(), 1);
+        assert_eq!(
+            spec.ports[0].container_port, 27015,
+            "templated ports resolve"
+        );
+    }
+
+    #[test]
+    fn signals_parse_by_name_or_number() {
+        assert_eq!(signal_number("SIGINT"), Some(libc::SIGINT));
+        assert_eq!(signal_number("int"), Some(libc::SIGINT));
+        assert_eq!(signal_number("15"), Some(15));
+        assert_eq!(signal_number("SIGBOGUS"), None);
+        assert_eq!(signal_number("0"), None);
+    }
+
+    #[tokio::test]
+    async fn a_crash_is_detected_and_the_server_restarted() {
+        let (manager, runtime, _dir) = mock_manager();
+        let config = config_with(
+            "  restart: { on_crash: true, max_retries: 2, delay: 0s, reset_after: 10m }",
+            "1Gi",
+        );
+        let id = manager.create_container(&config, None).await.unwrap();
+        manager.start_container(&id).await.unwrap();
+
+        // The game dies.
+        runtime.simulate_exit(&id, 137).await.unwrap();
+
+        // The watcher notices, records the crash, and brings it back.
+        assert!(
+            wait_for(|| async {
+                let s = manager.get_state(&id).await.unwrap();
+                s.crash_count == 1 && s.status.is_running()
+            })
+            .await,
+            "expected a restart after the first crash"
+        );
+
+        runtime.simulate_exit(&id, 1).await.unwrap();
+        assert!(
+            wait_for(|| async {
+                let s = manager.get_state(&id).await.unwrap();
+                s.crash_count == 2 && s.status.is_running()
+            })
+            .await,
+            "second crash within the allowance is also restarted"
+        );
+
+        // Third crash exceeds max_retries: it stays down, marked failed.
+        runtime.simulate_exit(&id, 1).await.unwrap();
+        assert!(
+            wait_for(|| async {
+                let s = manager.get_state(&id).await.unwrap();
+                s.crash_count == 3 && s.status == ContainerStatus::Failed
+            })
+            .await
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let s = manager.get_state(&id).await.unwrap();
+        assert_eq!(s.status, ContainerStatus::Failed, "no fourth start");
+        assert_eq!(s.exit_code, Some(1));
+    }
+
+    #[tokio::test]
+    async fn a_clean_exit_is_not_a_crash() {
+        let (manager, runtime, _dir) = mock_manager();
+        let id = manager.create_container(&config_with("", "1Gi"), None).await.unwrap();
+        manager.start_container(&id).await.unwrap();
+
+        runtime.simulate_exit(&id, 0).await.unwrap();
+        assert!(
+            wait_for(|| async { !manager.get_state(&id).await.unwrap().status.is_running() }).await
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let s = manager.get_state(&id).await.unwrap();
+        assert_eq!(s.status, ContainerStatus::Stopped);
+        assert_eq!(s.crash_count, 0);
+    }
+
+    #[tokio::test]
+    async fn a_deliberate_stop_is_never_counted_as_a_crash() {
+        let (manager, _runtime, _dir) = mock_manager();
+        let id = manager.create_container(&config_with("", "1Gi"), None).await.unwrap();
+        manager.start_container(&id).await.unwrap();
+        manager.stop_container(&id, Some(1)).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let s = manager.get_state(&id).await.unwrap();
+        assert_eq!(s.status, ContainerStatus::Stopped);
+        assert_eq!(s.crash_count, 0);
+        // And a fresh start after that is watched anew.
+        manager.start_container(&id).await.unwrap();
+        assert!(manager.get_state(&id).await.unwrap().status.is_running());
+    }
+
+    #[tokio::test]
+    async fn stop_sends_the_blueprints_pre_stop_commands_first() {
+        let (manager, runtime, _dir) = mock_manager();
+        let config = config_with(
+            "  lifecycle:\n    pre_stop:\n      - { type: send_command, command: save-all, delay: 10ms }\n      - { type: send_command, command: stop }",
+            "1Gi",
+        );
+        let id = manager.create_container(&config, None).await.unwrap();
+        manager.start_container(&id).await.unwrap();
+        manager.stop_container(&id, Some(5)).await.unwrap();
+
+        assert_eq!(runtime.commands_sent(&id).await, vec!["save-all", "stop"]);
+        assert!(
+            runtime.signals_sent(&id).await.is_empty(),
+            "no signal was needed"
+        );
+        assert_eq!(
+            manager.get_state(&id).await.unwrap().status,
+            ContainerStatus::Stopped
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_uses_the_blueprints_signal_when_there_are_no_commands() {
+        let (manager, runtime, _dir) = mock_manager();
+        let id = manager
+            .create_container(&config_with("  stop_signal: SIGINT", "1Gi"), None)
+            .await
+            .unwrap();
+        manager.start_container(&id).await.unwrap();
+        manager.stop_container(&id, Some(5)).await.unwrap();
+        assert_eq!(runtime.signals_sent(&id).await, vec![libc::SIGINT]);
+        assert!(runtime.commands_sent(&id).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_suspended_server_cannot_be_started() {
+        let (manager, _runtime, _dir) = mock_manager();
+        let id = manager.create_container(&config_with("", "1Gi"), None).await.unwrap();
+        manager.suspend_container(&id).await.unwrap();
+        let err = manager.start_container(&id).await.unwrap_err();
+        assert!(err.to_string().contains("suspended"));
+    }
+
+    #[tokio::test]
+    async fn disk_usage_is_measured_and_gates_starting() {
+        let (manager, _runtime, dir) = mock_manager();
+        // A 1 MiB allowance.
+        let id = manager.create_container(&config_with("", "1Mi"), None).await.unwrap();
+        assert_eq!(
+            manager.get_state(&id).await.unwrap().disk_limit_bytes,
+            1024 * 1024
+        );
+
+        std::fs::write(
+            dir.path().join(&id).join("world.dat"),
+            vec![0u8; 2 * 1024 * 1024],
+        )
+        .unwrap();
+        manager.refresh_disk_usage().await;
+        let s = manager.get_state(&id).await.unwrap();
+        assert_eq!(s.disk_used_bytes, 2 * 1024 * 1024);
+        assert!(s.disk_exceeded());
+
+        let err = manager.start_container(&id).await.unwrap_err();
+        assert!(err.to_string().contains("disk allowance"), "{}", err);
+
+        // Under the limit again: starts.
+        std::fs::remove_file(dir.path().join(&id).join("world.dat")).unwrap();
+        manager.refresh_disk_usage().await;
+        manager.start_container(&id).await.unwrap();
+
+        // Going over while running is tolerated for the grace period.
+        std::fs::write(
+            dir.path().join(&id).join("world.dat"),
+            vec![0u8; 2 * 1024 * 1024],
+        )
+        .unwrap();
+        manager.refresh_disk_usage().await;
+        assert!(manager.get_state(&id).await.unwrap().status.is_running());
+    }
+
+    #[tokio::test]
+    async fn restore_rearms_the_watcher_for_a_still_running_server() {
+        let dir = TempDir::new().unwrap();
+        let runtime = Arc::new(crate::runtime::mock::MockRuntime::new());
+        let first = ContainerManager::with_runtime(runtime.clone(), dir.path().to_path_buf());
+        let id = first.create_container(&config_with("", "1Gi"), None).await.unwrap();
+        first.start_container(&id).await.unwrap();
+
+        // A "new node" over the same runtime and data dir.
+        let second = ContainerManager::with_runtime(runtime.clone(), dir.path().to_path_buf());
+        assert_eq!(second.restore().await, 1);
+        assert!(second.get_state(&id).await.unwrap().status.is_running());
+
+        runtime.simulate_exit(&id, 3).await.unwrap();
+        assert!(
+            wait_for(|| async { second.get_state(&id).await.unwrap().crash_count == 1 }).await,
+            "the restored manager's watcher saw the crash"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_rebuilds_a_container_the_runtime_lost() {
+        let dir = TempDir::new().unwrap();
+        let runtime = Arc::new(crate::runtime::mock::MockRuntime::new());
+        let first = ContainerManager::with_runtime(runtime.clone(), dir.path().to_path_buf());
+        let id = first.create_container(&config_with("", "1Gi"), None).await.unwrap();
+
+        // containerd forgets it (a namespace wipe).
+        runtime.delete(&id).await.unwrap();
+        assert!(!runtime.exists(&id).await);
+
+        let second = ContainerManager::with_runtime(runtime.clone(), dir.path().to_path_buf());
+        second.restore().await;
+        assert!(
+            runtime.exists(&id).await,
+            "rebuilt from the stored blueprint"
+        );
+        second.start_container(&id).await.unwrap();
     }
 }

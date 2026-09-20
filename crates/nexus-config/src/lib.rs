@@ -172,6 +172,63 @@ pub struct Startup {
     /// Timeout for startup (kill if not ready within this time)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub startup_timeout: Option<String>,
+    /// What happens when the game process exits on its own.
+    #[serde(default)]
+    pub restart: RestartPolicy,
+    /// Signal sent to ask the game to shut down when the blueprint declares no
+    /// `pre_stop` console commands (`SIGTERM` by default; Valheim and other
+    /// Unity servers save on `SIGINT`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_signal: Option<String>,
+    /// How long a shutdown may take before the process is killed. Defaults to
+    /// 30 seconds; a large Minecraft world can need more to save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_timeout: Option<String>,
+}
+
+/// What the node does when a server's process exits without being asked to.
+///
+/// A clean exit (code 0) is treated as intentional — someone typed `stop` in
+/// the console. Anything else is a crash, and a crashed server is started
+/// again, up to `max_retries` times within `reset_after`, so a 3 a.m. segfault
+/// does not stay down until someone notices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartPolicy {
+    /// Start the server again after a crash.
+    #[serde(default = "default_true")]
+    pub on_crash: bool,
+    /// How many crashes within `reset_after` before giving up.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// Pause between a crash and the restart.
+    #[serde(default = "default_restart_delay")]
+    pub delay: String,
+    /// Window over which crashes are counted against `max_retries`.
+    #[serde(default = "default_restart_reset")]
+    pub reset_after: String,
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            on_crash: true,
+            max_retries: default_max_retries(),
+            delay: default_restart_delay(),
+            reset_after: default_restart_reset(),
+        }
+    }
+}
+
+fn default_max_retries() -> u32 {
+    5
+}
+
+fn default_restart_delay() -> String {
+    "5s".to_string()
+}
+
+fn default_restart_reset() -> String {
+    "10m".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,10 +383,20 @@ pub struct Security {
     pub read_only_root: bool,
     #[serde(default = "default_true")]
     pub no_new_privileges: bool,
+    /// `runtime/default` (the standard container allowlist), `unconfined`, or
+    /// a path to an OCI seccomp profile on the node.
     #[serde(default = "default_seccomp")]
     pub seccomp_profile: String,
+    /// Most processes and threads the server may have at once. A fork bomb or
+    /// a runaway thread pool in one server must not exhaust the node.
+    #[serde(default = "default_pids_limit")]
+    pub pids_limit: u32,
     #[serde(default)]
     pub firewall_rules: Vec<FirewallRule>,
+}
+
+fn default_pids_limit() -> u32 {
+    1024
 }
 
 fn default_true() -> bool {
@@ -1010,6 +1077,13 @@ pub fn parse_duration(value: &str) -> Option<std::time::Duration> {
         return None;
     }
 
+    // Milliseconds first: `10ms` would otherwise read as ten minutes plus
+    // a stray `s`.
+    if let Some(rest) = value.strip_suffix("ms") {
+        let millis: u64 = rest.trim().parse().ok()?;
+        return Some(std::time::Duration::from_millis(millis));
+    }
+
     let (digits, multiplier) = match value.strip_suffix('s') {
         Some(rest) => (rest, 1),
         None => match value.strip_suffix('m') {
@@ -1080,6 +1154,9 @@ mod tests {
                 lifecycle: None,
                 startup_grace_period: None,
                 startup_timeout: None,
+                restart: RestartPolicy::default(),
+                stop_signal: None,
+                stop_timeout: None,
             },
             variables: vec![],
             networking: Networking {
@@ -1095,6 +1172,7 @@ mod tests {
                 read_only_root: false,
                 no_new_privileges: true,
                 seccomp_profile: "runtime/default".to_string(),
+                pids_limit: 1024,
                 firewall_rules: vec![],
             },
             monitoring: None,
@@ -1161,6 +1239,9 @@ mod tests {
                 lifecycle: None,
                 startup_grace_period: None,
                 startup_timeout: None,
+                restart: RestartPolicy::default(),
+                stop_signal: None,
+                stop_timeout: None,
             },
             variables: vec![],
             networking: Networking {
@@ -1176,6 +1257,7 @@ mod tests {
                 read_only_root: false,
                 no_new_privileges: true,
                 seccomp_profile: "runtime/default".to_string(),
+                pids_limit: 1024,
                 firewall_rules: vec![],
             },
             monitoring: None,

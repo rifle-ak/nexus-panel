@@ -47,6 +47,8 @@ startup:
     - -public {{PUBLIC}}
     - -preset {{PRESET}}
   working_dir: /home/container
+  # Valheim saves the world on SIGINT; SIGTERM would lose the last minutes.
+  stop_signal: SIGINT
   startup_grace_period: 60s
   startup_timeout: 300s
   lifecycle:

@@ -209,6 +209,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Disk accounting and console-log trimming, for the life of the node.
+    manager.start_maintenance();
+    let (game_uid, game_gid) = manager.game_user();
+    info!("  Game servers run as uid {} gid {}", game_uid, game_gid);
+
     // Create health checker
     let health_checker = Arc::new(RwLock::new(HealthChecker::new(
         containerd_socket,

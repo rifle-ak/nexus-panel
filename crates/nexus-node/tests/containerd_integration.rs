@@ -6,7 +6,7 @@
 //! installs and starts containerd. That keeps the default test suite fast and
 //! dependency-free while still validating the containerd connection path.
 
-use nexus_node::runtime::{ContainerSpec, ResourceLimits};
+use nexus_node::runtime::{ContainerSpec, ResourceLimits, SecurityOptions};
 use nexus_node::{ContainerRuntime, ContainerdRuntime};
 use std::collections::HashMap;
 
@@ -59,10 +59,21 @@ fn spec(image: &str, args: &[&str]) -> ContainerSpec {
         ports: vec![],
         resources: ResourceLimits {
             cpu_shares: 1024,
+            cpu_millicores: Some(1000),
             memory_bytes: 256 * 1024 * 1024,
             memory_swap_bytes: 0,
+            pids_limit: Some(256),
+            rlimits: Vec::new(),
             nofile: 65536,
         },
+        // The test images are tiny (busybox) and run as root; what is
+        // exercised here is the runtime path, not file ownership.
+        security: SecurityOptions {
+            uid: 0,
+            gid: 0,
+            ..SecurityOptions::default()
+        },
+        hostname: "nx-test".to_string(),
     }
 }
 

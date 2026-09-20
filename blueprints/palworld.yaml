@@ -47,6 +47,7 @@ startup:
     - -NoAsyncLoadingThread
     - -UseMultithreadForDS
   working_dir: /home/container
+  stop_timeout: 60s
   startup_grace_period: 120s
   startup_timeout: 600s
   lifecycle:

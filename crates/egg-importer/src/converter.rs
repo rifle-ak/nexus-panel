@@ -469,6 +469,28 @@ impl EggConverter {
             None
         };
 
+        // An egg's stop command is either a console command (`stop`,
+        // `quit`) or `^C`, meaning "send SIGINT". Both become the shutdown
+        // sequence the node runs before it resorts to signals.
+        let stop = egg.config.stop.trim();
+        let mut stop_signal = None;
+        let mut lifecycle = lifecycle;
+        if stop == "^C" || stop.eq_ignore_ascii_case("sigint") {
+            stop_signal = Some("SIGINT".to_string());
+        } else if stop.eq_ignore_ascii_case("sigterm") {
+            stop_signal = Some("SIGTERM".to_string());
+        } else if !stop.is_empty() {
+            let hooks = lifecycle.get_or_insert_with(|| Lifecycle {
+                pre_start: Vec::new(),
+                post_start: Vec::new(),
+                pre_stop: Vec::new(),
+            });
+            hooks.pre_stop.push(LifecycleAction::SendCommand {
+                command: stop.to_string(),
+                delay: None,
+            });
+        }
+
         Ok(Startup {
             command,
             args,
@@ -476,6 +498,9 @@ impl EggConverter {
             lifecycle,
             startup_grace_period: Some("60s".to_string()),
             startup_timeout: Some("300s".to_string()),
+            restart: RestartPolicy::default(),
+            stop_signal,
+            stop_timeout: None,
         })
     }
 
@@ -773,6 +798,7 @@ impl EggConverter {
             read_only_root: false,
             no_new_privileges: true,
             seccomp_profile: "runtime/default".to_string(),
+            pids_limit: 1024,
             firewall_rules,
         })
     }

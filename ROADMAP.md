@@ -17,6 +17,10 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Blueprint persistence per server (survives node restart) | Done |
 | One-click update using the server's own blueprint strategy | Done (no retyping; manual override still available) |
 | State persistence + reconciliation across restarts | Done |
+| Crash detection + automatic restart (per-blueprint policy) | Done |
+| Graceful shutdown (`pre_stop` console commands, `stop_signal`, `stop_timeout`) | Done |
+| Startup command rendering (`{{VARIABLE}}` substitution, shell splitting, JVM flags) | Done |
+| Disk allowance enforcement (start refused / stopped when over) | Done (usage-based; filesystem quotas planned) |
 
 > **Planned differentiator — real shell console.** Pterodactyl and Pelican pipe
 > console input to the game process's stdin (often just an RCON bridge), so you
@@ -90,6 +94,9 @@ Current status of all features. Items marked **Done** are functional in the web 
 | TLS / mTLS for gRPC | Backend Ready |
 | Audit logging (JSON format) | Backend Ready |
 | Input validation (container ID, file paths, YAML) | Backend Ready |
+| Game servers run unprivileged (non-root uid, capability set from blueprint) | Done |
+| Seccomp allowlist, `no_new_privileges`, `read_only_root`, pids limit | Done |
+| Hard CPU quota, memory+swap limit, all `ulimits` | Done |
 | XDP/eBPF firewall UI (SYN flood, UDP amplification, rate limiting) | Planned |
 | Per-server firewall rule configuration | Planned |
 | Cloudflare Spectrum integration | Planned |
