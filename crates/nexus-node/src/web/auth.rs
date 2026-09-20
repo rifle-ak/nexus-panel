@@ -193,6 +193,101 @@ impl SessionStore {
     }
 }
 
+/// Failed logins allowed from one address before it is locked out.
+pub const LOGIN_MAX_FAILURES_PER_IP: usize = 10;
+/// Failed logins allowed node-wide in the window before every login is
+/// slowed; a distributed guess spread across addresses still hits this.
+pub const LOGIN_MAX_FAILURES_GLOBAL: usize = 200;
+/// Window over which failures are counted, and how long a lockout lasts.
+pub const LOGIN_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// Online brute-force protection for the login endpoint.
+///
+/// The panel password is the only thing between the internet and root on
+/// the node, and before this it could be guessed at full HTTP speed. Failures
+/// are counted per source address and node-wide; past the limit the address
+/// (or everyone) waits out the window. A success clears the address.
+pub struct LoginThrottle {
+    failures: RwLock<HashMap<String, Vec<SystemTime>>>,
+}
+
+/// What the throttle says about an attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginVerdict {
+    Allowed,
+    /// Locked out; try again after this many seconds.
+    Blocked {
+        retry_after_secs: u64,
+    },
+}
+
+impl Default for LoginThrottle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LoginThrottle {
+    pub fn new() -> Self {
+        Self {
+            failures: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Whether `ip` may attempt a login right now.
+    pub async fn check(&self, ip: &str) -> LoginVerdict {
+        let now = SystemTime::now();
+        let failures = self.failures.read().await;
+        let window_start = now - LOGIN_WINDOW;
+
+        let recent = |times: &Vec<SystemTime>| times.iter().filter(|t| **t > window_start).count();
+        let retry_after = |times: &Vec<SystemTime>| {
+            times
+                .iter()
+                .filter(|t| **t > window_start)
+                .min()
+                .and_then(|oldest| (*oldest + LOGIN_WINDOW).duration_since(now).ok())
+                .map(|d| d.as_secs().max(1))
+                .unwrap_or(1)
+        };
+
+        if let Some(times) = failures.get(ip) {
+            if recent(times) >= LOGIN_MAX_FAILURES_PER_IP {
+                return LoginVerdict::Blocked {
+                    retry_after_secs: retry_after(times),
+                };
+            }
+        }
+
+        let total: usize = failures.values().map(recent).sum();
+        if total >= LOGIN_MAX_FAILURES_GLOBAL {
+            let all: Vec<SystemTime> = failures.values().flatten().copied().collect();
+            return LoginVerdict::Blocked {
+                retry_after_secs: retry_after(&all),
+            };
+        }
+
+        LoginVerdict::Allowed
+    }
+
+    /// Record a failed attempt from `ip`.
+    pub async fn record_failure(&self, ip: &str) {
+        let now = SystemTime::now();
+        let mut failures = self.failures.write().await;
+        let window_start = now - LOGIN_WINDOW;
+        failures.retain(|_, times| {
+            times.retain(|t| *t > window_start);
+            !times.is_empty()
+        });
+        failures.entry(ip.to_string()).or_default().push(now);
+    }
+
+    /// A successful login from `ip` clears its failures.
+    pub async fn record_success(&self, ip: &str) {
+        self.failures.write().await.remove(ip);
+    }
+}
+
 /// Default lifetime of a single sign-on token: long enough for a browser
 /// redirect, short enough that a leaked link is useless by the time anyone
 /// reads it.
@@ -474,5 +569,37 @@ mod tests {
             }
         }
         assert!(store.redeem(&token).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn login_throttle_locks_an_address_out() {
+        let throttle = LoginThrottle::new();
+        for _ in 0..LOGIN_MAX_FAILURES_PER_IP - 1 {
+            throttle.record_failure("10.0.0.1").await;
+            assert_eq!(throttle.check("10.0.0.1").await, LoginVerdict::Allowed);
+        }
+        throttle.record_failure("10.0.0.1").await;
+        assert!(matches!(
+            throttle.check("10.0.0.1").await,
+            LoginVerdict::Blocked { retry_after_secs } if retry_after_secs >= 1
+        ));
+        // Another address is unaffected by one address's lockout.
+        assert_eq!(throttle.check("10.0.0.2").await, LoginVerdict::Allowed);
+        // A success clears it.
+        throttle.record_success("10.0.0.1").await;
+        assert_eq!(throttle.check("10.0.0.1").await, LoginVerdict::Allowed);
+    }
+
+    #[tokio::test]
+    async fn login_throttle_has_a_global_ceiling() {
+        let throttle = LoginThrottle::new();
+        // Spread below the per-address limit across many addresses.
+        for i in 0..LOGIN_MAX_FAILURES_GLOBAL {
+            throttle.record_failure(&format!("10.1.{}.{}", i / 250, i % 250)).await;
+        }
+        assert!(matches!(
+            throttle.check("192.0.2.1").await,
+            LoginVerdict::Blocked { .. }
+        ));
     }
 }

@@ -90,6 +90,8 @@ fn harness() -> Harness {
             public_ip: Some("203.0.113.10".into()),
         },
         sso: Arc::new(SsoTokenStore::new()),
+        login_throttle: Arc::new(super::auth::LoginThrottle::new()),
+        audit: None,
     };
     Harness {
         app: build_router(Arc::new(state)),
@@ -675,4 +677,41 @@ async fn package_change_keeps_variables_and_never_reapplies_ports() {
     )
     .await;
     assert_eq!(container["ports"][0]["port"], 30000);
+}
+
+#[tokio::test]
+async fn login_is_throttled_after_repeated_failures() {
+    let h = harness();
+    let attempt = |password: &str| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({ "password": password }).to_string(),
+            ))
+            .unwrap()
+    };
+    for _ in 0..super::auth::LOGIN_MAX_FAILURES_PER_IP {
+        let (status, _, _) = send(&h.app, attempt("wrong")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    let (status, body, headers) = send(&h.app, attempt("wrong")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{}", body);
+    assert!(headers.get(header::RETRY_AFTER).is_some());
+    // Even the right credential is refused while locked out; the API key
+    // path (used by the billing system) is a login too.
+    let (status, _, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({ "api_key": API_KEY }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }

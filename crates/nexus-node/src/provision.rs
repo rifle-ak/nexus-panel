@@ -392,7 +392,11 @@ pub fn apply_overrides(config: &mut GameConfig, o: &Overrides) -> Result<(), Pro
     for (name, value) in &o.variables {
         validate_variable(name, value)?;
         match config.variables.iter_mut().find(|v| &v.name == name) {
-            Some(var) => var.default = value.clone(),
+            Some(var) => {
+                // The blueprint says what this variable may hold.
+                var.validate_value(value).map_err(ProvisionError::Invalid)?;
+                var.default = value.clone();
+            }
             None => {
                 config.container.environment.insert(name.clone(), value.clone());
             }
@@ -856,6 +860,41 @@ security:
             }),
             ProvisionError::Invalid(_)
         ));
+    }
+
+    #[test]
+    fn overrides_enforce_the_blueprints_variable_rules() {
+        let yaml = MINIMAL.replace(
+            r#"  - { name: MEMORY, description: m, default: "1G" }"#,
+            r#"  - { name: MEMORY, description: m, default: "1G" }
+  - { name: MAX_PLAYERS, description: p, default: "20", rules: [{ type: numeric, min: 1, max: 200 }] }"#,
+        );
+        let mut variables = BTreeMap::new();
+        variables.insert("MAX_PLAYERS".to_string(), "-1".to_string());
+        let err = apply_overrides(
+            &mut blueprint(&yaml),
+            &Overrides {
+                variables,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ProvisionError::Invalid(ref m) if m.contains("MAX_PLAYERS")),
+            "{}",
+            err
+        );
+
+        let mut variables = BTreeMap::new();
+        variables.insert("MAX_PLAYERS".to_string(), "64".to_string());
+        apply_overrides(
+            &mut blueprint(&yaml),
+            &Overrides {
+                variables,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     }
 
     #[test]

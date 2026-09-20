@@ -828,9 +828,9 @@ window.loadFiles = loadFiles;
 
 NX.editFile = async function(path) {
   try {
-    const res = await fetch(`${API}/containers/${NX.currentServer}/files/read?path=${encodeURIComponent(path)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const text = await res.text();
+    // Through api(), which carries the session; a bare fetch sent no
+    // credentials and 401'd for every password-authenticated admin.
+    const text = await api(`/containers/${NX.currentServer}/files/read?path=${encodeURIComponent(path)}`);
 
     document.getElementById('modal-title').textContent = 'Edit: ' + path.split('/').pop();
     document.getElementById('modal-body').innerHTML = `
@@ -1616,10 +1616,13 @@ NX.closeModal = function() {
 
 // ── Utility ───────────────────────────────────────────────────────
 
+// HTML-escape for both text and attribute context. The textContent trick
+// leaves quotes alone, and most of this file interpolates into single-quoted
+// onclick attributes — a file named x');alert(1);(' broke out of them.
 function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  return String(s ?? '').replace(/[&<>"'`]/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;',
+  })[c]);
 }
 
 function statusBadge(status) {

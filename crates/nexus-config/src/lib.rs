@@ -337,6 +337,79 @@ pub enum ValidationRule {
     Numeric { min: Option<i64>, max: Option<i64> },
 }
 
+impl Variable {
+    /// Check a value against this variable's rules.
+    ///
+    /// A blueprint declares what a variable may hold so that a customer (or
+    /// a billing product) cannot hand the game `MAX_PLAYERS=-1` or a port
+    /// outside the allowed range; this is where that is enforced.
+    pub fn validate_value(&self, value: &str) -> Result<(), String> {
+        if self.required && value.trim().is_empty() {
+            return Err(format!("{} is required", self.name));
+        }
+        let Some(rules) = &self.rules else {
+            return Ok(());
+        };
+        for rule in rules {
+            match rule {
+                ValidationRule::Port { range } => {
+                    let port: u16 = value.trim().parse().map_err(|_| {
+                        format!("{} must be a port number, got {:?}", self.name, value)
+                    })?;
+                    if port < range.0 || port > range.1 {
+                        return Err(format!(
+                            "{} must be between {} and {}, got {}",
+                            self.name, range.0, range.1, port
+                        ));
+                    }
+                }
+                ValidationRule::Regex { pattern } => {
+                    let re = regex::Regex::new(pattern)
+                        .map_err(|e| format!("{} has an invalid rule: {}", self.name, e))?;
+                    if !re.is_match(value) {
+                        return Err(format!(
+                            "{} must match {}, got {:?}",
+                            self.name, pattern, value
+                        ));
+                    }
+                }
+                ValidationRule::Enum { values } => {
+                    if !values.iter().any(|v| v == value) {
+                        return Err(format!(
+                            "{} must be one of {}, got {:?}",
+                            self.name,
+                            values.join(", "),
+                            value
+                        ));
+                    }
+                }
+                ValidationRule::Numeric { min, max } => {
+                    let n: i64 = value.trim().parse().map_err(|_| {
+                        format!("{} must be a whole number, got {:?}", self.name, value)
+                    })?;
+                    if let Some(min) = min {
+                        if n < *min {
+                            return Err(format!(
+                                "{} must be at least {}, got {}",
+                                self.name, min, n
+                            ));
+                        }
+                    }
+                    if let Some(max) = max {
+                        if n > *max {
+                            return Err(format!(
+                                "{} must be at most {}, got {}",
+                                self.name, max, n
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Networking {
     pub ports: Vec<Port>,
@@ -1361,5 +1434,70 @@ mod install_tests {
         assert!(parse_duration("soon").is_none());
         assert!(parse_duration("10x").is_none());
         assert!(parse_duration("-5s").is_none());
+    }
+}
+
+#[cfg(test)]
+mod variable_rule_tests {
+    use super::*;
+
+    fn var(rules: Option<Vec<ValidationRule>>, required: bool) -> Variable {
+        Variable {
+            name: "X".into(),
+            description: String::new(),
+            default: String::new(),
+            required,
+            secret: false,
+            user_editable: true,
+            user_viewable: true,
+            rules,
+            category: None,
+            placeholder: None,
+        }
+    }
+
+    #[test]
+    fn rules_are_enforced_on_values() {
+        let port = var(
+            Some(vec![ValidationRule::Port {
+                range: (1024, 65535),
+            }]),
+            false,
+        );
+        assert!(port.validate_value("25565").is_ok());
+        assert!(port.validate_value("80").is_err());
+        assert!(port.validate_value("abc").is_err());
+
+        let num = var(
+            Some(vec![ValidationRule::Numeric {
+                min: Some(1),
+                max: Some(200),
+            }]),
+            false,
+        );
+        assert!(num.validate_value("20").is_ok());
+        assert!(num.validate_value("-1").is_err());
+        assert!(num.validate_value("201").is_err());
+
+        let choice = var(
+            Some(vec![ValidationRule::Enum {
+                values: vec!["a".into(), "b".into()],
+            }]),
+            false,
+        );
+        assert!(choice.validate_value("a").is_ok());
+        assert!(choice.validate_value("c").is_err());
+
+        let re = var(
+            Some(vec![ValidationRule::Regex {
+                pattern: "^[a-z]+$".into(),
+            }]),
+            false,
+        );
+        assert!(re.validate_value("abc").is_ok());
+        assert!(re.validate_value("ABC").is_err());
+
+        assert!(var(None, true).validate_value("  ").is_err());
+        assert!(var(None, false).validate_value("anything").is_ok());
     }
 }

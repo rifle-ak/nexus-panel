@@ -16,8 +16,8 @@ use crate::health::HealthChecker;
 use crate::metrics::Metrics;
 use crate::schedule::{ScheduleManager, ScheduleTask, ScheduleTaskType};
 use axum::{
-    extract::{Path, Query, Request, State},
-    http::{header, Method, StatusCode},
+    extract::{ConnectInfo, Path, Query, Request, State},
+    http::{header, HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post, put},
@@ -98,6 +98,95 @@ pub struct AppState {
     pub provision_settings: crate::provision::ProvisionSettings,
     /// One-time sign-in tokens minted for customers.
     pub sso: Arc<auth::SsoTokenStore>,
+    /// Brute-force protection for the login endpoint.
+    pub login_throttle: Arc<auth::LoginThrottle>,
+    /// Where security-relevant actions are recorded, when audit logging is
+    /// enabled (`AUDIT_ENABLED`).
+    pub audit: Option<Arc<crate::audit::AuditLogger>>,
+}
+
+// ---------------------------------------------------------------------------
+// Audit helpers
+// ---------------------------------------------------------------------------
+
+/// Record an audit event, if audit logging is on. Cheap when it is not.
+async fn audit(s: &AppState, event: crate::audit::AuditEvent) {
+    if let Some(logger) = &s.audit {
+        logger.log(event.with_node_id(s.node_id.clone())).await;
+    }
+}
+
+/// The audit actor for a session scope.
+fn actor_for(scope: &auth::SessionScope) -> crate::audit::AuditActor {
+    use crate::audit::{ActorType, AuditActor};
+    match scope {
+        auth::SessionScope::Admin => AuditActor {
+            actor_type: ActorType::User,
+            id: "admin".to_string(),
+            name: None,
+            auth_method: Some("session".to_string()),
+            roles: vec!["admin".to_string()],
+            tenant_id: None,
+        },
+        auth::SessionScope::Servers(ids) => AuditActor {
+            actor_type: ActorType::User,
+            id: format!("customer:{}", ids.join(",")),
+            name: None,
+            auth_method: Some("sso".to_string()),
+            roles: vec!["customer".to_string()],
+            tenant_id: None,
+        },
+    }
+}
+
+fn container_target(id: &str) -> crate::audit::AuditTarget {
+    crate::audit::AuditTarget {
+        target_type: crate::audit::TargetType::Container,
+        id: id.to_string(),
+        name: None,
+        attributes: std::collections::HashMap::new(),
+    }
+}
+
+/// An audit event for an action on a container by the calling session.
+fn container_event(
+    event_type: crate::audit::AuditEventType,
+    action: &str,
+    scope: &auth::SessionScope,
+    ip: &str,
+    container_id: &str,
+) -> crate::audit::AuditEvent {
+    crate::audit::AuditEvent::new(event_type, action)
+        .with_actor(actor_for(scope))
+        .with_target(container_target(container_id))
+        .with_source_ip(ip.to_string())
+}
+
+/// The address a request came from: the peer, or the first hop of
+/// `X-Forwarded-For` when the peer is the local reverse proxy. A forwarded
+/// header from anywhere else is not trusted, since anyone can send one.
+fn client_ip(peer: Option<std::net::SocketAddr>, headers: &HeaderMap) -> String {
+    let peer_ip = peer.map(|p| p.ip());
+    let from_proxy = peer_ip
+        .map(|ip| match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback(),
+        })
+        .unwrap_or(false);
+    if from_proxy {
+        for name in ["x-forwarded-for", "x-real-ip"] {
+            if let Some(forwarded) = headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                return forwarded.to_string();
+            }
+        }
+    }
+    peer_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string())
 }
 
 type S = Arc<AppState>;
@@ -132,7 +221,11 @@ pub async fn start_web_server(
 
     info!("Web panel listening on http://{}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -415,31 +508,82 @@ struct LoginResponse {
 }
 
 /// Exchange a password or API key for a session token.
+///
+/// Throttled per source address and node-wide: past the limit the caller
+/// gets `429` with `Retry-After`, and every failure is audited.
 async fn api_login(
     State(s): State<S>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<LoginReq>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+) -> Result<Response, Response> {
     // If auth is disabled there is nothing to log in to; report success with
     // an empty token so the UI can proceed without a login screen.
     if !s.auth.enabled {
         return Ok(Json(LoginResponse {
             token: String::new(),
             expires_in_secs: 0,
-        }));
+        })
+        .into_response());
     }
 
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+
+    if let auth::LoginVerdict::Blocked { retry_after_secs } = s.login_throttle.check(&ip).await {
+        warn!("Login from {} refused: too many failed attempts", ip);
+        audit(
+            &s,
+            crate::audit::AuditEvent::new(crate::audit::AuditEventType::RateLimitExceeded, "login")
+                .with_source_ip(ip.clone())
+                .failure("too many failed login attempts"),
+        )
+        .await;
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after_secs.to_string())],
+            Json(ApiError {
+                error: format!(
+                    "Too many failed login attempts; try again in {} seconds",
+                    retry_after_secs
+                ),
+            }),
+        )
+            .into_response());
+    }
+
+    let method = if body.api_key.is_some() {
+        "api_key"
+    } else {
+        "password"
+    };
     let ok = body.password.as_deref().map(|p| s.auth.verify_password(p)).unwrap_or(false)
         || body.api_key.as_deref().map(|k| s.auth.verify_api_key(k)).unwrap_or(false);
 
     if !ok {
-        return Err(err_json(StatusCode::UNAUTHORIZED, "Invalid credentials"));
+        s.login_throttle.record_failure(&ip).await;
+        audit(
+            &s,
+            crate::audit::AuditEvent::authentication_failure("admin", "invalid credentials")
+                .with_context("method", method)
+                .with_source_ip(ip.clone()),
+        )
+        .await;
+        return Err(err_json(StatusCode::UNAUTHORIZED, "Invalid credentials").into_response());
     }
+
+    s.login_throttle.record_success(&ip).await;
+    audit(
+        &s,
+        crate::audit::AuditEvent::authentication_success("admin", method).with_source_ip(ip),
+    )
+    .await;
 
     let token = s.sessions.create().await;
     Ok(Json(LoginResponse {
         token,
         expires_in_secs: s.sessions.ttl_secs(),
-    }))
+    })
+    .into_response())
 }
 
 /// Revoke the caller's session, whether it arrived as a bearer token or as
@@ -543,6 +687,22 @@ async fn sso_redeem(State(s): State<S>, Path(token): Path<String>, req: Request)
         "SSO sign-in for server {} (subject {:?})",
         grant.server_id, grant.subject
     );
+    let ip = client_ip(
+        req.extensions().get::<ConnectInfo<std::net::SocketAddr>>().map(|c| c.0),
+        req.headers(),
+    );
+    audit(
+        &s,
+        crate::audit::AuditEvent::new(crate::audit::AuditEventType::SessionStart, "sso")
+            .with_actor(actor_for(&auth::SessionScope::Servers(vec![grant
+                .server_id
+                .clone()])))
+            .with_target(container_target(&grant.server_id))
+            .with_context("subject", &grant.subject)
+            .with_source_ip(ip)
+            .success(),
+    )
+    .await;
 
     (
         [(header::SET_COOKIE, cookie)],
@@ -904,6 +1064,9 @@ async fn api_get_container(
 
 async fn api_create_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<CreateContainerReq>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let config: nexus_config::GameConfig = serde_yaml::from_str(&body.config_yaml)
@@ -914,6 +1077,22 @@ async fn api_create_container(
         .create_container(&config, body.server_id)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    audit(
+        &s,
+        container_event(
+            crate::audit::AuditEventType::ContainerCreated,
+            "create",
+            &scope,
+            &ip,
+            &id,
+        )
+        .with_context("name", &config.metadata.name)
+        .with_context("image", &config.container.image)
+        .success(),
+    )
+    .await;
 
     // Choosing a game *is* choosing to install it: a server is useless until
     // its game files are there, so the install starts as soon as it is
@@ -1044,36 +1223,75 @@ async fn api_install_status(
 
 async fn api_start_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.manager
-        .start_container(&id)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.start_container(&id).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerStarted,
+        "start",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn api_stop_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     body: Option<Json<StopReq>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let timeout = body.and_then(|b| b.timeout);
-    s.manager
-        .stop_container(&id, timeout)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.stop_container(&id, timeout).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerStopped,
+        "stop",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn api_restart_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.manager
-        .restart_container(&id)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.restart_container(&id).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerRestarted,
+        "restart",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1090,34 +1308,73 @@ async fn api_kill_container(
 
 async fn api_delete_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.manager
-        .delete_container(&id, true)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.delete_container(&id, true).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerDeleted,
+        "delete",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn api_suspend_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.manager
-        .suspend_container(&id)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.suspend_container(&id).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerStopped,
+        "suspend",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn api_unsuspend_container(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.manager
-        .unsuspend_container(&id)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let result = s.manager.unsuspend_container(&id).await;
+    let event = container_event(
+        crate::audit::AuditEventType::ContainerStarted,
+        "unsuspend",
+        &scope,
+        &ip,
+        &id,
+    );
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1244,39 +1501,83 @@ async fn api_read_file(
 
 async fn api_write_file(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<WriteFileReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let fm = file_manager(&s, &id);
-    let bytes_written = fm
-        .write_file(&body.path, body.content.as_bytes(), true)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let result = fm.write_file(&body.path, body.content.as_bytes(), true).await;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let event = container_event(
+        crate::audit::AuditEventType::FileWritten,
+        "file.write",
+        &scope,
+        &ip,
+        &id,
+    )
+    .with_context("path", &body.path);
+    match &result {
+        Ok(_) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    let bytes_written = result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "bytes_written": bytes_written })))
 }
 
 async fn api_delete_files(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<DeleteFilesReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let fm = file_manager(&s, &id);
-    let deleted = fm
-        .delete(&body.paths, body.recursive.unwrap_or(false))
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let result = fm.delete(&body.paths, body.recursive.unwrap_or(false)).await;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let event = container_event(
+        crate::audit::AuditEventType::FileDeleted,
+        "file.delete",
+        &scope,
+        &ip,
+        &id,
+    )
+    .with_context("paths", &body.paths);
+    match &result {
+        Ok(_) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    let deleted = result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
 async fn api_rename_file(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<RenameFileReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let fm = file_manager(&s, &id);
-    fm.rename(&body.old_path, &body.new_path)
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let result = fm.rename(&body.old_path, &body.new_path).await;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let event = container_event(
+        crate::audit::AuditEventType::FileRenamed,
+        "file.rename",
+        &scope,
+        &ip,
+        &id,
+    )
+    .with_context("from", &body.old_path)
+    .with_context("to", &body.new_path);
+    match &result {
+        Ok(_) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

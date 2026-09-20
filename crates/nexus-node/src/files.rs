@@ -68,6 +68,23 @@ impl FileManager {
         self
     }
 
+    /// Resolve a path for a write that will happen outside this manager (a
+    /// streamed upload), creating its parent directories. The caller
+    /// finishes with [`claim_path`](Self::claim_path).
+    pub async fn resolve_for_write(&self, path: &str) -> Result<PathBuf> {
+        let file_path = self.sanitize_path(path)?;
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).await?;
+            self.claim(parent);
+        }
+        Ok(file_path)
+    }
+
+    /// Hand a path this manager did not itself write to the game's user.
+    pub fn claim_path(&self, path: &Path) {
+        self.claim(path);
+    }
+
     /// Hand a path (and, for a directory, its contents) to the owner.
     /// Best-effort: a node not running as root cannot, and its game runs as
     /// the same user anyway.
@@ -520,6 +537,9 @@ impl FileManager {
 }
 
 /// Recursively copy a directory
+/// Copy a directory tree. Symlinks are recreated as symlinks, never
+/// followed: a link the game planted pointing outside its directory must not
+/// become a copy of what it points at.
 async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).await?;
 
@@ -527,8 +547,13 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     while let Some(entry) = entries.next_entry().await? {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
+        let meta = fs::symlink_metadata(&src_path).await?;
 
-        if src_path.is_dir() {
+        if meta.file_type().is_symlink() {
+            let target = fs::read_link(&src_path).await?;
+            let _ = fs::remove_file(&dst_path).await;
+            fs::symlink(&target, &dst_path).await?;
+        } else if meta.is_dir() {
             Box::pin(copy_dir_recursive(&src_path, &dst_path)).await?;
         } else {
             fs::copy(&src_path, &dst_path).await?;
@@ -615,14 +640,25 @@ async fn extract_tar_gz(archive: &Path, output: &Path, overwrite: bool) -> Resul
     let mut count = 0;
     for entry in archive.entries()? {
         let mut entry = entry?;
-        let path = output.join(entry.path()?);
+        let relative = entry.path()?.into_owned();
+        let path = output.join(&relative);
 
         if path.exists() && !overwrite {
             continue;
         }
 
-        entry.unpack(&path)?;
-        count += 1;
+        // `unpack_in` refuses entries that would land outside `output`
+        // (`../`, absolute paths, links through a symlinked parent) rather
+        // than writing wherever the archive says. A refused entry is simply
+        // not extracted.
+        if entry.unpack_in(output)? {
+            count += 1;
+        } else {
+            warn!(
+                "Skipped archive entry {:?}: it would escape the extraction directory",
+                relative
+            );
+        }
     }
 
     Ok(count)
@@ -636,7 +672,16 @@ async fn extract_zip(archive: &Path, output: &Path, overwrite: bool) -> Result<u
     let mut count = 0;
     for i in 0..zip.len() {
         let mut file = zip.by_index(i)?;
-        let path = output.join(file.name());
+        // `enclosed_name` is the entry's name with traversal, absolute paths
+        // and drive letters rejected; `name()` is whatever the archive says.
+        let Some(relative) = file.enclosed_name() else {
+            warn!(
+                "Skipped zip entry {:?}: it would escape the extraction directory",
+                file.name()
+            );
+            continue;
+        };
+        let path = output.join(relative);
 
         if path.exists() && !overwrite {
             continue;
@@ -757,5 +802,93 @@ mod tests {
         manager.create_directory("path/to/nested", true).await.unwrap();
 
         assert!(manager.server_dir.join("path/to/nested").exists());
+    }
+
+    /// An archive naming `../` must not write outside the server directory.
+    #[tokio::test]
+    async fn tar_slip_is_refused() {
+        let temp = TempDir::new().unwrap();
+        let manager = FileManager::new("srv", temp.path());
+        fs::create_dir_all(&manager.server_dir).await.unwrap();
+
+        // Build a tar.gz with one honest entry and one escaping entry.
+        let archive_path = manager.server_dir.join("evil.tar.gz");
+        {
+            use flate2::write::GzEncoder;
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let enc = GzEncoder::new(file, flate2::Compression::default());
+            let mut builder = tar::Builder::new(enc);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(2);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, "ok.txt", &b"hi"[..]).unwrap();
+            let mut header = tar::Header::new_gnu();
+            header.set_size(4);
+            header.set_mode(0o644);
+            header.set_cksum();
+            // append_data would refuse ".."; write the raw path via a GNU long
+            // name the way a hostile archive does.
+            let mut path_header = tar::Header::new_gnu();
+            path_header.set_entry_type(tar::EntryType::GNULongName);
+            let name = b"../../escaped.txt\0";
+            path_header.set_size(name.len() as u64);
+            path_header.set_cksum();
+            builder.append(&path_header, &name[..]).unwrap();
+            builder.append(&header, &b"evil"[..]).unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+
+        let count = manager.decompress("evil.tar.gz", "out", true).await.unwrap();
+        assert_eq!(count, 1, "only the honest entry is extracted");
+        assert!(manager.server_dir.join("out/ok.txt").exists());
+        assert!(!temp.path().join("escaped.txt").exists());
+        assert!(!temp.path().parent().unwrap().join("escaped.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn zip_slip_is_refused() {
+        let temp = TempDir::new().unwrap();
+        let manager = FileManager::new("srv", temp.path());
+        fs::create_dir_all(&manager.server_dir).await.unwrap();
+
+        let archive_path = manager.server_dir.join("evil.zip");
+        {
+            use std::io::Write;
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("ok.txt", opts).unwrap();
+            zip.write_all(b"hi").unwrap();
+            zip.start_file("../../escaped.txt", opts).unwrap();
+            zip.write_all(b"evil").unwrap();
+            zip.start_file("/etc/absolute.txt", opts).unwrap();
+            zip.write_all(b"evil").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let count = manager.decompress("evil.zip", "out", true).await.unwrap();
+        assert_eq!(count, 1);
+        assert!(manager.server_dir.join("out/ok.txt").exists());
+        assert!(!temp.path().join("escaped.txt").exists());
+        assert!(!std::path::Path::new("/etc/absolute.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn copying_a_directory_keeps_symlinks_as_symlinks() {
+        let temp = TempDir::new().unwrap();
+        let manager = FileManager::new("srv", temp.path());
+        fs::create_dir_all(manager.server_dir.join("src")).await.unwrap();
+        // A link pointing outside the jail.
+        std::os::unix::fs::symlink("/etc/hostname", manager.server_dir.join("src/leak")).unwrap();
+        fs::write(manager.server_dir.join("src/real.txt"), b"x").await.unwrap();
+
+        manager.copy("src", "dst", false).await.unwrap();
+        let meta = fs::symlink_metadata(manager.server_dir.join("dst/leak")).await.unwrap();
+        assert!(
+            meta.file_type().is_symlink(),
+            "not dereferenced into a copy"
+        );
+        assert!(manager.server_dir.join("dst/real.txt").exists());
     }
 }
