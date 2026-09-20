@@ -106,6 +106,7 @@ sysinfo = "0.31"
 # Semantic version comparison (update checks)
 semver = "1.0"
 chrono-tz = "0.9"
+argon2 = "0.5"
 
 [build-dependencies]
 tonic-build = "0.12"

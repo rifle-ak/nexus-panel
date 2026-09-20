@@ -34,14 +34,8 @@ const NX = window.NX = {
 
 // ── Blueprints (static catalog) ───────────────────────────────────
 
-const BLUEPRINTS = [
-  { id: 'minecraft-paper', name: 'Minecraft Paper', desc: 'Paper 1.21 with Aikar\'s JVM flags, auto-scaling, and plugin support.', tags: ['java','popular','auto-scale'], game: 'minecraft' },
-  { id: 'rust',            name: 'Rust',            desc: 'Rust Dedicated Server with Oxide mod support and DDoS protection.', tags: ['popular','oxide','anticheat'], game: 'rust' },
-  { id: 'valheim',         name: 'Valheim',         desc: 'Valheim with BepInEx mod framework and automatic updates.', tags: ['survival','mods','bepinex'], game: 'valheim' },
-  { id: 'cs2',             name: 'Counter-Strike 2', desc: 'CS2 with GSLT, competitive configs, and workshop map support.', tags: ['competitive','esports','srcds'], game: 'cs2' },
-  { id: 'palworld',        name: 'Palworld',        desc: 'Palworld Dedicated Server with optimised memory and CPU settings.', tags: ['popular','survival'], game: 'palworld' },
-  { id: 'dayz',            name: 'DayZ',            desc: 'DayZ Dedicated Server with Steam Workshop mod support.', tags: ['survival','pvp','workshop'], game: 'dayz' },
-];
+// Blueprints come from the node (GET /api/v1/blueprints); cached here for labels.
+NX.blueprints = [];
 
 // ── Toast notifications ───────────────────────────────────────────
 
@@ -110,7 +104,7 @@ function route() {
     case 'analytics':   renderAnalytics(); break;
     case 'security':    renderSecurity(); break;
     case 'settings':    renderSettings(); break;
-    case 'users':       renderPage('users'); break;
+    case 'users':       renderUsers(); break;
     default:            renderDashboard();
   }
 }
@@ -414,6 +408,7 @@ NX.switchTab = function(tab) {
   if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
   if (tab === 'install') NX.refreshGameFiles();
   if (tab === 'firewall') NX.loadServerFirewall();
+  if (tab === 'settings') NX.loadServerSettings();
 };
 
 // ── Install game files ────────────────────────────────────────────
@@ -1348,17 +1343,24 @@ NX.doCreateServer = async function() {
 
 // ── Blueprints ────────────────────────────────────────────────────
 
-function renderBlueprints() {
+async function renderBlueprints() {
   renderPage('blueprints');
   const grid = document.getElementById('blueprint-grid');
   if (!grid) return;
-
-  grid.innerHTML = BLUEPRINTS.map(bp => `
-    <div class="blueprint-card" onclick="NX.deployBlueprint('${bp.id}')">
-      <h3>${esc(bp.name)}</h3>
-      <p>${esc(bp.desc)}</p>
+  grid.innerHTML = '<p class="text-muted">Loading…</p>';
+  try {
+    NX.blueprints = await api('/blueprints');
+  } catch (e) {
+    grid.innerHTML = `<p class="text-danger">Could not load blueprints: ${esc(e.message)}</p>`;
+    return;
+  }
+  grid.innerHTML = NX.blueprints.map(bp => `
+    <div class="blueprint-card" onclick="NX.deployBlueprint('${esc(bp.id)}')">
+      <h3>${esc(bp.name)} <span class="text-muted text-sm">v${esc(bp.version)}</span></h3>
+      <p>${esc(bp.description || `${bp.game} server`)}</p>
       <div class="blueprint-tags">
-        ${bp.tags.map(t => `<span class="blueprint-tag">${t}</span>`).join('')}
+        <span class="blueprint-tag">${esc(bp.game)}</span>
+        ${(bp.tags || []).map(t => `<span class="blueprint-tag">${esc(t)}</span>`).join('')}
       </div>
     </div>
   `).join('');
@@ -1429,7 +1431,7 @@ NX.useImportedBlueprint = function() {
 };
 
 NX.deployBlueprint = async function(bpId) {
-  const bp = BLUEPRINTS.find(b => b.id === bpId);
+  const bp = NX.blueprints.find(b => b.id === bpId);
   const label = bp ? bp.name : bpId;
   // The node serves the blueprints the repo ships, so the form is prefilled
   // with YAML that is known to parse rather than a copy kept here by hand.
@@ -1547,8 +1549,38 @@ async function renderSettings() {
       `;
     }
   } catch (e) { toast(e.message, 'error'); }
+  renderAccountCard();
   NX.checkForUpdates();
 }
+
+function renderAccountCard() {
+  const el = document.getElementById('account-body');
+  if (!el) return;
+  if (!NX.username || NX.username.startsWith('key:')) {
+    el.innerHTML = '<p class="text-muted text-sm">You are signed in with the operator password from the node\'s environment. Create a named account on the Users page to have a password you can change here.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <p class="text-muted text-sm" style="margin-bottom:0.75rem">Signed in as <strong>${esc(NX.username)}</strong>.</p>
+    <div class="settings-grid">
+      <div class="form-group"><label class="form-label">Current password</label><input type="password" class="form-input" id="pw-current" style="width:100%" autocomplete="current-password"></div>
+      <div class="form-group"><label class="form-label">New password</label><input type="password" class="form-input" id="pw-new" style="width:100%" autocomplete="new-password"><div class="form-hint">At least 10 characters</div></div>
+    </div>
+    <div style="margin-top:1rem"><button class="btn btn-primary btn-sm" onclick="NX.changePassword()">Change password</button></div>
+  `;
+}
+
+NX.changePassword = async function() {
+  const current = document.getElementById('pw-current').value;
+  const next = document.getElementById('pw-new').value;
+  if (!current || !next) return toast('Both passwords are required', 'error');
+  try {
+    await api('/auth/password', { method: 'POST', body: JSON.stringify({ current_password: current, new_password: next }) });
+    toast('Password changed', 'success');
+    document.getElementById('pw-current').value = '';
+    document.getElementById('pw-new').value = '';
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 // ── Mod Marketplace ──────────────────────────────────────────────
 
@@ -1968,7 +2000,8 @@ function showLogin(message) {
         <h1 class="login-title">Nexus Panel</h1>
         <p class="login-sub">Sign in to your control panel</p>
         <form id="login-form" class="login-form" autocomplete="off">
-          <input type="password" id="login-password" class="login-input" placeholder="Admin password" autofocus>
+          <input type="text" id="login-username" class="login-input" placeholder="Username (blank for the operator password)" autocomplete="username">
+          <input type="password" id="login-password" class="login-input" placeholder="Password" autofocus autocomplete="current-password">
           <button type="submit" class="btn btn-primary login-btn">Sign In</button>
           <div id="login-error" class="login-error"></div>
         </form>
@@ -2002,7 +2035,10 @@ async function submitLogin(e) {
     const res = await fetch(API + '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: input.value }),
+      body: JSON.stringify({
+        username: (document.getElementById('login-username').value || '').trim() || undefined,
+        password: input.value,
+      }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -2039,9 +2075,11 @@ NX.logout = logout;
 
 // Shape the UI to what this session may do. A customer sees their servers
 /// and nothing node-level; the node-level pages would only 403.
-function applyScope(scope, serverIds) {
+function applyScope(scope, serverIds, me) {
   NX.scope = scope;
   NX.serverIds = serverIds || [];
+  NX.username = (me && me.username) || null;
+  NX.permissions = (me && me.permissions) || {};
   document.body.classList.toggle('scope-servers', scope !== 'admin');
   if (scope !== 'admin') {
     document.getElementById('sidebar-node-id').textContent = 'My servers';
@@ -2069,7 +2107,7 @@ async function boot() {
       if (!document.body.classList.contains('login-mode')) showLogin();
       return;
     }
-    applyScope(me.scope, me.server_ids);
+    applyScope(me.scope, me.server_ids, me);
   } else {
     applyScope('admin', []);
   }
@@ -2231,4 +2269,320 @@ NX.sfwAdd = function() {
 
 NX.sfwRemove = function(index) {
   NX.sfwSave(NX.serverFirewallRules.filter((_, i) => i !== index));
+};
+
+// ── Users, API keys, audit trail ──────────────────────────────────
+
+async function renderUsers() {
+  renderPage('users');
+  try {
+    const [users, keys, perms, containers] = await Promise.all([
+      api('/users'), api('/apikeys'), api('/permissions'), api('/containers'),
+    ]);
+    NX.permissionCatalog = perms;
+    NX.containers = containers;
+    renderUsersTable(users);
+    renderApiKeys(keys);
+  } catch (e) { toast(e.message, 'error'); }
+  loadAudit();
+  NX.refreshTimer = setInterval(loadAudit, 15000);
+}
+window.renderUsers = renderUsers;
+
+function serverName(id) {
+  const c = (NX.containers || []).find(c => c.id === id);
+  return c ? c.name : id.slice(0, 12);
+}
+
+function renderUsersTable(users) {
+  const tbody = document.getElementById('users-table-body');
+  if (!tbody) return;
+  NX.users = users;
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:2rem">No accounts yet. The operator password still signs in.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td><strong>${esc(u.username)}</strong>${u.disabled ? ' <span class="badge badge-muted">disabled</span>' : ''}</td>
+      <td>${u.admin ? '<span class="badge badge-warning">admin</span>' : '<span class="badge badge-info">user</span>'}</td>
+      <td class="text-sm">${u.admin ? '<span class="text-muted">all</span>' : Object.entries(u.grants).map(([id, ps]) => `${esc(serverName(id))} <span class="text-muted">(${ps.length})</span>`).join(', ') || '<span class="text-muted">none</span>'}</td>
+      <td class="text-muted text-sm">${u.last_login_at ? new Date(u.last_login_at * 1000).toLocaleString() : 'never'}</td>
+      <td>
+        <div class="btn-group">
+          <button class="btn btn-xs" onclick="NX.showUserForm('${u.id}')">Edit</button>
+          <button class="btn btn-xs" onclick="NX.resetUserPassword('${u.id}')">Password</button>
+          <button class="btn btn-xs" onclick="NX.toggleUser('${u.id}', ${!u.disabled})">${u.disabled ? 'Enable' : 'Disable'}</button>
+          <button class="btn btn-xs btn-danger" onclick="NX.deleteUser('${u.id}', '${esc(u.username)}')">Delete</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+// Which preset a permission list is, if any.
+function presetOf(list) {
+  const presets = (NX.permissionCatalog && NX.permissionCatalog.presets) || {};
+  const sorted = [...list].sort().join(',');
+  for (const [name, ps] of Object.entries(presets)) {
+    if ([...ps].sort().join(',') === sorted) return name;
+  }
+  return list.length ? 'custom' : 'none';
+}
+
+NX.showUserForm = function(userId) {
+  const u = userId ? NX.users.find(x => x.id === userId) : null;
+  const presets = Object.keys((NX.permissionCatalog && NX.permissionCatalog.presets) || {});
+  const rows = (NX.containers || []).map(c => {
+    const current = u ? presetOf(u.grants[c.id] || []) : 'none';
+    return `<div class="grant-row">
+      <span>${esc(c.name)} <span class="text-muted text-xs">${c.id.slice(0, 12)}</span></span>
+      <select class="form-input" data-server="${c.id}">
+        <option value="none" ${current === 'none' ? 'selected' : ''}>no access</option>
+        ${presets.map(p => `<option value="${p}" ${current === p ? 'selected' : ''}>${p.replace('_', ' ')}</option>`).join('')}
+        ${current === 'custom' ? '<option value="custom" selected>custom (kept)</option>' : ''}
+      </select>
+    </div>`;
+  }).join('');
+  document.getElementById('modal-title').textContent = u ? `Edit ${u.username}` : 'Add user';
+  document.getElementById('modal-body').innerHTML = `
+    ${u ? '' : `
+    <div class="settings-grid">
+      <div class="form-group"><label class="form-label">Username</label><input type="text" class="form-input" id="user-name" style="width:100%" placeholder="ops-team" autocomplete="off"><div class="form-hint">3–32 characters: a-z, 0-9, . _ -</div></div>
+      <div class="form-group"><label class="form-label">Password</label><input type="password" class="form-input" id="user-password" style="width:100%" autocomplete="new-password"><div class="form-hint">At least 10 characters</div></div>
+    </div>`}
+    <div class="form-group" style="margin-top:1rem">
+      <label class="form-label"><input type="checkbox" id="user-admin" ${u && u.admin ? 'checked' : ''} onchange="document.getElementById('user-grants').style.display = this.checked ? 'none' : ''"> Administrator (full control of the node)</label>
+    </div>
+    <div id="user-grants" style="${u && u.admin ? 'display:none' : ''}">
+      <label class="form-label">Per-server access</label>
+      <div class="text-muted text-xs" style="margin-bottom:0.5rem">read only: look but not touch · default: console and files · operator: everything but deleting the server · full: the same plus firewall and settings</div>
+      ${rows || '<p class="text-muted text-sm">No servers on this node yet.</p>'}
+    </div>
+    <div style="text-align:right;margin-top:1rem">
+      <button class="btn btn-primary" onclick="NX.saveUser(${u ? `'${u.id}'` : 'null'})">${u ? 'Save' : 'Create'}</button>
+    </div>
+  `;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+};
+
+NX.saveUser = async function(userId) {
+  const admin = document.getElementById('user-admin').checked;
+  const grants = {};
+  document.querySelectorAll('#user-grants select[data-server]').forEach(sel => {
+    const v = sel.value;
+    if (v === 'none') return;
+    if (v === 'custom') {
+      const u = NX.users.find(x => x.id === userId);
+      if (u && u.grants[sel.dataset.server]) grants[sel.dataset.server] = u.grants[sel.dataset.server];
+      return;
+    }
+    grants[sel.dataset.server] = v;
+  });
+  try {
+    if (userId) {
+      await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ admin, grants }) });
+      toast('User updated', 'success');
+    } else {
+      const username = document.getElementById('user-name').value.trim();
+      const password = document.getElementById('user-password').value;
+      await api('/users', { method: 'POST', body: JSON.stringify({ username, password, admin, grants }) });
+      toast('User created', 'success');
+    }
+    NX.closeModal();
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.resetUserPassword = async function(userId) {
+  const password = prompt('New password (at least 10 characters):');
+  if (!password) return;
+  try {
+    await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ password }) });
+    toast('Password set', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.toggleUser = async function(userId, disabled) {
+  try {
+    await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ disabled }) });
+    toast(disabled ? 'Account disabled' : 'Account enabled', 'success');
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.deleteUser = async function(userId, username) {
+  if (!confirm(`Delete the account "${username}"?`)) return;
+  try {
+    await api(`/users/${userId}`, { method: 'DELETE' });
+    toast('Account deleted', 'success');
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+function renderApiKeys(keys) {
+  const tbody = document.getElementById('apikeys-table-body');
+  if (!tbody) return;
+  if (!keys.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:2rem">No keys. Keys from AUTH_API_KEYS in the node\'s environment are not listed here.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map(k => `
+    <tr>
+      <td><strong>${esc(k.name)}</strong><div class="text-muted text-xs">by ${esc(k.created_by)}</div></td>
+      <td class="text-muted text-sm" style="font-family:monospace">${esc(k.prefix)}…</td>
+      <td class="text-muted text-sm">${new Date(k.created_at * 1000).toLocaleString()}</td>
+      <td class="text-muted text-sm">${k.last_used_at ? new Date(k.last_used_at * 1000).toLocaleString() : 'never'}</td>
+      <td><button class="btn btn-xs btn-danger" onclick="NX.revokeApiKey('${k.id}', '${esc(k.name)}')">Revoke</button></td>
+    </tr>`).join('');
+}
+
+NX.createApiKey = async function() {
+  const name = prompt('Key name (what will use it):', 'billing');
+  if (!name) return;
+  try {
+    const made = await api('/apikeys', { method: 'POST', body: JSON.stringify({ name }) });
+    document.getElementById('modal-title').textContent = `API key: ${made.name}`;
+    document.getElementById('modal-body').innerHTML = `
+      <p class="text-sm" style="margin-bottom:0.75rem">Copy it now. It is not stored and cannot be shown again.</p>
+      <div class="key-reveal" id="key-reveal">${esc(made.key)}</div>
+      <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:flex-end">
+        <button class="btn" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('key-reveal').textContent).then(() => toast('Copied', 'success'))">Copy</button>
+        <button class="btn btn-primary" onclick="NX.closeModal(); renderUsers()">Done</button>
+      </div>`;
+    document.getElementById('modal-overlay').classList.remove('hidden');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.revokeApiKey = async function(id, name) {
+  if (!confirm(`Revoke the key "${name}"? Anything using it stops working at once.`)) return;
+  try {
+    await api(`/apikeys/${id}`, { method: 'DELETE' });
+    toast('Key revoked', 'success');
+    renderUsers();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+let auditFilterTimer = null;
+NX.auditFilterChanged = function() {
+  clearTimeout(auditFilterTimer);
+  auditFilterTimer = setTimeout(loadAudit, 300);
+};
+
+async function loadAudit() {
+  const tbody = document.getElementById('audit-table-body');
+  if (!tbody) return;
+  const q = (document.getElementById('audit-q') || {}).value || '';
+  const failures = (document.getElementById('audit-failures') || {}).checked;
+  try {
+    const params = new URLSearchParams({ limit: '150' });
+    if (q) params.set('q', q);
+    if (failures) params.set('failures', 'true');
+    const res = await api('/audit?' + params);
+    if (!res.enabled) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">Audit logging is off (AUDIT_ENABLED=false).</td></tr>';
+      return;
+    }
+    if (!res.events.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">Nothing recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = res.events.map(e => `
+      <tr>
+        <td class="text-muted text-sm" style="white-space:nowrap">${new Date(e.timestamp).toLocaleString()}</td>
+        <td class="text-sm">${esc(e.actor.id)}</td>
+        <td class="text-sm" style="font-family:monospace">${esc(e.action)}</td>
+        <td class="text-sm">${e.target ? `${esc(e.target.type || e.target.target_type || '')} ${esc(e.target.name || serverName(e.target.id))}` : '<span class="text-muted">—</span>'}</td>
+        <td>${e.outcome === 'success' ? '<span class="badge badge-success">ok</span>' : `<span class="badge badge-danger" title="${esc(e.error_message || '')}">failed</span>`}${e.error_message ? `<div class="text-danger text-xs">${esc(e.error_message.slice(0, 80))}</div>` : ''}</td>
+        <td class="text-muted text-sm">${esc(e.source_ip || '')}</td>
+      </tr>`).join('');
+  } catch (e) { toast(e.message, 'error'); }
+}
+window.loadAudit = loadAudit;
+
+// ── Server settings tab ───────────────────────────────────────────
+
+NX.loadServerSettings = async function() {
+  const el = document.getElementById('server-settings-form');
+  const id = NX.currentServer;
+  if (!el || !id) return;
+  try {
+    const st = await api(`/containers/${id}/settings`);
+    NX.serverSettings = st;
+    const varInput = v => {
+      if (!v.editable) {
+        return `<input type="text" class="form-input" style="width:100%" value="${esc(v.value == null ? '••••••' : v.value)}" disabled>`;
+      }
+      const enumRule = v.rules.find(r => r.type === 'enum');
+      if (enumRule) {
+        return `<select class="form-input" style="width:100%" data-var="${esc(v.name)}">${enumRule.values.map(o => `<option value="${esc(o)}" ${o === v.value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      }
+      return `<input type="${v.secret ? 'password' : 'text'}" class="form-input" style="width:100%" data-var="${esc(v.name)}" value="${esc(v.value || '')}" placeholder="${esc(v.placeholder || '')}">`;
+    };
+    const hint = v => {
+      const bits = [];
+      if (v.port) bits.push('port assigned by the node');
+      for (const r of v.rules) {
+        if (r.type === 'port') bits.push(`port ${r.range[0]}–${r.range[1]}`);
+        if (r.type === 'numeric') bits.push(`number${r.min != null ? ' ≥ ' + r.min : ''}${r.max != null ? ' ≤ ' + r.max : ''}`);
+        if (r.type === 'regex') bits.push(`matches ${r.pattern}`);
+      }
+      if (v.required) bits.push('required');
+      return bits.join(' · ');
+    };
+    el.innerHTML = `
+      <div class="settings-grid">
+        <div class="form-group"><label class="form-label">Name</label><input type="text" class="form-input" id="st-name" style="width:100%" value="${esc(st.name)}"></div>
+        ${st.resources_editable ? `
+        <div class="form-group"><label class="form-label">Memory (MB)</label><input type="number" class="form-input" id="st-memory" style="width:100%" value="${st.resources.memory_mb}" min="256"></div>
+        <div class="form-group"><label class="form-label">CPU (millicores)</label><input type="number" class="form-input" id="st-cpu" style="width:100%" value="${st.resources.cpu_millicores}" min="100" step="100"><div class="form-hint">1000 = one core</div></div>
+        <div class="form-group"><label class="form-label">Disk (MB)</label><input type="number" class="form-input" id="st-disk" style="width:100%" value="${st.resources.disk_mb}" min="512"></div>` : `
+        <div class="form-group"><label class="form-label">Resources</label><div class="text-sm">${st.resources.memory_mb} MB · ${st.resources.cpu_millicores} millicores · ${st.resources.disk_mb} MB disk</div><div class="form-hint">Set by the operator or your billing plan</div></div>`}
+      </div>
+      <h4 style="margin:1.25rem 0 0.5rem">Variables</h4>
+      <div class="settings-grid">
+        ${st.variables.map(v => `
+          <div class="form-group">
+            <label class="form-label">${esc(v.name)}</label>
+            ${varInput(v)}
+            <div class="form-hint">${esc(v.description)}${hint(v) ? ' · ' + esc(hint(v)) : ''}</div>
+          </div>`).join('') || '<p class="text-muted text-sm">This server has no variables.</p>'}
+      </div>
+      <div style="margin-top:1.25rem;display:flex;gap:0.5rem;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="NX.saveServerSettings()">Save and rebuild</button>
+        <span class="text-muted text-xs">Blueprint ${esc(st.blueprint)} · ${esc(st.game)} v${esc(st.version)} · ${esc(st.image)}</span>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`;
+  }
+};
+
+NX.saveServerSettings = async function() {
+  const st = NX.serverSettings;
+  if (!st) return;
+  const body = { variables: {} };
+  const name = document.getElementById('st-name').value.trim();
+  if (name && name !== st.name) body.name = name;
+  if (st.resources_editable) {
+    const mem = parseInt(document.getElementById('st-memory').value, 10);
+    const cpu = parseInt(document.getElementById('st-cpu').value, 10);
+    const disk = parseInt(document.getElementById('st-disk').value, 10);
+    if (mem && mem !== st.resources.memory_mb) body.memory_mb = mem;
+    if (cpu && cpu !== st.resources.cpu_millicores) body.cpu_millicores = cpu;
+    if (disk && disk !== st.resources.disk_mb) body.disk_mb = disk;
+  }
+  document.querySelectorAll('#server-settings-form [data-var]').forEach(inp => {
+    const v = st.variables.find(x => x.name === inp.dataset.var);
+    if (v && inp.value !== (v.value || '')) body.variables[inp.dataset.var] = inp.value;
+  });
+  if (!body.name && !Object.keys(body.variables).length && body.memory_mb == null && body.cpu_millicores == null && body.disk_mb == null) {
+    return toast('Nothing changed', 'info');
+  }
+  if (!confirm('Apply these settings? The server is rebuilt, and restarted if it is running.')) return;
+  try {
+    await api(`/containers/${NX.currentServer}/settings`, { method: 'PUT', body: JSON.stringify(body) });
+    toast('Settings applied', 'success');
+    NX.loadServerSettings();
+    renderServerDetail(NX.currentServer);
+  } catch (e) { toast(e.message, 'error'); }
 };

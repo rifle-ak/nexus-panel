@@ -32,8 +32,15 @@ The node ships secure-by-default, but production operators should verify:
   systemd environment file with mode `0600`, owned by root. Keep it that way,
   rotate credentials by editing the file and restarting the service, and never
   commit secrets to source control.
+- **Panel accounts.** Named accounts live in `DATA_DIR/.nexus/users.json`
+  (mode 0600) with Argon2id password hashes. Non-admin accounts get
+  per-server permission grants and nothing at node level; an admin account
+  has the run of the node. The operator password from the environment
+  always works as a break-glass credential. Every action is attributed to
+  the account, key or customer session that took it.
 - **Billing-system access is an API key.** A WHMCS (or other billing) node
-  key in `AUTH_API_KEYS` has full control of the node. Use one key per
+  key in `AUTH_API_KEYS`, or one minted on the Users page (stored as a
+  SHA-256 hash, shown once), has full control of the node. Use one key per
   billing system so each can be rotated alone, and serve the panel over HTTPS
   so the key is never on the wire in the clear.
 - **Customer sessions are scoped.** A session minted from a billing-portal

@@ -110,18 +110,58 @@ pub enum SessionScope {
     /// A customer signed in through the billing system: these servers only,
     /// and nothing at node level.
     Servers(Vec<String>),
+    /// A panel account. Admin accounts have the run of the node; the rest
+    /// have what their grants say, server by server.
+    User {
+        username: String,
+        admin: bool,
+        grants: crate::users::Grants,
+    },
 }
 
 impl SessionScope {
     pub fn is_admin(&self) -> bool {
-        matches!(self, SessionScope::Admin)
+        matches!(
+            self,
+            SessionScope::Admin | SessionScope::User { admin: true, .. }
+        )
     }
 
-    /// Whether this session may act on `server_id`.
+    /// The account behind the session, when it is a named one.
+    pub fn subject(&self) -> Option<&str> {
+        match self {
+            SessionScope::User { username, .. } => Some(username),
+            _ => None,
+        }
+    }
+
+    /// The servers a non-admin session may see.
+    pub fn server_ids(&self) -> Vec<String> {
+        match self {
+            SessionScope::Admin | SessionScope::User { admin: true, .. } => Vec::new(),
+            SessionScope::Servers(ids) => ids.clone(),
+            SessionScope::User { grants, .. } => grants.keys().cloned().collect(),
+        }
+    }
+
+    /// Whether this session may act on `server_id` at all.
     pub fn allows_server(&self, server_id: &str) -> bool {
         match self {
             SessionScope::Admin => true,
             SessionScope::Servers(ids) => ids.iter().any(|id| id == server_id),
+            SessionScope::User { admin, grants, .. } => *admin || grants.contains_key(server_id),
+        }
+    }
+
+    /// Whether this session may do `permission` on `server_id`. A customer
+    /// owns their server outright; a panel user has exactly their grants.
+    pub fn permits(&self, server_id: &str, permission: crate::subuser::Permission) -> bool {
+        match self {
+            SessionScope::Admin => true,
+            SessionScope::Servers(ids) => ids.iter().any(|id| id == server_id),
+            SessionScope::User { admin, grants, .. } => {
+                *admin || grants.get(server_id).is_some_and(|g| g.contains(&permission))
+            }
         }
     }
 }

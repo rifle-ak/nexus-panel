@@ -51,7 +51,7 @@ struct Harness {
     _dir: tempfile::TempDir,
 }
 
-fn harness() -> Harness {
+async fn harness() -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
     let firewall = Arc::new(crate::firewall::Firewall::disabled("test"));
@@ -104,9 +104,22 @@ fn harness() -> Harness {
         },
         sso: Arc::new(SsoTokenStore::new()),
         login_throttle: Arc::new(super::auth::LoginThrottle::new()),
-        audit: None,
+        audit: Some(Arc::new(
+            crate::audit::AuditLogger::new(crate::audit::AuditConfig {
+                enabled: true,
+                min_severity: crate::audit::AuditSeverity::Debug,
+                file_output: None,
+                stdout_output: false,
+                include_checksums: true,
+                buffer_size: 256,
+                node_id: "test".into(),
+            })
+            .await
+            .unwrap(),
+        )),
         firewall,
         monitor: monitor.clone(),
+        users: Arc::new(crate::users::UserStore::load(&data_dir)),
     };
     Harness {
         app: build_router(Arc::new(state)),
@@ -163,7 +176,7 @@ fn create_body(external_id: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn provisioning_is_idempotent_on_external_id() {
-    let h = harness();
+    let h = harness().await;
 
     let (status, first, _) = send(
         &h.app,
@@ -234,7 +247,7 @@ async fn provisioning_is_idempotent_on_external_id() {
 
 #[tokio::test]
 async fn provisioning_rejects_bad_requests() {
-    let h = harness();
+    let h = harness().await;
     let (status, body, _) = send(
         &h.app,
         admin(
@@ -284,7 +297,7 @@ async fn provisioning_rejects_bad_requests() {
 
 #[tokio::test]
 async fn shipped_blueprints_provision_with_allocated_ports() {
-    let h = harness();
+    let h = harness().await;
     let (status, body, _) = send(
         &h.app,
         admin(
@@ -318,7 +331,7 @@ async fn shipped_blueprints_provision_with_allocated_ports() {
 
 #[tokio::test]
 async fn package_change_and_termination() {
-    let h = harness();
+    let h = harness().await;
     let (_, created, _) = send(
         &h.app,
         admin(
@@ -427,7 +440,7 @@ async fn package_change_and_termination() {
 
 #[tokio::test]
 async fn sso_lands_a_customer_in_a_scoped_session() {
-    let h = harness();
+    let h = harness().await;
     let (_, mine, _) = send(
         &h.app,
         admin(
@@ -582,7 +595,7 @@ async fn sso_lands_a_customer_in_a_scoped_session() {
 
 #[tokio::test]
 async fn sso_refuses_unknown_servers_and_admin_sees_admin_scope() {
-    let h = harness();
+    let h = harness().await;
     let (status, _, _) = send(
         &h.app,
         admin(
@@ -633,7 +646,7 @@ fn scope_rules() {
 
 #[tokio::test]
 async fn shipped_blueprints_are_listed() {
-    let h = harness();
+    let h = harness().await;
     let (status, list, _) = send(&h.app, admin(Method::GET, "/api/v1/blueprints", None)).await;
     assert_eq!(status, StatusCode::OK);
     let ids: Vec<&str> =
@@ -647,7 +660,7 @@ async fn shipped_blueprints_are_listed() {
 
 #[tokio::test]
 async fn package_change_keeps_variables_and_never_reapplies_ports() {
-    let h = harness();
+    let h = harness().await;
     let mut body = create_body("whmcs-vars");
     // A billing system that thinks it can pick the port is overruled.
     body["variables"] = serde_json::json!({ "SERVER_PORT": "9999", "SERVER_NAME": "Acme" });
@@ -697,7 +710,7 @@ async fn package_change_keeps_variables_and_never_reapplies_ports() {
 
 #[tokio::test]
 async fn login_is_throttled_after_repeated_failures() {
-    let h = harness();
+    let h = harness().await;
     let attempt = |password: &str| {
         Request::builder()
             .method(Method::POST)
@@ -734,7 +747,7 @@ async fn login_is_throttled_after_repeated_failures() {
 
 #[tokio::test]
 async fn firewall_status_and_per_server_rules() {
-    let h = harness();
+    let h = harness().await;
     // Node-wide status is admin-only and honest about being disabled here.
     let (status, fw, _) = send(&h.app, admin(Method::GET, "/api/v1/firewall", None)).await;
     assert_eq!(status, StatusCode::OK, "{}", fw);
@@ -908,7 +921,7 @@ async fn firewall_status_and_per_server_rules() {
 
 #[tokio::test]
 async fn stats_console_and_node_usage() {
-    let h = harness();
+    let h = harness().await;
     let (status, body, _) = send(
         &h.app,
         admin(
@@ -1110,7 +1123,7 @@ async fn provisioned(h: &Harness, external_id: &str) -> String {
 
 #[tokio::test]
 async fn files_upload_download_and_archives() {
-    let h = harness();
+    let h = harness().await;
     let id = provisioned(&h, "files-1").await;
 
     // Upload streams the body into place.
@@ -1277,7 +1290,7 @@ async fn files_upload_download_and_archives() {
 
 #[tokio::test]
 async fn backups_restore_safely_and_download() {
-    let h = harness();
+    let h = harness().await;
     let id = provisioned(&h, "backup-1").await;
     let (status, _, _) = send(
         &h.app,
@@ -1425,7 +1438,7 @@ async fn backups_restore_safely_and_download() {
 
 #[tokio::test]
 async fn schedules_take_five_field_cron_and_a_zone() {
-    let h = harness();
+    let h = harness().await;
     let id = provisioned(&h, "sched-1").await;
     let create = |cron: &str, tz: Option<&str>| {
         serde_json::json!({
@@ -1536,4 +1549,606 @@ async fn schedules_take_five_field_cron_and_a_zone() {
                 .map(|d| d.count() == 0)
                 .unwrap_or(true)
     );
+}
+
+/// A blueprint with editable and secret variables, for the settings tests.
+const EDITABLE_BLUEPRINT: &str = r#"
+metadata:
+  id: editable
+  name: Editable
+  version: "1"
+  game: simple
+  author: test
+container:
+  image: example/simple:latest
+resources:
+  cpu: { min: 500, max: 1000, shares: 1024 }
+  memory: { min: 512Mi, max: 1Gi }
+  disk: { min: 1Gi }
+startup:
+  command: /bin/true
+  working_dir: /home/container
+variables:
+  - { name: SERVER_PORT, description: p, default: "7777" }
+  - { name: MOTD, description: message, default: "hello", user_editable: true, user_viewable: true }
+  - { name: DIFFICULTY, description: d, default: "normal", user_editable: true, user_viewable: true, rules: [{ type: enum, values: [easy, normal, hard] }] }
+  - { name: LICENSE_KEY, description: k, default: "top-secret", secret: true }
+networking:
+  ports:
+    - { name: game, internal: "{{SERVER_PORT}}", protocol: udp }
+security:
+  capabilities: { drop: [], add: [] }
+"#;
+
+/// Log in as a panel account and return the bearer token.
+async fn login_as(h: &Harness, username: &str, password: &str) -> String {
+    let (status, body, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({ "username": username, "password": password }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    body["token"].as_str().unwrap().to_string()
+}
+
+fn bearer(
+    token: &str,
+    method: Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::AUTHORIZATION, format!("Bearer {}", token));
+    match body {
+        Some(json) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            req.body(Body::from(json.to_string())).unwrap()
+        }
+        None => req.body(Body::empty()).unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn panel_users_get_exactly_their_grants() {
+    let h = harness().await;
+    let id = provisioned(&h, "users-1").await;
+
+    // Validation: bad names, short passwords, unknown permissions and presets.
+    for bad in [
+        serde_json::json!({ "username": "x", "password": "long enough password" }),
+        serde_json::json!({ "username": "ops", "password": "short" }),
+        serde_json::json!({ "username": "ops", "password": "long enough password", "grants": { "s": ["nope.nope"] } }),
+        serde_json::json!({ "username": "ops", "password": "long enough password", "grants": { "s": "godmode" } }),
+    ] {
+        let (status, body, _) = send(&h.app, admin(Method::POST, "/api/v1/users", Some(bad))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    }
+
+    // An operator on this server: preset grants.
+    let (status, ops, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/users",
+            Some(serde_json::json!({
+                "username": "Ops",
+                "password": "correct horse battery",
+                "grants": { id.clone(): "read_only" }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", ops);
+    assert_eq!(ops["username"], "ops");
+    assert_eq!(ops["admin"], false);
+    assert!(ops["grants"][&id].as_array().unwrap().iter().any(|p| p == "console.read"));
+    assert!(!ops["grants"][&id].as_array().unwrap().iter().any(|p| p == "power.start"));
+    let ops_id = ops["id"].as_str().unwrap().to_string();
+
+    // Wrong password fails; right one gives a session that knows itself.
+    let (status, _, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({ "username": "ops", "password": "wrong password!" }).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let token = login_as(&h, "ops", "correct horse battery").await;
+    let (_, me, _) = send(&h.app, bearer(&token, Method::GET, "/api/v1/auth/me", None)).await;
+    assert_eq!(me["scope"], "servers");
+    assert_eq!(me["username"], "ops");
+    assert_eq!(me["server_ids"][0], id);
+    assert!(me["permissions"][&id].as_array().unwrap().iter().any(|p| p == "file.read"));
+
+    // Read-only: may look, may not touch, sees only their server.
+    let (status, list, _) = send(
+        &h.app,
+        bearer(&token, Method::GET, "/api/v1/containers", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    for (method, path, expect) in [
+        (
+            Method::GET,
+            format!("/api/v1/containers/{}", id),
+            StatusCode::OK,
+        ),
+        (
+            Method::GET,
+            format!("/api/v1/containers/{}/files?path=/", id),
+            StatusCode::OK,
+        ),
+        (
+            Method::GET,
+            format!("/api/v1/containers/{}/console", id),
+            StatusCode::OK,
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/containers/{}/start", id),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/containers/{}/command", id),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::POST,
+            format!("/api/v1/containers/{}/files/mkdir", id),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::DELETE,
+            format!("/api/v1/containers/{}", id),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::GET,
+            "/api/v1/users".to_string(),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::GET,
+            "/api/v1/audit".to_string(),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            Method::GET,
+            "/api/v1/containers/other/files".to_string(),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let body = if method == Method::POST {
+            Some(serde_json::json!({ "path": "/x", "command": "say hi" }))
+        } else {
+            None
+        };
+        let (status, _, _) = send(&h.app, bearer(&token, method.clone(), &path, body)).await;
+        assert_eq!(status, expect, "{} {}", method, path);
+    }
+
+    // Promote to operator: power and files open up; deleting stays closed.
+    let (status, upd, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/users/{}", ops_id),
+            Some(serde_json::json!({ "grants": { id.clone(): ["power.start", "power.stop", "file.write"] } })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", upd);
+    // Grants apply to new sessions; the old token keeps its old scope.
+    let token = login_as(&h, "ops", "correct horse battery").await;
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &token,
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/mkdir", id),
+            Some(serde_json::json!({ "path": "/made" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &token,
+            Method::POST,
+            &format!("/api/v1/containers/{}/start", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &token,
+            Method::DELETE,
+            &format!("/api/v1/containers/{}", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Changing one's own password; a disabled account cannot sign in.
+    let (status, _, _) = send(
+        &h.app,
+        bearer(&token, Method::POST, "/api/v1/auth/password", Some(serde_json::json!({ "current_password": "wrong", "new_password": "another long password" }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(&token, Method::POST, "/api/v1/auth/password", Some(serde_json::json!({ "current_password": "correct horse battery", "new_password": "another long password" }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    login_as(&h, "ops", "another long password").await;
+    send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/users/{}", ops_id),
+            Some(serde_json::json!({ "disabled": true })),
+        ),
+    )
+    .await;
+    let (status, _, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({ "username": "ops", "password": "another long password" })
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // An admin account has the run of the node but cannot demote itself.
+    let (status, boss, _) = send(
+        &h.app,
+        admin(Method::POST, "/api/v1/users", Some(serde_json::json!({ "username": "boss", "password": "boss password 123", "admin": true }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let boss_token = login_as(&h, "boss", "boss password 123").await;
+    let (status, _, _) = send(
+        &h.app,
+        bearer(&boss_token, Method::GET, "/api/v1/users", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &boss_token,
+            Method::PUT,
+            &format!("/api/v1/users/{}", boss["id"].as_str().unwrap()),
+            Some(serde_json::json!({ "admin": false })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &boss_token,
+            Method::DELETE,
+            &format!("/api/v1/users/{}", boss["id"].as_str().unwrap()),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &boss_token,
+            Method::DELETE,
+            &format!("/api/v1/users/{}", ops_id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The audit trail names who did what.
+    let (status, trail, _) = send(
+        &h.app,
+        admin(Method::GET, "/api/v1/audit?q=user.delete", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", trail);
+    assert_eq!(trail["enabled"], true);
+    let ev = &trail["events"][0];
+    assert_eq!(ev["action"], "user.delete", "{}", trail);
+    assert_eq!(ev["actor"]["id"], "boss");
+    assert_eq!(ev["target"]["name"], "ops");
+    let (_, failures, _) = send(
+        &h.app,
+        admin(Method::GET, "/api/v1/audit?failures=true", None),
+    )
+    .await;
+    assert!(failures["events"].as_array().unwrap().iter().all(|e| e["outcome"] == "failure"));
+    assert!(
+        failures["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["event_type"] == "AUTHENTICATION_FAILURE" && e["actor"]["id"] == "ops"),
+        "{}",
+        failures
+    );
+    let (_, permissions, _) = send(&h.app, admin(Method::GET, "/api/v1/permissions", None)).await;
+    assert!(permissions["presets"]["operator"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p == "power.restart"));
+}
+
+#[tokio::test]
+async fn api_keys_are_minted_once_and_revocable() {
+    let h = harness().await;
+    let (status, made, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/apikeys",
+            Some(serde_json::json!({ "name": "billing" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", made);
+    let secret = made["key"].as_str().unwrap().to_string();
+    assert!(secret.starts_with("nxk_"));
+    let (_, list, _) = send(&h.app, admin(Method::GET, "/api/v1/apikeys", None)).await;
+    assert!(list[0]["key"].is_null());
+    assert_eq!(list[0]["name"], "billing");
+
+    // The key works as x-api-key and as a bearer, with admin reach, and its
+    // actions are attributed to it.
+    let (status, _, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/users")
+            .header("x-api-key", &secret)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &secret,
+            Method::POST,
+            "/api/v1/firewall/blocks",
+            Some(serde_json::json!({ "cidr": "203.0.113.9" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, trail, _) = send(
+        &h.app,
+        admin(Method::GET, "/api/v1/audit?q=firewall.block", None),
+    )
+    .await;
+    assert_eq!(
+        trail["events"][0]["actor"]["id"], "key:billing",
+        "{}",
+        trail
+    );
+    let (_, list, _) = send(&h.app, admin(Method::GET, "/api/v1/apikeys", None)).await;
+    assert!(list[0]["last_used_at"].is_number());
+
+    // Revoked keys stop working at once.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::DELETE,
+            &format!("/api/v1/apikeys/{}", made["id"].as_str().unwrap()),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/users")
+            .header("x-api-key", &secret)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = send(&h.app, admin(Method::DELETE, "/api/v1/apikeys/nope", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn server_settings_respect_editability_and_rules() {
+    let h = harness().await;
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/servers",
+            Some(serde_json::json!({ "external_id": "settings-1", "name": "Tunable", "blueprint_yaml": EDITABLE_BLUEPRINT, "auto_start": false })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", body);
+    let id = body["id"].as_str().unwrap().to_string();
+
+    // The operator sees everything, including the secret and the port.
+    let (status, settings, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/settings", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", settings);
+    assert_eq!(settings["name"], "Tunable");
+    assert_eq!(settings["resources_editable"], true);
+    assert_eq!(settings["resources"]["memory_mb"], 1024);
+    let vars = settings["variables"].as_array().unwrap();
+    let find = |n: &str| vars.iter().find(|v| v["name"] == n).cloned().unwrap();
+    assert_eq!(find("LICENSE_KEY")["value"], "top-secret");
+    assert_eq!(find("SERVER_PORT")["port"], true);
+    assert_eq!(find("SERVER_PORT")["editable"], false);
+    assert_eq!(find("DIFFICULTY")["rules"][0]["type"], "enum");
+
+    // Rules apply; ports are off limits; the rest is applied and recorded.
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/settings", id),
+            Some(serde_json::json!({ "variables": { "DIFFICULTY": "insane" } })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/settings", id),
+            Some(serde_json::json!({ "variables": { "SERVER_PORT": "1" } })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, updated, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/settings", id),
+            Some(serde_json::json!({ "name": "Renamed", "memory_mb": 2048, "variables": { "DIFFICULTY": "hard", "MOTD": "welcome" } })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", updated);
+    assert_eq!(updated["name"], "Renamed");
+    assert_eq!(updated["resources"]["memory_mb"], 2048);
+    let (_, record, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/provision/servers/{}", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(record["name"], "Renamed");
+    assert_eq!(record["resources"]["memory_mb"], 2048);
+
+    // A customer sees only what the blueprint lets them, and cannot touch
+    // resources or non-editable variables.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, view, _) = send(
+        &h.app,
+        with_cookie(
+            Method::GET,
+            &format!("/api/v1/containers/{}/settings", id),
+            &cookie,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", view);
+    assert_eq!(view["resources_editable"], false);
+    let names: Vec<&str> = view["variables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"MOTD") && !names.contains(&"LICENSE_KEY"),
+        "{:?}",
+        names
+    );
+    let put = |body: serde_json::Value| {
+        let mut req = with_cookie(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/settings", id),
+            &cookie,
+        );
+        *req.body_mut() = Body::from(body.to_string());
+        req.headers_mut()
+            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        req
+    };
+    let (status, _, _) = send(&h.app, put(serde_json::json!({ "memory_mb": 4096 }))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = send(
+        &h.app,
+        put(serde_json::json!({ "variables": { "LICENSE_KEY": "mine" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body, _) = send(
+        &h.app,
+        put(serde_json::json!({ "variables": { "MOTD": "customer motd" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
 }

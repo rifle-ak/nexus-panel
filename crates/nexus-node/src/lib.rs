@@ -56,6 +56,7 @@ pub mod secrets;
 pub mod selfupdate;
 pub mod stats;
 pub mod update;
+pub mod users;
 pub mod version;
 
 // Management modules

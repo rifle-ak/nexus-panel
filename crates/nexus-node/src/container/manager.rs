@@ -1911,7 +1911,7 @@ fn reconcile_state(state: &mut ContainerState, info: &ContainerInfo) {
 }
 
 /// Parse size string (1Gi, 512Mi, etc.) to bytes
-fn parse_size(size_str: &str) -> Result<u64> {
+pub(crate) fn parse_size(size_str: &str) -> Result<u64> {
     let size_str = size_str.trim();
 
     if size_str.ends_with("Gi") {

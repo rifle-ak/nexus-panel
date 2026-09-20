@@ -107,10 +107,11 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Feature | Status |
 |---------|--------|
 | Customer sessions scoped to their own server (via billing-portal SSO) | Done (enforced by the node) |
-| Sub-user permissions (per-server) | Planned |
-| API key management UI | Planned |
-| Audit trail viewer in UI | Planned |
-| Role-based access control | Planned |
+| Panel accounts with per-server permissions (presets or individual grants), Argon2id passwords | Done |
+| API key management (named, revocable, attributed in the audit trail) | Done |
+| Audit trail viewer in UI (filter, failures only) | Done |
+| Role-based access control (admin / per-server grants / billing-scoped customers) | Done |
+| Server Settings tab: name, blueprint variables (`user_editable` honoured), resources for the operator | Done |
 
 ## Infrastructure
 
