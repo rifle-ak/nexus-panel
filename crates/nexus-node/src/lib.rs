@@ -52,6 +52,7 @@ pub mod metrics_server;
 pub mod mods;
 pub mod notify;
 pub mod provision;
+pub mod remote_backup;
 pub mod runtime;
 pub mod schedule;
 pub mod secrets;

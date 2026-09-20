@@ -1364,11 +1364,11 @@ impl NodeService for NodeServiceImpl {
             .await
             .map_err(|e| Status::not_found(format!("Backup not found: {}", e)))?;
 
-        let backup_path = self.backup_manager.get_backup_path(&container_id, &backup_id);
-
-        if !backup_path.exists() {
-            return Err(Status::not_found("Backup file not found on disk"));
-        }
+        let backup_path = self
+            .backup_manager
+            .ensure_local(&container_id, &backup_id)
+            .await
+            .map_err(|e| Status::not_found(format!("Backup file not available: {}", e)))?;
 
         let metadata = tokio::fs::metadata(&backup_path)
             .await

@@ -38,6 +38,12 @@ The node ships secure-by-default, but production operators should verify:
   has the run of the node. The operator password from the environment
   always works as a break-glass credential. Every action is attributed to
   the account, key or customer session that took it.
+- **Bucket credentials.** Off-node backup settings, secret key included,
+  live in `DATA_DIR/.nexus/remote_backup.json` (mode 0600). The API never
+  returns the secret. Give the key a bucket of its own with object read,
+  write, list and delete only; the node never needs bucket-level rights.
+  Use `https://` endpoints; plain `http://` is accepted only for a bucket
+  on the node's own network (MinIO).
 - **Billing-system access is an API key.** A WHMCS (or other billing) node
   key in `AUTH_API_KEYS`, or one minted on the Users page (stored as a
   SHA-256 hash, shown once), has full control of the node. Use one key per

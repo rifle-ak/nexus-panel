@@ -123,6 +123,7 @@ pub struct AppState {
     pub brand: Arc<crate::branding::BrandStore>,
     /// SFTP access to servers' files.
     pub sftp: Arc<crate::sftp::SftpServer>,
+    pub remote_backups: Arc<crate::remote_backup::RemoteBackupStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +434,21 @@ pub fn build_router(shared: S) -> Router {
             get(sftp::api_sftp_info)
                 .put(sftp::api_set_sftp_password)
                 .delete(sftp::api_clear_sftp_password),
+        )
+        // ── Off-node backups ─────────────────────────────────────────
+        .route(
+            "/api/v1/backups/remote",
+            get(product::api_get_remote_backups)
+                .put(product::api_set_remote_backups)
+                .delete(product::api_reset_remote_backups),
+        )
+        .route(
+            "/api/v1/backups/remote/test",
+            post(product::api_test_remote_backups),
+        )
+        .route(
+            "/api/v1/backups/remote/sync",
+            post(product::api_sync_remote_backups),
         )
         // ── Branding and notifications ───────────────────────────────
         .route(
@@ -1199,6 +1215,12 @@ struct BackupJson {
     error: Option<String>,
     /// The paths the backup was limited to; empty means everything.
     include: Vec<String>,
+    /// The archive is on the node.
+    local: bool,
+    /// The off-node copy, when there is one.
+    remote: Option<crate::remote_backup::RemoteRef>,
+    /// Why the off-node copy was not made.
+    remote_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1929,7 +1951,9 @@ async fn api_list_backups(
         .list_backups(&id)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok(Json(backups.into_iter().map(backup_to_json).collect()))
+    Ok(Json(
+        backups.into_iter().map(|b| backup_to_json(&s, b)).collect(),
+    ))
 }
 
 async fn api_create_backup(
@@ -1951,7 +1975,7 @@ async fn api_create_backup(
     )
     .await
     .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok((StatusCode::CREATED, Json(backup_to_json(info))))
+    Ok((StatusCode::CREATED, Json(backup_to_json(&s, info))))
 }
 
 /// Restore a backup into a stopped server. Restoring under a running game
@@ -2723,8 +2747,12 @@ pub(super) async fn forget_server(s: &S, id: &str) {
     }
 }
 
-fn backup_to_json(b: crate::backup::BackupInfo) -> BackupJson {
+fn backup_to_json(s: &S, b: crate::backup::BackupInfo) -> BackupJson {
+    let local = s.backup_manager.get_backup_path(&b.container_id, &b.id).exists();
     BackupJson {
+        local,
+        remote: b.remote,
+        remote_error: b.remote_error,
         id: b.id,
         container_id: b.container_id,
         name: b.name,

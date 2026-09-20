@@ -1,5 +1,5 @@
-//! Branding and notification settings: the operator's, and a server owner's
-//! own webhook.
+//! Branding, notification and off-node backup settings: the operator's, and
+//! a server owner's own webhook.
 
 use std::collections::HashMap;
 
@@ -14,6 +14,7 @@ use super::{actor_for, audit, client_ip, container_event, err_json, node_err_sta
 use crate::audit::{AuditEvent, AuditEventType};
 use crate::branding::Brand;
 use crate::notify::{ChannelStatus, OperatorChannels, ServerHook, EVENT_KINDS};
+use crate::remote_backup::{ProbeResult, RemoteSettingsUpdate, RemoteSettingsView, RemoteStatus};
 use crate::web::auth::SessionScope;
 
 type ApiResult<T> = Result<T, (StatusCode, Json<ApiError>)>;
@@ -181,4 +182,104 @@ pub(super) async fn api_set_server_hook(
         hook: saved,
         event_kinds: EVENT_KINDS,
     }))
+}
+
+// ── Off-node backups ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct RemoteBackupsResp {
+    #[serde(flatten)]
+    pub settings: RemoteSettingsView,
+    pub status: RemoteStatus,
+}
+
+async fn remote_resp(s: &S) -> RemoteBackupsResp {
+    RemoteBackupsResp {
+        settings: s.remote_backups.view().await,
+        status: s.remote_backups.status().await,
+    }
+}
+
+pub(super) async fn api_get_remote_backups(State(s): State<S>) -> Json<RemoteBackupsResp> {
+    Json(remote_resp(&s).await)
+}
+
+pub(super) async fn api_set_remote_backups(
+    State(s): State<S>,
+    Extension(scope): Extension<SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
+    Json(update): Json<RemoteSettingsUpdate>,
+) -> ApiResult<Json<RemoteBackupsResp>> {
+    let saved = s
+        .remote_backups
+        .update(update)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    audit(
+        &s,
+        AuditEvent::new(
+            AuditEventType::ConfigurationChanged,
+            "backups.remote.update",
+        )
+        .with_actor(actor_for(&scope))
+        .with_source_ip(client_ip(peer.map(|c| c.0), &headers))
+        .with_context("enabled", saved.enabled)
+        .with_context("bucket", &saved.bucket)
+        .with_context("endpoint", saved.endpoint.clone().unwrap_or_default())
+        .with_context("keep_local", saved.keep_local)
+        .success(),
+    )
+    .await;
+    Ok(Json(remote_resp(&s).await))
+}
+
+pub(super) async fn api_reset_remote_backups(
+    State(s): State<S>,
+    Extension(scope): Extension<SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
+) -> ApiResult<Json<RemoteBackupsResp>> {
+    s.remote_backups
+        .reset()
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    audit(
+        &s,
+        AuditEvent::new(AuditEventType::ConfigurationChanged, "backups.remote.reset")
+            .with_actor(actor_for(&scope))
+            .with_source_ip(client_ip(peer.map(|c| c.0), &headers))
+            .success(),
+    )
+    .await;
+    Ok(Json(remote_resp(&s).await))
+}
+
+/// Write, read back and delete a small object in the bucket.
+pub(super) async fn api_test_remote_backups(State(s): State<S>) -> Json<ProbeResult> {
+    Json(s.remote_backups.probe().await)
+}
+
+/// Adopt records in the bucket this node does not have.
+pub(super) async fn api_sync_remote_backups(
+    State(s): State<S>,
+    Extension(scope): Extension<SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
+) -> ApiResult<Json<serde_json::Value>> {
+    let adopted = s
+        .backup_manager
+        .sync_from_remote()
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    audit(
+        &s,
+        AuditEvent::new(AuditEventType::ConfigurationChanged, "backups.remote.sync")
+            .with_actor(actor_for(&scope))
+            .with_source_ip(client_ip(peer.map(|c| c.0), &headers))
+            .with_context("adopted", adopted)
+            .success(),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "adopted": adopted })))
 }

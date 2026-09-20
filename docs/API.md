@@ -374,6 +374,25 @@ user; symlinks cannot be created; writes are refused while the server is
 over its disk allowance. Failed logins share the web login throttle and
 are audited.
 
+## Off-node Backups (REST)
+
+Operator only. Copies every completed backup to an S3-compatible bucket.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/backups/remote` | `enabled`, `bucket`, `endpoint`, `region`, `access_key`, `has_secret_key`, `prefix`, `path_style`, `keep_local`, and `status` (`last_ok_at`, `last_error`). The secret key never comes back |
+| `PUT` | `/api/v1/backups/remote` | Same fields plus `secret_key`; a blank or missing secret keeps the one on file. Validated (`400`); persisted to `DATA_DIR/.nexus/remote_backup.json` (0600) |
+| `DELETE` | `/api/v1/backups/remote` | Back to the `NEXUS_BACKUP_S3_*` environment |
+| `POST` | `/api/v1/backups/remote/test` | Writes, reads back and deletes a small object: `{"ok", "message", "latency_ms"}` |
+| `POST` | `/api/v1/backups/remote/sync` | Adopts records in the bucket this node does not have (after a rebuild): `{"adopted": n}`. Records for servers not on this node are skipped |
+
+Objects are `<prefix>/<server>/<backup>.tar.gz` with the record beside it
+as `<backup>.json`. With `keep_local` off the archive leaves the node once
+the copy is up and a restore or download fetches it back. Deleting a backup
+deletes the copy first; if the bucket cannot be reached the backup stays
+listed. A failed copy does not fail the backup: it is recorded on the backup
+(`remote_error`), shown on the Backups tab and sent as `backup.failed`.
+
 ## Branding and Notifications (REST)
 
 | Method | Path | Purpose |
@@ -523,13 +542,14 @@ the server's session scope.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `…/backups` | List, newest first; each has `include` (the paths it was limited to) and `error` when failed |
+| `GET` | `…/backups` | List, newest first; each has `include` (the paths it was limited to), `error` when failed, `local` (the archive is on the node), `remote` (`bucket`, `key`, `uploaded_at` when copied off-node) and `remote_error` |
 | `POST` | `…/backups` | `{"name": "…", "paths": [...]}` both optional. Sends the blueprint's `pre_backup_command` to a running server first, archives the blueprint's `backups.paths` (or `paths`) minus `backups.exclude`, then applies `backups.retention` |
 | `POST` | `…/backups/:backup_id/restore` | `{"delete_existing": false, "stop": false}`. A running server answers `409` unless `stop` is true, in which case it is stopped first (`"stopped": true` in the reply). `delete_existing` replaces the directory atomically; otherwise the archive is unpacked over it |
-| `GET` | `…/backups/:backup_id/download` | Streams the archive as `<name>-<id8>.tar.gz` |
+| `GET` | `…/backups/:backup_id/download` | Streams the archive as `<name>-<id8>.tar.gz`, fetching it from the bucket first when the node no longer holds it |
 | `DELETE` | `…/backups/:backup_id` | Delete the archive and its record |
 
-Deleting a server deletes its backups and schedules.
+Deleting a server deletes its backups (off-node copies included) and
+schedules.
 
 ### Schedules
 

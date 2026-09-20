@@ -49,6 +49,9 @@ struct Harness {
     app: Router,
     monitor: Arc<crate::stats::ResourceMonitor>,
     notifier: Arc<crate::notify::Notifier>,
+    /// The in-memory "bucket" off-node backups go to.
+    bucket: Arc<dyn object_store::ObjectStore>,
+    remote_backups: Arc<crate::remote_backup::RemoteBackupStore>,
     _dir: tempfile::TempDir,
 }
 
@@ -75,9 +78,18 @@ async fn harness() -> Harness {
         api_key_hashes: vec![sha256_hex(API_KEY)],
         session_ttl: Duration::from_secs(3600),
     };
+    let bucket: Arc<dyn object_store::ObjectStore> =
+        Arc::new(object_store::memory::InMemory::new());
+    let remote_backups = Arc::new(crate::remote_backup::RemoteBackupStore::with_backend(
+        &data_dir,
+        bucket.clone(),
+        "nexus",
+    ));
     let state = AppState {
         manager: manager.clone(),
-        backup_manager: Arc::new(crate::backup::BackupManager::new(&data_dir)),
+        backup_manager: Arc::new(
+            crate::backup::BackupManager::new(&data_dir).with_remote(remote_backups.clone()),
+        ),
         schedule_manager: Arc::new(crate::schedule::ScheduleManager::with_data_dir(
             data_dir.clone(),
         )),
@@ -141,11 +153,14 @@ async fn harness() -> Harness {
             None,
             "test",
         )),
+        remote_backups: remote_backups.clone(),
     };
     Harness {
         app: build_router(Arc::new(state)),
         monitor,
         notifier,
+        bucket,
+        remote_backups,
         _dir: dir,
     }
 }
@@ -2374,6 +2389,208 @@ async fn notifications_settings_and_server_hooks() {
         h.notifier.server_hook(&id).await,
         crate::notify::ServerHook::default()
     );
+}
+
+#[tokio::test]
+async fn off_node_backups_are_operator_settings_and_show_on_the_backups_tab() {
+    use futures::StreamExt;
+    let h = harness().await;
+    let id = provisioned(&h, "remote-1").await;
+
+    let (status, body, _) = send(&h.app, admin(Method::GET, "/api/v1/backups/remote", None)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["has_secret_key"], false);
+    assert!(body.get("secret_key").is_none());
+
+    // Customers do not see the bucket.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(Method::GET, "/api/v1/backups/remote", &cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Bad settings are refused; good ones are saved and the secret stays hidden.
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/backups/remote",
+            Some(serde_json::json!({ "enabled": true, "bucket": "Bad Bucket", "prefix": "nexus" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/backups/remote",
+            Some(serde_json::json!({
+                "enabled": true, "bucket": "acme-backups", "endpoint": "https://s3.example",
+                "access_key": "AKIA", "secret_key": "shh", "prefix": "nexus", "keep_local": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["has_secret_key"], true);
+    assert_eq!(body["keep_local"], false);
+    assert!(body.get("secret_key").is_none());
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::POST, "/api/v1/backups/remote/test", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["ok"], true, "{}", body);
+
+    // A backup is copied, and with keep_local off it leaves the node.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/write", id),
+            Some(serde_json::json!({ "path": "/save.dat", "content": "precious" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, backup, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/backups", id),
+            Some(serde_json::json!({ "name": "nightly" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", backup);
+    let backup_id = backup["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        backup["remote"]["key"],
+        format!("nexus/{}/{}.tar.gz", id, backup_id)
+    );
+    assert_eq!(backup["local"], false);
+    assert!(backup["remote_error"].is_null());
+    let objects = || async {
+        h.bucket
+            .list(None)
+            .map(|m| m.unwrap().location.to_string())
+            .collect::<Vec<_>>()
+            .await
+    };
+    assert_eq!(objects().await.len(), 2);
+
+    // Download and restore fetch it back.
+    let resp = h
+        .app
+        .clone()
+        .oneshot(admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/backups/{}/download", id, backup_id),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/write", id),
+            Some(serde_json::json!({ "path": "/save.dat", "content": "corrupt" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/backups/{}/restore", id, backup_id),
+            Some(serde_json::json!({ "delete_existing": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(
+        std::fs::read_to_string(h._dir.path().join(&id).join("save.dat")).unwrap(),
+        "precious"
+    );
+
+    // Sync finds nothing new; deleting removes the copy.
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::POST, "/api/v1/backups/remote/sync", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["adopted"], 0);
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::DELETE,
+            &format!("/api/v1/containers/{}/backups/{}", id, backup_id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(objects().await.is_empty());
+
+    // Reset goes back to the environment: off.
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::DELETE, "/api/v1/backups/remote", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["enabled"], false);
+    assert!(!h.remote_backups.enabled().await);
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::POST, "/api/v1/backups/remote/test", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    let (_, body, _) = send(&h.app, admin(Method::GET, "/api/v1/audit?limit=50", None)).await;
+    let actions: Vec<&str> = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["action"].as_str())
+        .collect();
+    assert!(actions.contains(&"backups.remote.update"), "{:?}", actions);
 }
 
 #[tokio::test]
