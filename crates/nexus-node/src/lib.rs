@@ -49,6 +49,7 @@ pub mod install;
 pub mod metrics;
 pub mod metrics_server;
 pub mod mods;
+pub mod provision;
 pub mod runtime;
 pub mod schedule;
 pub mod secrets;

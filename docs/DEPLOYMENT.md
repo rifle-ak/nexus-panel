@@ -174,6 +174,12 @@ TLS_MIN_VERSION=1.3
 AUTH_ENABLED=true
 AUTH_API_KEYS=key1,key2
 
+# Billing / provisioning (optional — see docs/WHMCS.md)
+# The address customers connect to; the node cannot discover it reliably.
+NODE_PUBLIC_IP=203.0.113.10
+# Ports handed to provisioned servers (inclusive; default 20000-29999).
+PROVISION_PORT_RANGE=20000-29999
+
 # Rate Limiting (enabled by default)
 RATE_LIMIT_GLOBAL_RPS=10000
 RATE_LIMIT_PER_CLIENT_RPS=100
@@ -253,6 +259,13 @@ Installs run as a background job: `POST /api/v1/containers/:id/mods/install`
 returns immediately with a job, and `GET` on the same path reports progress.
 A multi-gigabyte Workshop download would otherwise hold an HTTP request open
 for its entire duration.
+
+## Billing integration
+
+The WHMCS provisioning module and the node settings it needs
+(`AUTH_API_KEYS`, `NODE_PUBLIC_IP`, `PROVISION_PORT_RANGE`) are covered in
+[WHMCS.md](WHMCS.md). One WHMCS server record per node; a server group spreads
+orders across nodes.
 
 ## Systemd Service
 

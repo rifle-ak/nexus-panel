@@ -32,6 +32,17 @@ The node ships secure-by-default, but production operators should verify:
   systemd environment file with mode `0600`, owned by root. Keep it that way,
   rotate credentials by editing the file and restarting the service, and never
   commit secrets to source control.
+- **Billing-system access is an API key.** A WHMCS (or other billing) node
+  key in `AUTH_API_KEYS` has full control of the node. Use one key per
+  billing system so each can be rotated alone, and serve the panel over HTTPS
+  so the key is never on the wire in the clear.
+- **Customer sessions are scoped.** A session minted from a billing-portal
+  sign-in link can act only on that customer's server; every other route
+  answers `403`, including deleting the server, which only the billing
+  system's termination does. Sign-in links are single-use, expire after a
+  minute, and only their hash is held in memory. The session cookie is
+  `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the reverse proxy reports
+  `X-Forwarded-Proto: https` — make sure yours does.
 - **Do not run the mock runtime in production.** The in-memory mock runtime is
   gated behind `NEXUS_DEV_MODE=true` and only pretends to run containers. In
   normal operation a containerd connection failure is fatal by design.

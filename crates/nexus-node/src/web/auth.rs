@@ -12,6 +12,11 @@
 //! When authentication is enabled but no credential is configured the
 //! middleware **fails closed** — it rejects every protected request rather than
 //! silently serving them.
+//!
+//! Sessions carry a [`SessionScope`]. A password or API key login is an
+//! `Admin` session; a session minted from a billing-system SSO token is
+//! scoped to the one server the customer is paying for, and the middleware
+//! refuses everything else on the node for it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -97,9 +102,39 @@ impl WebAuthConfig {
     }
 }
 
+/// What a session is allowed to touch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionScope {
+    /// Full control of the node: the operator's own login or an API key.
+    Admin,
+    /// A customer signed in through the billing system: these servers only,
+    /// and nothing at node level.
+    Servers(Vec<String>),
+}
+
+impl SessionScope {
+    pub fn is_admin(&self) -> bool {
+        matches!(self, SessionScope::Admin)
+    }
+
+    /// Whether this session may act on `server_id`.
+    pub fn allows_server(&self, server_id: &str) -> bool {
+        match self {
+            SessionScope::Admin => true,
+            SessionScope::Servers(ids) => ids.iter().any(|id| id == server_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Session {
+    expiry: SystemTime,
+    scope: SessionScope,
+}
+
 /// In-memory store of active session tokens with expiry.
 pub struct SessionStore {
-    sessions: RwLock<HashMap<String, SystemTime>>,
+    sessions: RwLock<HashMap<String, Session>>,
     ttl: Duration,
 }
 
@@ -111,22 +146,38 @@ impl SessionStore {
         }
     }
 
-    /// Create a new session and return its opaque token.
+    /// Create a new admin session and return its opaque token.
     pub async fn create(&self) -> String {
+        self.create_scoped(SessionScope::Admin, None).await
+    }
+
+    /// Create a session with the given scope. `ttl` shorter than the store's
+    /// default is honoured; anything longer is clamped to the default, so a
+    /// caller cannot mint a session that outlives what the operator
+    /// configured.
+    pub async fn create_scoped(&self, scope: SessionScope, ttl: Option<Duration>) -> String {
         let token = generate_token();
-        let expiry = SystemTime::now() + self.ttl;
+        let ttl = ttl.map(|t| t.min(self.ttl)).unwrap_or(self.ttl);
+        let expiry = SystemTime::now() + ttl;
         let mut sessions = self.sessions.write().await;
         purge_expired(&mut sessions);
-        sessions.insert(token.clone(), expiry);
+        sessions.insert(token.clone(), Session { expiry, scope });
         token
     }
 
     /// Return true if the token exists and has not expired.
     pub async fn validate(&self, token: &str) -> bool {
+        self.scope_of(token).await.is_some()
+    }
+
+    /// The scope of a live session, or `None` for an unknown/expired token.
+    pub async fn scope_of(&self, token: &str) -> Option<SessionScope> {
         let sessions = self.sessions.read().await;
-        match sessions.get(token) {
-            Some(expiry) => *expiry > SystemTime::now(),
-            None => false,
+        let session = sessions.get(token)?;
+        if session.expiry > SystemTime::now() {
+            Some(session.scope.clone())
+        } else {
+            None
         }
     }
 
@@ -142,9 +193,89 @@ impl SessionStore {
     }
 }
 
-fn purge_expired(sessions: &mut HashMap<String, SystemTime>) {
+/// Default lifetime of a single sign-on token: long enough for a browser
+/// redirect, short enough that a leaked link is useless by the time anyone
+/// reads it.
+pub const SSO_TOKEN_DEFAULT_TTL: Duration = Duration::from_secs(60);
+/// The longest an SSO token may be asked to live.
+pub const SSO_TOKEN_MAX_TTL: Duration = Duration::from_secs(300);
+
+/// What an SSO token grants once redeemed.
+#[derive(Debug, Clone)]
+pub struct SsoGrant {
+    /// The server the customer is signing in to.
+    pub server_id: String,
+    /// Who the billing system says this is (opaque; for audit logs).
+    pub subject: Option<String>,
+    /// Requested session lifetime, if the caller wants it shorter than the
+    /// store default.
+    pub session_ttl: Option<Duration>,
+    expiry: SystemTime,
+}
+
+/// One-time tokens the billing system mints so a customer can land in the
+/// panel without a password.
+///
+/// The token travels in a URL, so only its hash is kept here; a copy of this
+/// process's memory does not yield usable links. Redeeming a token consumes
+/// it: a link works exactly once.
+pub struct SsoTokenStore {
+    tokens: RwLock<HashMap<String, SsoGrant>>,
+}
+
+impl Default for SsoTokenStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SsoTokenStore {
+    pub fn new() -> Self {
+        Self {
+            tokens: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Mint a token for `server_id` and return it (the only time the raw
+    /// value exists outside the URL it is put in).
+    pub async fn issue(
+        &self,
+        server_id: &str,
+        subject: Option<String>,
+        ttl: Duration,
+        session_ttl: Option<Duration>,
+    ) -> String {
+        let token = generate_token();
+        let ttl = ttl.clamp(Duration::from_secs(1), SSO_TOKEN_MAX_TTL);
+        let grant = SsoGrant {
+            server_id: server_id.to_string(),
+            subject,
+            session_ttl,
+            expiry: SystemTime::now() + ttl,
+        };
+        let mut tokens = self.tokens.write().await;
+        let now = SystemTime::now();
+        tokens.retain(|_, g| g.expiry > now);
+        tokens.insert(sha256_hex(&token), grant);
+        token
+    }
+
+    /// Consume a token. Returns its grant if it existed and had not expired;
+    /// either way the token is gone afterwards.
+    pub async fn redeem(&self, token: &str) -> Option<SsoGrant> {
+        let mut tokens = self.tokens.write().await;
+        let grant = tokens.remove(&sha256_hex(token))?;
+        if grant.expiry > SystemTime::now() {
+            Some(grant)
+        } else {
+            None
+        }
+    }
+}
+
+fn purge_expired(sessions: &mut HashMap<String, Session>) {
     let now = SystemTime::now();
-    sessions.retain(|_, expiry| *expiry > now);
+    sessions.retain(|_, s| s.expiry > now);
 }
 
 /// Generate a 256-bit random token, hex-encoded.
@@ -156,7 +287,7 @@ fn generate_token() -> String {
 }
 
 /// SHA-256 of the input, hex-encoded.
-fn sha256_hex(input: &str) -> String {
+pub(crate) fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(input.as_bytes());
     hash.iter().map(|b| format!("{:02x}", b)).collect()
@@ -280,5 +411,68 @@ mod tests {
             Some("tok123")
         );
         assert_eq!(session_from_cookie("foo=bar"), None);
+    }
+
+    #[tokio::test]
+    async fn scoped_session_reports_its_scope() {
+        let store = SessionStore::new(Duration::from_secs(60));
+        let admin = store.create().await;
+        assert_eq!(store.scope_of(&admin).await, Some(SessionScope::Admin));
+
+        let scope = SessionScope::Servers(vec!["srv-1".into()]);
+        let scoped = store.create_scoped(scope.clone(), None).await;
+        assert_eq!(store.scope_of(&scoped).await, Some(scope.clone()));
+        assert!(scope.allows_server("srv-1"));
+        assert!(!scope.allows_server("srv-2"));
+        assert!(!scope.is_admin());
+        assert!(SessionScope::Admin.allows_server("anything"));
+    }
+
+    #[tokio::test]
+    async fn scoped_session_ttl_cannot_exceed_store_ttl() {
+        // A billing system asking for a week-long session gets the operator's
+        // configured maximum instead.
+        let store = SessionStore::new(Duration::from_millis(20));
+        let token = store
+            .create_scoped(
+                SessionScope::Servers(vec!["s".into()]),
+                Some(Duration::from_secs(3600)),
+            )
+            .await;
+        assert!(store.validate(&token).await);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(!store.validate(&token).await);
+    }
+
+    #[tokio::test]
+    async fn sso_token_is_single_use() {
+        let store = SsoTokenStore::new();
+        let token = store
+            .issue(
+                "srv-1",
+                Some("client-7".into()),
+                SSO_TOKEN_DEFAULT_TTL,
+                None,
+            )
+            .await;
+        let grant = store.redeem(&token).await.expect("first redemption works");
+        assert_eq!(grant.server_id, "srv-1");
+        assert_eq!(grant.subject.as_deref(), Some("client-7"));
+        assert!(store.redeem(&token).await.is_none(), "second use must fail");
+        assert!(store.redeem("not-a-token").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn sso_token_expires() {
+        let store = SsoTokenStore::new();
+        // `issue` clamps to at least one second, so expire it by hand.
+        let token = store.issue("srv-1", None, Duration::from_secs(1), None).await;
+        {
+            let mut tokens = store.tokens.write().await;
+            for grant in tokens.values_mut() {
+                grant.expiry = SystemTime::now() - Duration::from_secs(1);
+            }
+        }
+        assert!(store.redeem(&token).await.is_none());
     }
 }

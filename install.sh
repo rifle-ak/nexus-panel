@@ -429,7 +429,9 @@ merge_config() {
     local entry key value
     for entry in \
         "UPDATE_CHANNEL=stable" \
-        "NEXUS_SNAPSHOTTER=overlayfs"
+        "NEXUS_SNAPSHOTTER=overlayfs" \
+        "PROVISION_PORT_RANGE=20000-29999" \
+        "NODE_PUBLIC_IP="
     do
         key="${entry%%=*}"
         value="${entry#*=}"
@@ -447,6 +449,12 @@ merge_config() {
                     >> "$config_file" ;;
             NEXUS_SNAPSHOTTER)
                 printf '# Snapshotter for container root filesystems.\n# ' >> "$config_file" ;;
+            PROVISION_PORT_RANGE)
+                printf '# Ports handed to servers provisioned by a billing system (docs/WHMCS.md).\n' \
+                    >> "$config_file" ;;
+            NODE_PUBLIC_IP)
+                printf '# The address customers connect to; set it when billing provisions servers here.\n# ' \
+                    >> "$config_file" ;;
         esac
         printf '%s=%s\n' "$key" "$value" >> "$config_file"
         info "Added $key to config.env"
@@ -538,6 +546,17 @@ EOF
 # AUTH_PASSWORD=changeme
 EOF
     fi
+
+    cat >> "$config_file" <<EOF
+
+# Billing integration (see docs/WHMCS.md). API keys are for billing systems;
+# generate one with: openssl rand -hex 32
+# AUTH_API_KEYS=
+# The address customers connect to (the node cannot discover it reliably).
+# NODE_PUBLIC_IP=
+# Ports handed to provisioned servers, inclusive.
+PROVISION_PORT_RANGE=20000-29999
+EOF
 
     cat >> "$config_file" <<EOF
 

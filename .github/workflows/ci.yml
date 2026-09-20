@@ -198,6 +198,30 @@ jobs:
           path: target/${{ matrix.target }}/release/nexus-panel
           if-no-files-found: error
 
+  whmcs:
+    name: WHMCS module (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest PHP current WHMCS releases support, and a current one.
+        php: ['8.1', '8.3']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json
+          tools: none
+
+      - name: Lint
+        run: find whmcs -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Test
+        run: php whmcs/tests/run.php
+
   lint-docs:
     name: Lint Documentation
     runs-on: ubuntu-latest

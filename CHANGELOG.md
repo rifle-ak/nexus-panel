@@ -7,6 +7,50 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **WHMCS provisioning module.** `whmcs/modules/servers/nexuspanel` is a
+  standard WHMCS server module: a paid order creates a server from the
+  product's blueprint with the product's memory, CPU, disk, slots and
+  variables; an overdue invoice suspends it; payment unsuspends and restarts
+  it; an upgrade rebuilds it with the new limits; a cancellation removes it.
+  Customers see status, address and ports on the service page with Start /
+  Stop / Restart, and an **Open game panel** button that signs them in.
+  Configurable options (`Memory (GB)`, `CPU Cores`, `Player Slots`, …) and
+  custom fields (`Server Name`, any `UPPER_CASE` field as a variable) override
+  the product. Disk usage flows back through WHMCS's usage cron. It has its
+  own test suite (`php whmcs/tests/run.php`) that runs in CI on PHP 8.1 and
+  8.3. Setup: `docs/WHMCS.md`.
+- **Provisioning API.** `/api/v1/provision/servers` creates a server from a
+  blueprint id plus resource overrides, idempotently on the billing system's
+  service id — a retry after a timeout finds the server it already made.
+  Ports are allocated from `PROVISION_PORT_RANGE` (default `20000-29999`):
+  every `{{VARIABLE}}` port a blueprint declares gets a free value, and a
+  blueprint that pins a literal port already in use is refused rather than
+  left to fail at start. Package changes rebuild the container with new
+  limits while keeping the customer's ports and files; termination is
+  idempotent; a usage endpoint reports disk. Records live under
+  `DATA_DIR/.nexus/provision`. `GET /api/v1/blueprints` lists what the node
+  ships. `NODE_PUBLIC_IP` tells customers where to connect.
+- **Server-scoped sessions.** A billing system mints a one-time sign-in link
+  (`POST /api/v1/provision/sso`, redeemed at `GET /sso/:token`); the browser
+  gets an `HttpOnly` cookie session that can act on that one server and
+  nothing else — the node answers `403` for everything at node level, for
+  other servers, and for deleting the server, which only the billing system's
+  termination does. Links work once and expire in a minute. The UI follows
+  the scope: a customer sees their servers, the marketplace, and no admin
+  pages or buttons. `GET /api/v1/auth/me` reports a session's scope.
+- **`ContainerManager::reconfigure_container`** replaces a server's blueprint
+  and recreates its runtime container to match, without touching its files
+  or install state.
+
+### Removed
+- **The `nexus-whmcs` crate.** It was a Rust client for the WHMCS API that
+  nothing used and that had the integration backwards: WHMCS calls a
+  provisioning module when an order changes, the module calls the panel —
+  not the other way round. Its presence made the README's "WHMCS integration
+  (backend implemented)" claim true only in the sense that some code existed.
+  The PHP module above is the integration.
+
+### Added
 - **The panel can update itself.** Settings gains an Update panel: what this
   node is running, what its channel has available, and a button that applies
   it. The updater runs in its own transient systemd unit rather than as a child

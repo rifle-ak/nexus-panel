@@ -955,6 +955,74 @@ impl ContainerManager {
         Ok(())
     }
 
+    /// Replace a server's blueprint and rebuild its container to match.
+    ///
+    /// This is how a billing package change reaches the runtime: resource
+    /// limits and environment are baked into the container spec at create
+    /// time, so applying new ones means recreating the container. The server's
+    /// files are untouched — they live in the data directory, not the
+    /// container — and so is its install state. A running server is stopped
+    /// first; the return value says whether it was, so the caller can start it
+    /// again.
+    pub async fn reconfigure_container(
+        &self,
+        container_id: &str,
+        config: &GameConfig,
+    ) -> Result<bool> {
+        let start = Instant::now();
+        info!("Reconfiguring container: {}", container_id);
+
+        let mut state = {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| {
+                    self.metrics.record_container_operation(
+                        "reconfigure",
+                        "not_found",
+                        start.elapsed(),
+                    );
+                    NodeError::ContainerNotFound(container_id.to_string())
+                })?
+                .clone()
+        };
+
+        let was_running = state.status.is_running();
+        if was_running {
+            self.stop_container(container_id, Some(30)).await?;
+            state.status = ContainerStatus::Stopped;
+            state.pid = None;
+        }
+
+        // A local presence check when the image is already here, a real pull
+        // only when the package changed the image.
+        self.runtime.pull_image(&config.container.image).await?;
+
+        let server_dir = self.data_dir.join(container_id);
+        let spec = Self::config_to_spec(config, &server_dir)?;
+
+        // A missing runtime container is fine here: it is about to exist.
+        let _ = self.runtime.delete(container_id).await;
+        self.runtime.create(container_id, spec).await.map_err(|e| {
+            self.metrics.record_container_operation("reconfigure", "error", start.elapsed());
+            NodeError::StartFailed {
+                container_id: container_id.to_string(),
+                source: e.into(),
+            }
+        })?;
+
+        state.name = config.metadata.name.clone();
+        state.image = config.container.image.clone();
+        self.set_state(state).await;
+        self.persist_blueprint(container_id, config).await;
+
+        self.metrics
+            .record_container_operation("reconfigure", "success", start.elapsed());
+        info!("Container {} reconfigured", container_id);
+
+        Ok(was_running)
+    }
+
     /// Send a command to container stdin (one-shot)
     pub async fn send_command(&self, container_id: &str, command: &str) -> Result<()> {
         // Verify container exists and is running
