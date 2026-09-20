@@ -93,6 +93,9 @@ pub struct ContainerManager {
     /// The node's firewall, which gets each server's rules when it starts
     /// and drops them when it stops.
     firewall: Option<Arc<crate::firewall::Firewall>>,
+
+    /// Where crashes, disk stops and the like are reported.
+    notifier: Option<Arc<crate::notify::Notifier>>,
 }
 
 impl ContainerManager {
@@ -117,6 +120,7 @@ impl ContainerManager {
             disk_over_since: Arc::new(RwLock::new(HashMap::new())),
             game_user: container_user(),
             firewall: None,
+            notifier: None,
         }
     }
 
@@ -124,6 +128,23 @@ impl ContainerManager {
     pub fn with_firewall(mut self, firewall: Arc<crate::firewall::Firewall>) -> Self {
         self.firewall = Some(firewall);
         self
+    }
+
+    /// Attach the notifier, so what happens to servers is reported.
+    pub fn with_notifier(mut self, notifier: Arc<crate::notify::Notifier>) -> Self {
+        self.notifier = Some(notifier);
+        self
+    }
+
+    pub fn notifier(&self) -> Option<Arc<crate::notify::Notifier>> {
+        self.notifier.clone()
+    }
+
+    /// Report something about a server, if anyone is listening.
+    pub fn notify(&self, n: crate::notify::Notification) {
+        if let Some(notifier) = &self.notifier {
+            notifier.notify(n);
+        }
     }
 
     /// Put a running server's firewall rules in place, if there is a firewall.
@@ -779,6 +800,17 @@ impl ContainerManager {
         // Watch for the process exiting on its own.
         self.spawn_exit_watcher(container_id.to_string(), generation);
         self.firewall_attach(container_id).await;
+        if let Ok(state) = self.get_state(container_id).await {
+            self.notify(
+                crate::notify::Notification::new(
+                    "server.started",
+                    crate::notify::Severity::Info,
+                    format!("{} started", state.name),
+                    format!("{} is up (pid {}).", state.name, state.pid.unwrap_or(0)),
+                )
+                .for_server(container_id, &state.name),
+            );
+        }
 
         // Update metrics
         self.metrics.record_container_operation("start", "success", start.elapsed());
@@ -857,6 +889,15 @@ impl ContainerManager {
         state.status = ContainerStatus::Stopped;
         self.disk_over_since.write().await.remove(container_id);
         self.firewall_detach(container_id).await;
+        self.notify(
+            crate::notify::Notification::new(
+                "server.stopped",
+                crate::notify::Severity::Info,
+                format!("{} stopped", state.name),
+                format!("{} was stopped.", state.name),
+            )
+            .for_server(container_id, &state.name),
+        );
 
         // Update state (in memory + on disk)
         self.set_state(state).await;
@@ -1047,6 +1088,18 @@ impl ContainerManager {
         };
         let policy = &config.startup.restart;
         if !policy.on_crash {
+            self.notify(
+                crate::notify::Notification::new(
+                    "server.crashed",
+                    crate::notify::Severity::Warning,
+                    format!("{} crashed", name),
+                    format!(
+                        "{} exited with code {}; its blueprint does not restart on crash.",
+                        name, exit_code
+                    ),
+                )
+                .for_server(container_id, &name),
+            );
             return;
         }
         let reset_after =
@@ -1066,8 +1119,36 @@ impl ContainerManager {
                 "Container {} ({}) crashed {} times within {}; not restarting it again",
                 container_id, name, recent, policy.reset_after
             );
+            self.notify(
+                crate::notify::Notification::new(
+                    "server.crash_loop",
+                    crate::notify::Severity::Critical,
+                    format!("{} is crash-looping", name),
+                    format!(
+                        "{} crashed {} times within {} (last exit code {}). It has been left stopped; check its console.",
+                        name, recent, policy.reset_after, exit_code
+                    ),
+                )
+                .for_server(container_id, &name),
+            );
             return;
         }
+        self.notify(
+            crate::notify::Notification::new(
+                "server.crashed",
+                crate::notify::Severity::Warning,
+                format!("{} crashed", name),
+                format!(
+                    "{} exited with code {} (crash {} of {} allowed); restarting in {}s.",
+                    name,
+                    exit_code,
+                    recent,
+                    policy.max_retries,
+                    delay.as_secs()
+                ),
+            )
+            .for_server(container_id, &name),
+        );
 
         info!(
             "Restarting container {} ({}) in {}s (crash {} of {} allowed)",
@@ -1161,6 +1242,19 @@ impl ContainerManager {
                 if let Err(e) = self.stop_container(&id, None).await {
                     warn!("Could not stop over-quota container {}: {}", id, e);
                 }
+                self.notify(
+                    crate::notify::Notification::new(
+                        "server.disk_exceeded",
+                        crate::notify::Severity::Critical,
+                        format!("{} stopped: over its disk allowance", name),
+                        format!(
+                            "{} is using {} MiB, over its allowance, and has been stopped. Free space or raise the allowance, then start it again.",
+                            name,
+                            used / (1024 * 1024)
+                        ),
+                    )
+                    .for_server(&id, &name),
+                );
             } else {
                 warn!(
                     "Container {} ({}) is over its disk allowance ({} MiB used); stopping in {}s unless it frees space",

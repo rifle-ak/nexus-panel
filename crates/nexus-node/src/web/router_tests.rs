@@ -48,6 +48,7 @@ security:
 struct Harness {
     app: Router,
     monitor: Arc<crate::stats::ResourceMonitor>,
+    notifier: Arc<crate::notify::Notifier>,
     _dir: tempfile::TempDir,
 }
 
@@ -56,8 +57,11 @@ async fn harness() -> Harness {
     let data_dir = dir.path().to_path_buf();
     let firewall = Arc::new(crate::firewall::Firewall::disabled("test"));
     let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
+    let notifier = Arc::new(crate::notify::Notifier::load(&data_dir, "test"));
     let manager = Arc::new(
-        crate::container::ContainerManager::new(data_dir.clone()).with_firewall(firewall.clone()),
+        crate::container::ContainerManager::new(data_dir.clone())
+            .with_firewall(firewall.clone())
+            .with_notifier(notifier.clone()),
     );
     let monitor = Arc::new(crate::stats::ResourceMonitor::new(
         (*manager).clone(),
@@ -120,10 +124,13 @@ async fn harness() -> Harness {
         firewall,
         monitor: monitor.clone(),
         users: Arc::new(crate::users::UserStore::load(&data_dir)),
+        notifier: notifier.clone(),
+        brand: Arc::new(crate::branding::BrandStore::load(&data_dir)),
     };
     Harness {
         app: build_router(Arc::new(state)),
         monitor,
+        notifier,
         _dir: dir,
     }
 }
@@ -2151,4 +2158,205 @@ async fn server_settings_respect_editability_and_rules() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", body);
+}
+
+#[tokio::test]
+async fn branding_is_public_and_operator_editable() {
+    let h = harness().await;
+    // Before anyone signs in, the login screen can read the brand.
+    let (status, cfg, _) = send(
+        &h.app,
+        Request::builder().uri("/api/v1/auth/config").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cfg["brand"]["name"], "Nexus Panel");
+
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/node/branding",
+            Some(serde_json::json!({ "name": "Acme", "tagline": "x", "accent": "red" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/node/branding",
+            Some(serde_json::json!({
+                "name": "Acme Hosting", "tagline": "Play more", "accent": "#ff6600",
+                "logo_url": "https://cdn.example/logo.png", "support_url": "https://acme.example/support",
+                "billing_url": ""
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["name"], "Acme Hosting");
+    assert!(body["billing_url"].is_null());
+    let (_, cfg, _) = send(
+        &h.app,
+        Request::builder().uri("/api/v1/auth/config").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(cfg["brand"]["accent"], "#ff6600");
+
+    // A customer cannot change it.
+    let id = provisioned(&h, "brand-1").await;
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(Method::PUT, "/api/v1/node/branding", &cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body, _) =
+        send(&h.app, admin(Method::DELETE, "/api/v1/node/branding", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "Nexus Panel");
+}
+
+#[tokio::test]
+async fn notifications_settings_and_server_hooks() {
+    let h = harness().await;
+    let id = provisioned(&h, "notify-1").await;
+
+    let (status, body, _) = send(&h.app, admin(Method::GET, "/api/v1/notifications", None)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert!(body["event_kinds"].as_array().unwrap().iter().any(|k| k == "server.crashed"));
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/notifications",
+            Some(serde_json::json!({ "webhooks": ["not a url"] })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            "/api/v1/notifications",
+            Some(serde_json::json!({
+                "webhooks": ["https://discord.com/api/webhooks/1/abc"],
+                "emails": ["ops@example.com"],
+                "smtp_url": "smtps://u:p@mail.example.com:465",
+                "min_severity": "critical"
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["min_severity"], "critical");
+    assert_eq!(
+        body["webhooks"][0],
+        "https://discord.com/api/webhooks/1/abc"
+    );
+
+    // A customer sets their own server's webhook, not the node's.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(Method::GET, "/api/v1/notifications", &cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let put = |body: serde_json::Value| {
+        let mut req = with_cookie(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/notifications", id),
+            &cookie,
+        );
+        *req.body_mut() = Body::from(body.to_string());
+        req.headers_mut()
+            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        req
+    };
+    let (status, body, _) = send(&h.app, put(serde_json::json!({ "webhook_url": "https://discord.com/api/webhooks/2/x", "events": ["server.nope"] }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    let (status, body, _) = send(&h.app, put(serde_json::json!({ "webhook_url": "https://discord.com/api/webhooks/2/x", "events": ["server.crashed", "backup.failed"] }))).await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["events"].as_array().unwrap().len(), 2);
+    let (status, body, _) = send(
+        &h.app,
+        with_cookie(
+            Method::GET,
+            &format!("/api/v1/containers/{}/notifications", id),
+            &cookie,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["webhook_url"], "https://discord.com/api/webhooks/2/x");
+
+    // Deleting the server drops its hook.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        h.notifier.server_hook(&id).await,
+        crate::notify::ServerHook::default()
+    );
 }

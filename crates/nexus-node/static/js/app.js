@@ -1550,8 +1550,124 @@ async function renderSettings() {
     }
   } catch (e) { toast(e.message, 'error'); }
   renderAccountCard();
+  renderBrandingForm();
+  renderNotifyForm();
   NX.checkForUpdates();
 }
+
+async function renderBrandingForm() {
+  const el = document.getElementById('branding-form');
+  if (!el) return;
+  try {
+    const b = await api('/node/branding');
+    const f = (id, label, value, hint, type = 'text') => `
+      <div class="form-group"><label class="form-label">${label}</label>
+        <input type="${type}" class="form-input" id="${id}" style="width:100%" value="${esc(value || '')}">
+        ${hint ? `<div class="form-hint">${hint}</div>` : ''}</div>`;
+    el.innerHTML = `
+      <div class="settings-grid">
+        ${f('br-name', 'Name', b.name, 'Sidebar, title bar and login screen')}
+        ${f('br-tagline', 'Tagline', b.tagline, 'Under the name on the login screen')}
+        ${f('br-logo', 'Logo URL', b.logo_url, 'https://… or a data:image URL; blank keeps the built-in mark')}
+        ${f('br-accent', 'Accent colour', b.accent, '#rrggbb; blank keeps the default theme')}
+        ${f('br-billing', 'Billing URL', b.billing_url, 'Shown to customers in the sidebar')}
+        ${f('br-support', 'Support URL', b.support_url, 'Shown to customers in the sidebar')}
+      </div>
+      <div style="margin-top:1rem;display:flex;gap:0.5rem">
+        <button class="btn btn-primary btn-sm" onclick="NX.saveBranding()">Save</button>
+        <button class="btn btn-sm" onclick="NX.resetBranding()">Reset to defaults</button>
+      </div>`;
+  } catch (e) { el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`; }
+}
+
+NX.saveBranding = async function() {
+  const v = id => document.getElementById(id).value.trim();
+  try {
+    const saved = await api('/node/branding', { method: 'PUT', body: JSON.stringify({
+      name: v('br-name'), tagline: v('br-tagline'), logo_url: v('br-logo') || null,
+      accent: v('br-accent') || null, billing_url: v('br-billing') || null, support_url: v('br-support') || null,
+    }) });
+    applyBrand(saved);
+    toast('Branding saved', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.resetBranding = async function() {
+  if (!confirm('Reset branding to the node\'s defaults?')) return;
+  try {
+    const b = await api('/node/branding', { method: 'DELETE' });
+    applyBrand(b);
+    renderBrandingForm();
+    toast('Branding reset', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+function channelStatusHtml(status) {
+  const keys = Object.keys(status || {});
+  if (!keys.length) return '<span class="text-muted text-sm">Nothing sent yet.</span>';
+  return keys.map(k => {
+    const s = status[k];
+    const label = k.startsWith('email:') ? 'Email' : k.startsWith('server:') ? 'Server webhook' : k.replace(/^(https?:\/\/[^/]+).*/, '$1/…');
+    return `<div class="kv-row"><span class="kv-key">${esc(label)}</span><span class="kv-value">${s.last_error
+      ? `<span class="badge badge-danger">failed</span> <span class="text-muted text-xs">${esc(s.last_error)}</span>`
+      : s.last_sent_at ? `<span class="badge badge-success">sent</span> <span class="text-muted text-xs">${new Date(s.last_sent_at * 1000).toLocaleString()}</span>` : '—'}</span></div>`;
+  }).join('');
+}
+
+async function renderNotifyForm() {
+  const el = document.getElementById('notify-form');
+  if (!el) return;
+  try {
+    const n = await api('/notifications');
+    el.innerHTML = `
+      <div class="settings-grid">
+        <div class="form-group"><label class="form-label">Webhooks (one per line)</label>
+          <textarea class="form-input" id="nt-webhooks" style="width:100%;height:80px">${esc((n.webhooks || []).join('\n'))}</textarea>
+          <div class="form-hint">Discord: Server settings → Integrations → Webhooks. Slack: an Incoming Webhook URL.</div></div>
+        <div class="form-group"><label class="form-label">Email recipients (one per line)</label>
+          <textarea class="form-input" id="nt-emails" style="width:100%;height:80px">${esc((n.emails || []).join('\n'))}</textarea></div>
+        <div class="form-group"><label class="form-label">SMTP URL</label>
+          <input type="text" class="form-input" id="nt-smtp" style="width:100%" value="${esc(n.smtp_url || '')}" placeholder="smtps://user:pass@smtp.example.com:465">
+          <div class="form-hint">smtps:// for TLS on 465, smtp://…:587?tls=required for STARTTLS</div></div>
+        <div class="form-group"><label class="form-label">From address</label>
+          <input type="text" class="form-input" id="nt-from" style="width:100%" value="${esc(n.smtp_from || '')}" placeholder="Acme Hosting <alerts@acme.example>"></div>
+        <div class="form-group"><label class="form-label">Send to the operator from</label>
+          <select class="form-input" id="nt-min" style="width:100%">
+            ${['info', 'warning', 'critical'].map(s => `<option value="${s}" ${n.min_severity === s ? 'selected' : ''}>${s}${s === 'info' ? ' (every start and stop too)' : s === 'warning' ? ' (crashes, failed backups, degraded node)' : ' (crash loops, disk stops, unhealthy node)'}</option>`).join('')}
+          </select></div>
+      </div>
+      <div style="margin-top:1rem;display:flex;gap:0.5rem">
+        <button class="btn btn-primary btn-sm" onclick="NX.saveNotify()">Save</button>
+        <button class="btn btn-sm" onclick="NX.testNotify()">Send a test</button>
+      </div>
+      <div style="margin-top:1rem" id="nt-status">${channelStatusHtml(n.status)}</div>`;
+  } catch (e) { el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`; }
+}
+
+NX.saveNotify = async function() {
+  const lines = id => document.getElementById(id).value.split('\n').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('/notifications', { method: 'PUT', body: JSON.stringify({
+      webhooks: lines('nt-webhooks'), emails: lines('nt-emails'),
+      smtp_url: document.getElementById('nt-smtp').value.trim() || null,
+      smtp_from: document.getElementById('nt-from').value.trim() || null,
+      min_severity: document.getElementById('nt-min').value,
+    }) });
+    toast('Notification settings saved', 'success');
+    renderNotifyForm();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.testNotify = async function() {
+  toast('Sending…', 'info');
+  try {
+    const status = await api('/notifications/test', { method: 'POST' });
+    const el = document.getElementById('nt-status');
+    if (el) el.innerHTML = channelStatusHtml(status);
+    const failed = Object.values(status).filter(s => s.last_error).length;
+    toast(failed ? `${failed} channel${failed === 1 ? '' : 's'} failed; see below` : 'Test sent', failed ? 'error' : 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 function renderAccountCard() {
   const el = document.getElementById('account-body');
@@ -1997,8 +2113,8 @@ function showLogin(message) {
             <polyline points="22 8.5 12 15.5 2 8.5"/><line x1="12" y1="2" x2="12" y2="8.5"/>
           </svg>
         </div>
-        <h1 class="login-title">Nexus Panel</h1>
-        <p class="login-sub">Sign in to your control panel</p>
+        <h1 class="login-title">${esc((NX.brand && NX.brand.name) || 'Nexus Panel')}</h1>
+        <p class="login-sub">${esc((NX.brand && NX.brand.tagline) || 'Sign in to your control panel')}</p>
         <form id="login-form" class="login-form" autocomplete="off">
           <input type="text" id="login-username" class="login-input" placeholder="Username (blank for the operator password)" autocomplete="username">
           <input type="password" id="login-password" class="login-input" placeholder="Password" autofocus autocomplete="current-password">
@@ -2008,6 +2124,7 @@ function showLogin(message) {
       </div>`;
     document.body.appendChild(overlay);
     overlay.querySelector('#login-form').addEventListener('submit', submitLogin);
+    if (NX.brand && NX.brand.logo_url) overlay.querySelector('.login-logo').innerHTML = `<img src="${esc(NX.brand.logo_url)}" alt="">`;
   }
   overlay.style.display = 'flex';
   const err = overlay.querySelector('#login-error');
@@ -2073,6 +2190,59 @@ async function logout() {
 }
 NX.logout = logout;
 
+// Put the operator's name, logo and colour on everything a visitor sees.
+function applyBrand(brand) {
+  if (!brand) return;
+  NX.brand = brand;
+  document.title = brand.name;
+  const name = document.getElementById('brand-name');
+  if (name) name.textContent = brand.name;
+  const logo = document.querySelector('.sidebar .logo');
+  if (logo) {
+    const svg = logo.querySelector('svg');
+    const existing = logo.querySelector('img.logo-img');
+    if (brand.logo_url) {
+      if (svg) svg.style.display = 'none';
+      if (existing) existing.src = brand.logo_url;
+      else {
+        const img = document.createElement('img');
+        img.className = 'logo-img';
+        img.alt = '';
+        img.src = brand.logo_url;
+        logo.prepend(img);
+      }
+    } else {
+      if (svg) svg.style.display = '';
+      if (existing) existing.remove();
+    }
+  }
+  if (brand.accent && /^#[0-9a-fA-F]{6}$/.test(brand.accent)) {
+    const r = parseInt(brand.accent.slice(1, 3), 16), g = parseInt(brand.accent.slice(3, 5), 16), b = parseInt(brand.accent.slice(5, 7), 16);
+    const root = document.documentElement.style;
+    root.setProperty('--accent', brand.accent);
+    root.setProperty('--accent-hover', `rgb(${Math.min(255, r + 30)}, ${Math.min(255, g + 30)}, ${Math.min(255, b + 30)})`);
+    root.setProperty('--accent-dim', `rgba(${r}, ${g}, ${b}, 0.16)`);
+    root.setProperty('--grad-accent', `linear-gradient(120deg, ${brand.accent} 0%, rgb(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 40)}) 100%)`);
+    root.setProperty('--glow', `0 0 0 1px rgba(${r},${g},${b},0.35), 0 8px 30px rgba(${r},${g},${b},0.3)`);
+  } else {
+    const root = document.documentElement.style;
+    ['--accent', '--accent-hover', '--accent-dim', '--grad-accent', '--glow'].forEach(v => root.removeProperty(v));
+  }
+  const links = document.getElementById('brand-links');
+  if (links) {
+    links.innerHTML = [
+      brand.billing_url ? `<a href="${esc(brand.billing_url)}" target="_blank" rel="noopener">Billing</a>` : '',
+      brand.support_url ? `<a href="${esc(brand.support_url)}" target="_blank" rel="noopener">Support</a>` : '',
+    ].join('');
+  }
+  const title = document.querySelector('.login-title');
+  if (title) title.textContent = brand.name;
+  const sub = document.querySelector('.login-sub');
+  if (sub) sub.textContent = brand.tagline || '';
+  const loginLogo = document.querySelector('.login-logo');
+  if (loginLogo && brand.logo_url) loginLogo.innerHTML = `<img src="${esc(brand.logo_url)}" alt="">`;
+}
+
 // Shape the UI to what this session may do. A customer sees their servers
 /// and nothing node-level; the node-level pages would only 403.
 function applyScope(scope, serverIds, me) {
@@ -2093,6 +2263,7 @@ async function boot() {
   try {
     const cfg = await (await fetch(API + '/auth/config')).json();
     authRequired = !!cfg.auth_required;
+    applyBrand(cfg.brand);
   } catch (_) {
     authRequired = false;
   }
@@ -2505,6 +2676,7 @@ NX.loadServerSettings = async function() {
   const el = document.getElementById('server-settings-form');
   const id = NX.currentServer;
   if (!el || !id) return;
+  loadServerNotify(id);
   try {
     const st = await api(`/containers/${id}/settings`);
     NX.serverSettings = st;
@@ -2584,5 +2756,42 @@ NX.saveServerSettings = async function() {
     toast('Settings applied', 'success');
     NX.loadServerSettings();
     renderServerDetail(NX.currentServer);
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ── Per-server notifications ──────────────────────────────────────
+
+const EVENT_LABELS = {
+  'server.started': 'started', 'server.stopped': 'stopped', 'server.crashed': 'crashed',
+  'server.crash_loop': 'crash-looping', 'server.disk_exceeded': 'stopped for disk',
+  'backup.completed': 'backup completed', 'backup.failed': 'backup failed',
+  'schedule.failed': 'scheduled task failed', 'node.health': 'node health changed',
+};
+
+async function loadServerNotify(id) {
+  const el = document.getElementById('server-notify-form');
+  if (!el) return;
+  try {
+    const n = await api(`/containers/${id}/notifications`);
+    const kinds = (n.event_kinds || []).filter(k => k !== 'node.health');
+    const selected = new Set(n.events || []);
+    el.innerHTML = `
+      <div class="form-group"><label class="form-label">Webhook URL</label>
+        <input type="text" class="form-input" id="sn-url" style="width:100%" value="${esc(n.webhook_url || '')}" placeholder="https://discord.com/api/webhooks/…">
+        <div class="form-hint">Blank turns notifications off for this server</div></div>
+      <label class="form-label" style="margin-top:0.75rem">Events</label>
+      <div class="checks">
+        ${kinds.map(k => `<label><input type="checkbox" data-event="${k}" ${selected.size === 0 || selected.has(k) ? 'checked' : ''}> ${EVENT_LABELS[k] || k}</label>`).join('')}
+      </div>
+      <div style="margin-top:1rem"><button class="btn btn-primary btn-sm" onclick="NX.saveServerNotify('${id}')">Save</button></div>`;
+  } catch (e) { el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`; }
+}
+
+NX.saveServerNotify = async function(id) {
+  const url = document.getElementById('sn-url').value.trim();
+  const events = Array.from(document.querySelectorAll('#server-notify-form input[data-event]')).filter(i => i.checked).map(i => i.dataset.event);
+  try {
+    await api(`/containers/${id}/notifications`, { method: 'PUT', body: JSON.stringify({ webhook_url: url || null, events }) });
+    toast(url ? 'Notifications saved' : 'Notifications turned off', 'success');
   } catch (e) { toast(e.message, 'error'); }
 };

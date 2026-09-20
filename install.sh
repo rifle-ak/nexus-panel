@@ -588,6 +588,26 @@ EOF
 
     cat >> "$config_file" <<EOF
 
+# What customers see. The Settings page can change these; they are the defaults.
+# NEXUS_BRAND_NAME=Acme Hosting
+# NEXUS_BRAND_TAGLINE=Sign in to your control panel
+# NEXUS_BRAND_LOGO_URL=https://example.com/logo.png
+# NEXUS_BRAND_ACCENT=#6f8cff
+# NEXUS_SUPPORT_URL=https://example.com/support
+# NEXUS_BILLING_URL=https://billing.example.com
+# The panel's public address, used in notification links.
+# NEXUS_PANEL_URL=https://panel.example.com
+
+# Where crashes, disk stops, failed backups and health changes are reported.
+# Discord/Slack webhooks are formatted; any other URL gets JSON. Comma-separated.
+# NEXUS_WEBHOOKS=
+# NEXUS_ALERT_EMAILS=ops@example.com
+# NEXUS_SMTP_URL=smtps://user:pass@smtp.example.com:465
+# NEXUS_SMTP_FROM=Acme Hosting <alerts@example.com>
+EOF
+
+    cat >> "$config_file" <<EOF
+
 # Audit logging (uncomment to enable)
 # AUDIT_ENABLED=true
 # AUDIT_LOG_FILE=$NEXUS_LOG/audit.log

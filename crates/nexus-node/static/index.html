@@ -19,7 +19,7 @@
           <polyline points="2 15.5 12 8.5 22 15.5"/>
           <line x1="12" y1="2" x2="12" y2="8.5"/>
         </svg>
-        <span class="logo-text">Nexus Panel</span>
+        <span class="logo-text" id="brand-name">Nexus Panel</span>
       </div>
     </div>
     <nav class="sidebar-nav">
@@ -63,6 +63,7 @@
       </div>
     </nav>
     <div class="sidebar-footer">
+      <div id="brand-links" class="brand-links"></div>
       <div class="node-badge">
         <span class="node-dot"></span>
         <span id="sidebar-node-id">Node</span>
@@ -303,6 +304,11 @@
         <p class="text-muted text-sm" style="margin-bottom:1rem">Saving rebuilds the server with the new values; a running server is restarted.</p>
         <div id="server-settings-form"><span class="text-muted text-sm">Loading…</span></div>
       </div>
+      <div class="card" style="padding:1.5rem;margin-bottom:1.25rem">
+        <h3 style="margin-bottom:0.5rem">Notifications</h3>
+        <p class="text-muted text-sm" style="margin-bottom:1rem">A Discord or Slack webhook (or any URL that takes JSON) that hears about this server.</p>
+        <div id="server-notify-form"><span class="text-muted text-sm">Loading…</span></div>
+      </div>
       <div class="card" style="padding:1.5rem">
         <h3 style="margin-bottom:1rem">Server Information</h3>
         <div id="server-settings-info"></div>
@@ -474,6 +480,16 @@
     <div class="card" style="padding:1.5rem;margin-top:1rem" id="account-card">
       <h3>Your account</h3>
       <div id="account-body" style="margin-top:1rem"></div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Branding</h3>
+      <p class="text-muted text-sm" style="margin:0.5rem 0 1rem">What customers see: the name, logo and colour, and where the sidebar sends them for billing and support.</p>
+      <div id="branding-form"><span class="text-muted text-sm">Loading…</span></div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Notifications</h3>
+      <p class="text-muted text-sm" style="margin:0.5rem 0 1rem">Where the node reports crashes, servers stopped for disk, failed backups and health changes. Discord and Slack webhooks are formatted; any other URL gets JSON.</p>
+      <div id="notify-form"><span class="text-muted text-sm">Loading…</span></div>
     </div>
   </template>
 

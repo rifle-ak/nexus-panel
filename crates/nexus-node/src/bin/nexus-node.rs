@@ -192,6 +192,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create metrics instance
     let metrics = Arc::new(nexus_node::Metrics::new()?);
 
+    // Where crashes, disk stops and health changes are reported.
+    let notifier = Arc::new(nexus_node::notify::Notifier::load(
+        &PathBuf::from(&data_dir),
+        &node_id,
+    ));
+    let brand = Arc::new(nexus_node::branding::BrandStore::load(&PathBuf::from(
+        &data_dir,
+    )));
+
     // The firewall goes in before any server is (re)attached: its base
     // ruleset replaces whatever a previous run left, and servers found
     // running during restore get their chains back on top of it.
@@ -218,7 +227,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PathBuf::from(data_dir.clone()),
             metrics.clone(),
         )
-        .with_firewall(firewall.clone()),
+        .with_firewall(firewall.clone())
+        .with_notifier(notifier.clone()),
     );
 
     // Restore previously-tracked containers from disk and reconcile them
@@ -447,6 +457,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             users: Arc::new(nexus_node::users::UserStore::load(&PathBuf::from(
                 &data_dir,
             ))),
+            notifier: notifier.clone(),
+            brand: brand.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {
@@ -458,17 +470,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn periodic health check updates
     let health_check_handle = {
         let health_checker = health_checker.clone();
-        let _metrics = metrics.clone();
+        let notifier = notifier.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            let mut last = nexus_node::HealthStatus::Healthy;
             loop {
                 interval.tick().await;
-                let mut checker = health_checker.write().await;
-                let result = checker.check().await;
-
-                // Update metrics based on health status
+                let result = {
+                    let mut checker = health_checker.write().await;
+                    checker.check().await
+                };
                 if result.status == nexus_node::HealthStatus::Unhealthy {
                     warn!("Health check failed: {:?}", result.checks);
+                }
+                // Report transitions, not every tick.
+                if result.status != last {
+                    let failing: Vec<String> = result
+                        .checks
+                        .iter()
+                        .filter(|(_, c)| c.status != nexus_node::HealthStatus::Healthy)
+                        .map(|(name, c)| {
+                            format!("{}: {}", name, c.error.as_deref().unwrap_or("not healthy"))
+                        })
+                        .collect();
+                    let (severity, title, body) = match result.status {
+                        nexus_node::HealthStatus::Healthy => (
+                            nexus_node::notify::Severity::Info,
+                            "Node is healthy again".to_string(),
+                            "All health checks pass.".to_string(),
+                        ),
+                        nexus_node::HealthStatus::Degraded => (
+                            nexus_node::notify::Severity::Warning,
+                            "Node is degraded".to_string(),
+                            failing.join("\n"),
+                        ),
+                        nexus_node::HealthStatus::Unhealthy => (
+                            nexus_node::notify::Severity::Critical,
+                            "Node is unhealthy".to_string(),
+                            failing.join("\n"),
+                        ),
+                    };
+                    notifier.notify(nexus_node::notify::Notification::new(
+                        "node.health",
+                        severity,
+                        title,
+                        body,
+                    ));
+                    last = result.status;
                 }
             }
         })

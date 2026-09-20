@@ -107,6 +107,7 @@ sysinfo = "0.31"
 semver = "1.0"
 chrono-tz = "0.9"
 argon2 = "0.5"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls", "hostname"] }
 
 [build-dependencies]
 tonic-build = "0.12"
