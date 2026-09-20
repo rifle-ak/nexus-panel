@@ -176,6 +176,21 @@ resources:
     min: 4Gi
     max: 8Gi
 
+startup:
+  command: java
+  args: [-jar, paper.jar, --nogui]     # {{VARIABLE}}s are rendered, args shell-split
+  working_dir: /home/container
+  # A crash (non-zero exit) is restarted after `delay`, up to `max_retries`
+  # times within `reset_after`; a clean exit is left alone.
+  restart: { on_crash: true, max_retries: 5, delay: 5s, reset_after: 10m }
+  # Shutdown: `lifecycle.pre_stop` console commands first; without any,
+  # `stop_signal` (default SIGTERM); SIGKILL after `stop_timeout`.
+  stop_timeout: 60s
+  lifecycle:
+    pre_stop:
+      - { type: send_command, command: save-all, delay: 2s }
+      - { type: send_command, command: stop }
+
 # Nexus-exclusive: Performance tuning
 performance:
   jvm:
@@ -221,10 +236,16 @@ updates:
     url: "https://api.papermc.io/v2/projects/paper/versions/{{MC_VERSION}}"
   auto_update: false
 
+# Applied to the container: the process runs as an unprivileged user with
+# exactly these capabilities, no privilege escalation, a seccomp allowlist,
+# and at most this many processes.
 security:
   capabilities:
     drop: [ALL]
     add: [NET_BIND_SERVICE]
+  no_new_privileges: true
+  seccomp_profile: runtime/default
+  pids_limit: 1024
   firewall_rules:
     - type: connection_rate
       limit: 100/s
