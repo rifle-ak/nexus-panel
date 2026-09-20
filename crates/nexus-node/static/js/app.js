@@ -274,6 +274,37 @@ NX.deleteServer = async function(id) {
 
 // ── Server Detail ─────────────────────────────────────────────────
 
+// Action buttons for a server. A server whose game files are not installed
+// cannot start, so it is offered the install instead of a button that fails.
+NX.renderDetailActions = function(id, c) {
+  const el = document.getElementById('detail-actions');
+  if (!el) return;
+  const needsInstall = c.install_state === 'pending' || c.install_state === 'failed';
+  const installing = c.install_state === 'running';
+  // A customer's server exists because their billing system created it;
+  // only that system's termination removes it, so they get no Delete.
+  const del = NX.scope === 'admin'
+    ? `<button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+    : '';
+  el.innerHTML = `
+    ${c.status === 'running'
+      ? `<button class="btn btn-sm btn-danger" onclick="NX.stopServer('${id}')">Stop</button>
+         <button class="btn btn-sm" onclick="NX.restartServer('${id}')">Restart</button>
+         ${del}`
+      : c.status === 'suspended'
+      ? `<span class="badge badge-warning">Suspended by billing</span> ${del}`
+      : installing
+      ? `<button class="btn btn-sm" onclick="NX.switchTab('install')">Installing…</button>
+         ${del}`
+      : needsInstall
+      ? `<button class="btn btn-sm btn-primary" onclick="NX.switchTab('install')">Install game files</button>
+         ${del}`
+      : `<button class="btn btn-sm btn-success" onclick="NX.startServer('${id}')">Start</button>
+         ${del}`
+    }
+  `;
+};
+
 async function renderServerDetail(id) {
   renderPage('server-detail');
   NX.currentServer = id;
@@ -303,7 +334,11 @@ async function renderServerDetail(id) {
       </div>
       <div class="status-item">
         <span class="status-item-label">Restarts</span>
-        <span class="status-item-value">${c.restart_count}</span>
+        <span class="status-item-value">${c.restart_count}${c.crash_count ? ` <span class="text-danger" title="Crashes detected">(${c.crash_count} crash${c.crash_count === 1 ? '' : 'es'})</span>` : ''}</span>
+      </div>
+      <div class="status-item">
+        <span class="status-item-label">Disk</span>
+        <span class="status-item-value${c.disk_limit_bytes && c.disk_used_bytes > c.disk_limit_bytes ? ' text-danger' : ''}">${fmtBytes(c.disk_used_bytes)}${c.disk_limit_bytes ? ' / ' + fmtBytes(c.disk_limit_bytes) : ''}</span>
       </div>
       <div class="status-item">
         <span class="status-item-label">Uptime</span>
@@ -311,30 +346,8 @@ async function renderServerDetail(id) {
       </div>
     `;
 
-    // Action buttons. A server whose game files are not installed cannot
-    // start, so it is offered the install instead of a button that fails.
-    const needsInstall = c.install_state === 'pending' || c.install_state === 'failed';
+    NX.renderDetailActions(id, c);
     const installing = c.install_state === 'running';
-    // A customer's server exists because their billing system created it;
-    // only that system's termination removes it, so they get no Delete.
-    const del = NX.scope === 'admin'
-      ? `<button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
-      : '';
-    document.getElementById('detail-actions').innerHTML = `
-      ${c.status === 'running'
-        ? `<button class="btn btn-sm btn-danger" onclick="NX.stopServer('${id}')">Stop</button>
-           <button class="btn btn-sm" onclick="NX.restartServer('${id}')">Restart</button>
-           ${del}`
-        : installing
-        ? `<button class="btn btn-sm" onclick="NX.switchTab('install')">Installing…</button>
-           ${del}`
-        : needsInstall
-        ? `<button class="btn btn-sm btn-primary" onclick="NX.switchTab('install')">Install game files</button>
-           ${del}`
-        : `<button class="btn btn-sm btn-success" onclick="NX.startServer('${id}')">Start</button>
-           ${del}`
-      }
-    `;
 
     // An install kicked off at creation time is already running when the
     // operator first opens the server; follow it without being asked.
@@ -355,10 +368,26 @@ async function renderServerDetail(id) {
     `;
 
     // Auto-refresh status every 5s
+    // Re-render when anything the header shows has changed (status, PID,
+    // crash count, disk), without disturbing the tab the operator is on.
+    let last = JSON.stringify([c.status, c.pid, c.install_state, c.crash_count, c.disk_used_bytes, c.restart_count]);
     NX.refreshTimer = setInterval(async () => {
       try {
-        const updated = await api(`/containers/${id}`);
-        document.getElementById('detail-status-bar').querySelector('.status-item-value').innerHTML = statusBadge(updated.status);
+        const u = await api(`/containers/${id}`);
+        const now = JSON.stringify([u.status, u.pid, u.install_state, u.crash_count, u.disk_used_bytes, u.restart_count]);
+        if (now !== last) {
+          last = now;
+          const bar = document.getElementById('detail-status-bar');
+          const cells = bar.querySelectorAll('.status-item-value');
+          if (cells[0]) cells[0].innerHTML = statusBadge(u.status);
+          if (cells[1]) cells[1].innerHTML = installBadge(u.install_state);
+          if (cells[3]) cells[3].textContent = u.pid || '—';
+          if (cells[4]) cells[4].innerHTML = `${u.restart_count}${u.crash_count ? ` <span class="text-danger">(${u.crash_count} crash${u.crash_count === 1 ? '' : 'es'})</span>` : ''}`;
+          if (cells[5]) cells[5].textContent = `${fmtBytes(u.disk_used_bytes)}${u.disk_limit_bytes ? ' / ' + fmtBytes(u.disk_limit_bytes) : ''}`;
+          NX.renderDetailActions(id, u);
+        }
+        const uptime = document.querySelector('#detail-status-bar .status-item:last-child .status-item-value');
+        if (uptime) uptime.textContent = u.started_at && u.status === 'running' ? fmtDuration(Date.now()/1000 - u.started_at) : '—';
       } catch (_) {}
     }, 5000);
 

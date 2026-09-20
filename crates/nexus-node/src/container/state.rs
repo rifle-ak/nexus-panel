@@ -74,6 +74,18 @@ pub struct ContainerState {
     /// it were not — so callers reconcile it against the blueprint on restore.
     #[serde(default)]
     pub install_state: InstallState,
+
+    /// Times the process has exited on its own with a failure.
+    #[serde(default)]
+    pub crash_count: u32,
+
+    /// Bytes the server's directory occupies, as of the last measurement.
+    #[serde(default)]
+    pub disk_used_bytes: u64,
+
+    /// The disk allowance the blueprint sold, in bytes; zero means no limit.
+    #[serde(default)]
+    pub disk_limit_bytes: u64,
 }
 
 impl ContainerState {
@@ -90,7 +102,15 @@ impl ContainerState {
             started_at: None,
             stopped_at: None,
             install_state: InstallState::Pending,
+            crash_count: 0,
+            disk_used_bytes: 0,
+            disk_limit_bytes: 0,
         }
+    }
+
+    /// Whether the server is over its disk allowance.
+    pub fn disk_exceeded(&self) -> bool {
+        self.disk_limit_bytes > 0 && self.disk_used_bytes > self.disk_limit_bytes
     }
 
     pub fn mark_started(&mut self, pid: u32) {

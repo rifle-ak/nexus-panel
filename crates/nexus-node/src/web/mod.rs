@@ -652,6 +652,12 @@ struct ContainerJson {
     pid: Option<u32>,
     exit_code: Option<i32>,
     restart_count: u32,
+    /// Times the process died on its own.
+    crash_count: u32,
+    /// Bytes the server's files occupy, as of the last measurement.
+    disk_used_bytes: u64,
+    /// The disk allowance in bytes; zero means unlimited.
+    disk_limit_bytes: u64,
     created_at: u64,
     started_at: Option<u64>,
     stopped_at: Option<u64>,
@@ -1186,6 +1192,7 @@ async fn api_exec(
 
 fn file_manager(state: &AppState, container_id: &str) -> FileManager {
     FileManager::new(container_id, std::path::Path::new(&state.data_dir))
+        .with_owner(state.manager.game_user())
 }
 
 async fn api_list_files(
@@ -1997,6 +2004,9 @@ fn container_to_json(c: &crate::container::ContainerState) -> ContainerJson {
         pid: c.pid,
         exit_code: c.exit_code,
         restart_count: c.restart_count,
+        crash_count: c.crash_count,
+        disk_used_bytes: c.disk_used_bytes,
+        disk_limit_bytes: c.disk_limit_bytes,
         created_at: system_time_to_epoch(c.created_at),
         started_at: c.started_at.map(system_time_to_epoch),
         stopped_at: c.stopped_at.map(system_time_to_epoch),

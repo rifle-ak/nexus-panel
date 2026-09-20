@@ -43,6 +43,14 @@ The node ships secure-by-default, but production operators should verify:
   minute, and only their hash is held in memory. The session cookie is
   `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the reverse proxy reports
   `X-Forwarded-Proto: https` — make sure yours does.
+- **Game servers are unprivileged and confined.** Each runs as
+  `NEXUS_CONTAINER_UID` (never root) with only the capabilities its
+  blueprint grants, `no_new_privileges`, a pids limit, and the standard
+  container seccomp allowlist. They do share the host's network namespace,
+  so a server can bind any free host port; keep the panel and gRPC ports on
+  loopback or behind a firewall. The one-shot install container runs as root
+  with host networking, because Pterodactyl-derived install scripts expect
+  to — review an imported egg's install script before deploying it.
 - **Do not run the mock runtime in production.** The in-memory mock runtime is
   gated behind `NEXUS_DEV_MODE=true` and only pretends to run containers. In
   normal operation a containerd connection failure is fatal by design.

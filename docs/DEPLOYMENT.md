@@ -155,6 +155,15 @@ CONTAINERD_NAMESPACE=nexus-panel
 # Data storage
 DATA_DIR=/var/lib/nexus-node
 
+# The unprivileged user game servers run as (never root). Their files under
+# DATA_DIR belong to it; the installer creates the account. 988 is the id
+# Pterodactyl uses, so a migrated node keeps its file ownership.
+NEXUS_CONTAINER_UID=988
+NEXUS_CONTAINER_GID=988
+
+# Console logs are trimmed past this many bytes, keeping the last 4 MiB.
+# NEXUS_CONSOLE_LOG_MAX_BYTES=33554432
+
 # Node identification
 NODE_ID=prod-node-1
 
@@ -575,11 +584,28 @@ own error is in there, while `journalctl` only shows the node's view of it.
 
 ## Security Hardening
 
-1. **Network**: Run behind a firewall or VPN
-2. **TLS**: Enable mTLS for all gRPC connections
-3. **Updates**: Keep Containerd and runc updated
-4. **Monitoring**: Set up alerts for unusual activity
-5. **Backups**: Regular backup of `/var/lib/nexus-node`
+What the node does for every game server, without configuration:
+
+- Runs it as an unprivileged user (`NEXUS_CONTAINER_UID`), never root, with
+  the capability set its blueprint declares (`security.capabilities`,
+  starting from the Docker default set), `no_new_privileges`, and the
+  standard container seccomp allowlist (`security.seccomp_profile:
+  runtime/default`). A game that needs a blocked syscall can set
+  `unconfined` or a path to its own profile; nothing shipped does.
+- Caps its CPU (`resources.cpu.max`), memory and swap (`resources.memory`),
+  process count (`security.pids_limit`), open files and other `ulimits`.
+- Measures its disk every minute and refuses to start it, then stops it,
+  when it is over `resources.disk.min`.
+- Restarts it after a crash, but not forever (`startup.restart`).
+
+What remains yours:
+
+1. **Network**: Run the panel behind a firewall or VPN; expose only game
+   ports. Servers share the host's network namespace.
+2. **TLS**: Serve the panel over HTTPS; enable mTLS for gRPC.
+3. **Updates**: Keep containerd, runc and the kernel updated.
+4. **Monitoring**: Set up alerts for unusual activity.
+5. **Backups**: Regular backup of `/var/lib/nexus-node`.
 
 ## Performance Tuning
 

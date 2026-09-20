@@ -66,6 +66,9 @@ startup:
         condition: first_start
         timeout: 900s
 
+    pre_stop:
+      - type: send_command
+        command: "quit"
 variables:
   - name: SERVER_NAME
     description: Server name

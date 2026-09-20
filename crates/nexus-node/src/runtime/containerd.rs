@@ -877,6 +877,32 @@ impl ContainerRuntime for ContainerdRuntime {
         Ok(exit_code)
     }
 
+    async fn kill(&self, id: &str, signal: i32) -> Result<()> {
+        let mut tasks_client = self.tasks_client().await?;
+        let req = self.request(
+            KillRequest {
+                container_id: id.to_string(),
+                signal: signal as u32,
+                ..Default::default()
+            },
+            None,
+        );
+        tasks_client.kill(req).await.map_err(|e| {
+            NodeError::ContainerdError(format!(
+                "Failed to send signal {} to container {}: {}",
+                signal, id, e
+            ))
+        })?;
+        Ok(())
+    }
+
+    async fn trim_console_log(&self, id: &str, max_bytes: u64, keep_bytes: u64) -> Result<()> {
+        let path = self.log_path(id);
+        tokio::task::spawn_blocking(move || trim_log_file(&path, max_bytes, keep_bytes))
+            .await
+            .map_err(|e| NodeError::Internal(format!("log trim task failed: {}", e)))?
+    }
+
     async fn wait(&self, id: &str, timeout: Duration) -> Result<i32> {
         debug!("[Containerd] Waiting for container {} to exit", id);
 
@@ -1068,15 +1094,52 @@ impl ContainerRuntime for ContainerdRuntime {
         }
 
         // The whole exec is bounded by `timeout` so a stuck process (or a
-        // FIFO that never receives a writer) can never hang the node.
-        match tokio::time::timeout(timeout, self.exec_inner(id, command)).await {
+        // FIFO that never receives a writer) can never hang the node. A
+        // timed-out process is killed and its record removed: abandoning it
+        // would leave it running inside the customer's container.
+        let exec_id = format!("exec-{}", Uuid::new_v4());
+        let fifo_dir = std::env::temp_dir().join(format!("nexus-exec-{}", exec_id));
+        match tokio::time::timeout(timeout, self.exec_inner(id, &exec_id, &fifo_dir, command)).await
+        {
             Ok(result) => result,
-            Err(_) => Err(NodeError::Internal(format!(
-                "exec in container {} timed out after {}s",
-                id,
-                timeout.as_secs()
-            ))),
+            Err(_) => {
+                self.reap_exec(id, &exec_id, &fifo_dir).await;
+                Err(NodeError::Internal(format!(
+                    "exec in container {} timed out after {}s",
+                    id,
+                    timeout.as_secs()
+                )))
+            }
         }
+    }
+}
+
+impl ContainerdRuntime {
+    /// Kill and forget an exec process that outlived its timeout.
+    async fn reap_exec(&self, id: &str, exec_id: &str, fifo_dir: &Path) {
+        if let Ok(mut tasks_client) = self.tasks_client().await {
+            let kill = with_namespace!(
+                KillRequest {
+                    container_id: id.to_string(),
+                    exec_id: exec_id.to_string(),
+                    signal: 9,
+                    all: false,
+                },
+                &self.namespace
+            );
+            let _ = tasks_client.kill(kill).await;
+            // The process needs a moment to die before its record can go.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let delete = with_namespace!(
+                DeleteProcessRequest {
+                    container_id: id.to_string(),
+                    exec_id: exec_id.to_string(),
+                },
+                &self.namespace
+            );
+            let _ = tasks_client.delete_process(delete).await;
+        }
+        let _ = std::fs::remove_dir_all(fifo_dir);
     }
 }
 
@@ -1189,13 +1252,18 @@ impl ContainerdRuntime {
     ///
     /// Spawns a new process in the running task via the containerd Exec API,
     /// capturing stdout/stderr through FIFOs, and waits for the exit code.
-    async fn exec_inner(&self, id: &str, command: &[String]) -> Result<ExecOutput> {
+    async fn exec_inner(
+        &self,
+        id: &str,
+        exec_id: &str,
+        fifo_dir: &Path,
+        command: &[String],
+    ) -> Result<ExecOutput> {
         let mut tasks_client = self.tasks_client().await?;
-        let exec_id = format!("exec-{}", Uuid::new_v4());
+        let exec_id = exec_id.to_string();
 
         // Create a private FIFO directory for this exec's stdio.
-        let fifo_dir = std::env::temp_dir().join(format!("nexus-exec-{}", exec_id));
-        std::fs::create_dir_all(&fifo_dir)
+        std::fs::create_dir_all(fifo_dir)
             .map_err(|e| NodeError::Internal(format!("Failed to create exec fifo dir: {}", e)))?;
         let stdout_path = fifo_dir.join("stdout");
         let stderr_path = fifo_dir.join("stderr");
@@ -1288,7 +1356,7 @@ impl ContainerdRuntime {
             &self.namespace
         );
         let _ = tasks_client.delete_process(req).await;
-        let _ = std::fs::remove_dir_all(&fifo_dir);
+        let _ = std::fs::remove_dir_all(fifo_dir);
 
         Ok(ExecOutput {
             stdout,
@@ -1488,6 +1556,11 @@ fn merge_env(image_env: &[String], spec_env: &HashMap<String, String>) -> Vec<St
 ///   allocated on the host to match.
 /// * Anything the blueprint does not specify falls back to the image's own
 ///   config, the way any other OCI runtime resolves it.
+///
+/// Confinement comes from `spec.security`: an unprivileged user, a bounded
+/// capability set, `noNewPrivileges`, and a seccomp allowlist. With the host
+/// network shared, these are what stand between a compromised game server and
+/// the node.
 fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
     use serde_json::json;
 
@@ -1508,7 +1581,17 @@ fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
         });
     }
 
-    let env = merge_env(&image.env, &spec.env);
+    let mut env = merge_env(&image.env, &spec.env);
+    // A process that is not root should not think it is.
+    if spec.security.uid != 0 && !env.iter().any(|e| e.starts_with("HOME=")) {
+        let home = if spec.working_dir.is_empty() {
+            "/".to_string()
+        } else {
+            spec.working_dir.clone()
+        };
+        env.push(format!("HOME={}", home));
+        env.sort();
+    }
 
     // A container cannot be given a higher hard limit than the runtime that
     // launches it already holds — runc refuses the whole container with
@@ -1517,16 +1600,27 @@ fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
     // request is capped at what this process can actually confer. Raise the
     // node's own `LimitNOFILE` to raise this ceiling.
     let nofile = spec.resources.nofile.min(max_open_files());
+    let mut rlimits = vec![json!({
+        "type": "RLIMIT_NOFILE",
+        "hard": nofile,
+        "soft": nofile
+    })];
+    for limit in &spec.resources.rlimits {
+        if limit.kind == "RLIMIT_NOFILE" {
+            continue;
+        }
+        rlimits.push(json!({
+            "type": limit.kind,
+            "hard": limit.hard,
+            "soft": limit.soft
+        }));
+    }
 
     let working_dir = if !spec.working_dir.is_empty() {
         spec.working_dir.clone()
     } else {
         image.working_dir.clone().unwrap_or_else(|| "/".to_string())
     };
-
-    // Build Linux resources
-    let cpu_shares = spec.resources.cpu_shares;
-    let memory_limit = spec.resources.memory_bytes as i64;
 
     // Default filesystems first, then the host's resolver config, then the
     // blueprint's own bind mounts — later mounts land on top.
@@ -1540,80 +1634,174 @@ fn spec_to_oci(spec: &ContainerSpec, image: &ImageConfig) -> Result<String> {
             "options": if m.read_only { vec!["rbind", "ro"] } else { vec!["rbind", "rw"] }
         })
     }));
+    if spec.security.read_only_root {
+        // A read-only image still needs somewhere for scratch files.
+        mounts.push(json!({
+            "destination": "/tmp",
+            "type": "tmpfs",
+            "source": "tmpfs",
+            "options": ["nosuid", "nodev", "mode=1777", "size=1g"]
+        }));
+    }
+
+    // ── Resources ────────────────────────────────────────────────────
+    let mut cpu = json!({ "shares": spec.resources.cpu_shares });
+    if let Some(millicores) = spec.resources.cpu_millicores {
+        // A hard cap: `quota` microseconds of CPU per `period`. 1000
+        // millicores = one full core = 100 000 of every 100 000 µs.
+        cpu["period"] = json!(100_000u64);
+        cpu["quota"] = json!(millicores as u64 * 100);
+    }
+    let memory_limit = spec.resources.memory_bytes as i64;
+    let mut memory = json!({ "limit": memory_limit });
+    if memory_limit > 0 {
+        // OCI's `swap` is memory *plus* swap; equal to the limit means none.
+        memory["swap"] =
+            json!(memory_limit.saturating_add(spec.resources.memory_swap_bytes as i64));
+    }
+    let mut resources = json!({ "cpu": cpu, "memory": memory });
+    if let Some(pids) = spec.resources.pids_limit {
+        resources["pids"] = json!({ "limit": pids as i64 });
+    }
+
+    // ── Process identity and confinement ─────────────────────────────
+    let caps = &spec.security.capabilities;
+    let mut capabilities = json!({
+        "bounding": caps,
+        "effective": caps,
+        "permitted": caps,
+        "inheritable": caps,
+    });
+    if spec.security.uid != 0 {
+        // Without an ambient set the kernel drops every capability on the
+        // first exec of a non-root process; ambient is what lets a blueprint
+        // grant NET_BIND_SERVICE to an unprivileged server.
+        capabilities["ambient"] = json!(caps);
+    }
+
+    let hostname = if spec.hostname.is_empty() {
+        "container".to_string()
+    } else {
+        spec.hostname.clone()
+    };
+
+    let mut linux = json!({
+        "resources": resources,
+        // No "network" entry: the container shares the host's network
+        // namespace, since the node runs without CNI.
+        "namespaces": [
+            {"type": "pid"},
+            {"type": "ipc"},
+            {"type": "uts"},
+            {"type": "mount"}
+        ],
+        "maskedPaths": [
+            "/proc/acpi",
+            "/proc/asound",
+            "/proc/kcore",
+            "/proc/keys",
+            "/proc/latency_stats",
+            "/proc/timer_list",
+            "/proc/timer_stats",
+            "/proc/sched_debug",
+            "/proc/scsi",
+            "/sys/firmware",
+            "/sys/devices/virtual/powercap"
+        ],
+        "readonlyPaths": [
+            "/proc/bus",
+            "/proc/fs",
+            "/proc/irq",
+            "/proc/sys",
+            "/proc/sysrq-trigger"
+        ]
+    });
+    match &spec.security.seccomp {
+        SeccompProfile::RuntimeDefault => {
+            linux["seccomp"] = seccomp::default_profile();
+        }
+        SeccompProfile::Unconfined => {}
+        SeccompProfile::Path(path) => {
+            let raw = std::fs::read(path).map_err(|e| NodeError::InvalidConfig {
+                reason: format!("seccomp profile {} is unreadable: {}", path, e),
+            })?;
+            let profile: serde_json::Value =
+                serde_json::from_slice(&raw).map_err(|e| NodeError::InvalidConfig {
+                    reason: format!("seccomp profile {} is not valid JSON: {}", path, e),
+                })?;
+            linux["seccomp"] = profile;
+        }
+    }
 
     let oci_spec = json!({
         "ociVersion": "1.0.2",
         "process": {
             "terminal": false,
             "user": {
-                "uid": 0,
-                "gid": 0
+                "uid": spec.security.uid,
+                "gid": spec.security.gid
             },
             "args": process_args,
             "env": env,
             "cwd": working_dir,
-            "capabilities": {
-                "bounding": ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID", "CAP_NET_BIND_SERVICE"],
-                "effective": ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID", "CAP_NET_BIND_SERVICE"],
-                "permitted": ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_SETGID", "CAP_SETUID", "CAP_NET_BIND_SERVICE"],
-            },
-            "rlimits": [
-                {
-                    "type": "RLIMIT_NOFILE",
-                    "hard": nofile,
-                    "soft": nofile
-                }
-            ]
+            "capabilities": capabilities,
+            "rlimits": rlimits,
+            "noNewPrivileges": spec.security.no_new_privileges
         },
         "root": {
             // Relative to the bundle: the shim mounts the container's snapshot
             // here before handing the bundle to runc.
             "path": "rootfs",
-            "readonly": false
+            "readonly": spec.security.read_only_root
         },
-        "hostname": "container",
+        "hostname": hostname,
         "mounts": mounts,
-        "linux": {
-            "resources": {
-                "cpu": {
-                    "shares": cpu_shares
-                },
-                "memory": {
-                    "limit": memory_limit
-                }
-            },
-            // No "network" entry: the container shares the host's network
-            // namespace, since the node runs without CNI.
-            "namespaces": [
-                {"type": "pid"},
-                {"type": "ipc"},
-                {"type": "uts"},
-                {"type": "mount"}
-            ],
-            "maskedPaths": [
-                "/proc/acpi",
-                "/proc/asound",
-                "/proc/kcore",
-                "/proc/keys",
-                "/proc/latency_stats",
-                "/proc/timer_list",
-                "/proc/timer_stats",
-                "/proc/sched_debug",
-                "/proc/scsi",
-                "/sys/firmware"
-            ],
-            "readonlyPaths": [
-                "/proc/bus",
-                "/proc/fs",
-                "/proc/irq",
-                "/proc/sys",
-                "/proc/sysrq-trigger"
-            ]
-        }
+        "linux": linux
     });
 
     serde_json::to_string(&oci_spec)
         .map_err(|e| NodeError::Internal(format!("Failed to serialize OCI spec: {}", e)))
+}
+
+/// Keep only the tail of a console log that has outgrown `max_bytes`.
+///
+/// The shim appends with `O_APPEND`, so truncating to zero and writing the
+/// tail back is safe: its next write lands after whatever is there. A viewer
+/// following the log notices the file shrank and reopens it.
+fn trim_log_file(path: &Path, max_bytes: u64, keep_bytes: u64) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(NodeError::Internal(format!("stat {:?}: {}", path, e))),
+    };
+    if meta.len() <= max_bytes {
+        return Ok(());
+    }
+    let keep = keep_bytes.min(max_bytes);
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| NodeError::Internal(format!("open {:?}: {}", path, e)))?;
+    file.seek(SeekFrom::End(-(keep as i64)))
+        .map_err(|e| NodeError::Internal(format!("seek {:?}: {}", path, e)))?;
+    let mut tail = Vec::with_capacity(keep as usize);
+    file.read_to_end(&mut tail)
+        .map_err(|e| NodeError::Internal(format!("read {:?}: {}", path, e)))?;
+    // Start on a line boundary so the first kept line is whole.
+    if let Some(nl) = tail.iter().position(|&b| b == b'\n') {
+        tail.drain(..=nl);
+    }
+    file.set_len(0)
+        .map_err(|e| NodeError::Internal(format!("truncate {:?}: {}", path, e)))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| NodeError::Internal(format!("seek {:?}: {}", path, e)))?;
+    file.write_all(&tail)
+        .map_err(|e| NodeError::Internal(format!("write {:?}: {}", path, e)))?;
+    Ok(())
 }
 
 /// How much of an existing console log a new attach starts from, so a panel
@@ -1733,11 +1921,32 @@ impl ConsoleStream for ContainerdConsoleStream {
         let mut line = String::new();
         match reader.read_line(&mut line).await {
             // Caught up with the writer: no more output *for now*. Callers
-            // that follow the log come back for more.
-            Ok(0) => Ok(None),
+            // that follow the log come back for more — unless the log was
+            // trimmed underneath us, in which case start over from its
+            // new beginning.
+            Ok(0) => {
+                if log_shrank(reader).await {
+                    self.reader = None;
+                    self.initialized = false;
+                }
+                Ok(None)
+            }
             Ok(_) => Ok(Some(line)),
             Err(e) => Err(NodeError::Internal(format!("Console read error: {}", e))),
         }
+    }
+}
+
+/// Whether the file behind `reader` is now shorter than the reader's position,
+/// which happens when the log was trimmed.
+async fn log_shrank(reader: &mut tokio::io::BufReader<tokio::fs::File>) -> bool {
+    use tokio::io::AsyncSeekExt;
+    let Ok(pos) = reader.stream_position().await else {
+        return false;
+    };
+    match reader.get_ref().metadata().await {
+        Ok(meta) => meta.len() < pos,
+        Err(_) => false,
     }
 }
 
@@ -1809,7 +2018,13 @@ impl BidirectionalConsole for ContainerdBidirectionalConsole {
         let mut line = String::new();
         match reader.read_line(&mut line).await {
             // Caught up with the container's output for now.
-            Ok(0) => Ok(None),
+            Ok(0) => {
+                if log_shrank(reader).await {
+                    self.stdout_reader = None;
+                    self.initialized = false;
+                }
+                Ok(None)
+            }
             Ok(_) => Ok(Some(line.into_bytes())),
             Err(e) => Err(NodeError::Internal(format!("Read error: {}", e))),
         }
@@ -1872,5 +2087,161 @@ impl BidirectionalConsole for ContainerdBidirectionalConsole {
 
     fn is_open(&self) -> bool {
         self.is_open
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(security: SecurityOptions) -> ContainerSpec {
+        ContainerSpec {
+            image: "example/game:1".into(),
+            command: vec![],
+            args: vec!["./game".into(), "-port".into(), "27015".into()],
+            env: HashMap::from([("SERVER_PORT".to_string(), "27015".to_string())]),
+            working_dir: "/home/container".into(),
+            mounts: vec![Mount {
+                source: "/data/x".into(),
+                target: "/home/container".into(),
+                read_only: false,
+            }],
+            ports: vec![],
+            resources: ResourceLimits {
+                cpu_shares: 1024,
+                cpu_millicores: Some(1500),
+                memory_bytes: 1024 * 1024 * 1024,
+                memory_swap_bytes: 256 * 1024 * 1024,
+                pids_limit: Some(300),
+                rlimits: vec![Rlimit {
+                    kind: "RLIMIT_NPROC".into(),
+                    soft: 512,
+                    hard: 512,
+                }],
+                nofile: 4096,
+            },
+            security,
+            hostname: "nx-abc".into(),
+        }
+    }
+
+    fn image() -> ImageConfig {
+        ImageConfig {
+            diff_ids: vec![],
+            env: vec!["PATH=/usr/bin".into(), "FOO=bar".into()],
+            working_dir: None,
+            entrypoint: vec![],
+            cmd: vec![],
+        }
+    }
+
+    #[test]
+    fn oci_spec_confines_the_game_process() {
+        let security = SecurityOptions {
+            uid: 988,
+            gid: 988,
+            capabilities: vec!["CAP_NET_BIND_SERVICE".into()],
+            no_new_privileges: true,
+            read_only_root: false,
+            seccomp: SeccompProfile::RuntimeDefault,
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&spec_to_oci(&spec(security), &image()).unwrap()).unwrap();
+
+        let process = &json["process"];
+        assert_eq!(process["user"]["uid"], 988);
+        assert_eq!(process["noNewPrivileges"], true);
+        assert_eq!(
+            process["args"],
+            serde_json::json!(["./game", "-port", "27015"])
+        );
+        for set in [
+            "bounding",
+            "effective",
+            "permitted",
+            "inheritable",
+            "ambient",
+        ] {
+            assert_eq!(
+                process["capabilities"][set],
+                serde_json::json!(["CAP_NET_BIND_SERVICE"]),
+                "{}",
+                set
+            );
+        }
+        let env: Vec<&str> =
+            process["env"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(env.contains(&"HOME=/home/container"), "{:?}", env);
+        assert!(env.contains(&"SERVER_PORT=27015"));
+        assert!(env.contains(&"FOO=bar"), "image env is inherited");
+
+        let rlimits = process["rlimits"].as_array().unwrap();
+        assert!(rlimits.iter().any(|r| r["type"] == "RLIMIT_NOFILE"));
+        assert!(rlimits.iter().any(|r| r["type"] == "RLIMIT_NPROC" && r["hard"] == 512));
+
+        let linux = &json["linux"];
+        assert_eq!(linux["resources"]["cpu"]["quota"], 150_000);
+        assert_eq!(linux["resources"]["cpu"]["period"], 100_000);
+        assert_eq!(linux["resources"]["memory"]["limit"], 1024 * 1024 * 1024);
+        assert_eq!(
+            linux["resources"]["memory"]["swap"],
+            1024 * 1024 * 1024 + 256 * 1024 * 1024
+        );
+        assert_eq!(linux["resources"]["pids"]["limit"], 300);
+        assert_eq!(linux["seccomp"]["defaultAction"], "SCMP_ACT_ERRNO");
+        assert!(linux["seccomp"]["syscalls"].as_array().unwrap().len() > 1);
+        assert_eq!(json["hostname"], "nx-abc");
+        assert_eq!(json["root"]["readonly"], false);
+        // Still the host network namespace: no "network" entry.
+        assert!(!linux["namespaces"].as_array().unwrap().iter().any(|n| n["type"] == "network"));
+    }
+
+    #[test]
+    fn oci_spec_honours_unconfined_and_read_only_root() {
+        let security = SecurityOptions {
+            uid: 0,
+            gid: 0,
+            read_only_root: true,
+            seccomp: SeccompProfile::Unconfined,
+            ..SecurityOptions::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&spec_to_oci(&spec(security), &image()).unwrap()).unwrap();
+        assert!(json["linux"].get("seccomp").is_none());
+        assert_eq!(json["root"]["readonly"], true);
+        // Root gets no ambient set; the kernel grants it capabilities itself.
+        assert!(json["process"]["capabilities"].get("ambient").is_none());
+        // A read-only root still has a writable /tmp.
+        assert!(json["mounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["destination"] == "/tmp" && m["type"] == "tmpfs"));
+    }
+
+    #[test]
+    fn trimming_keeps_the_tail_on_a_line_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.log");
+        let mut content = String::new();
+        for i in 0..2000 {
+            content.push_str(&format!("line {}\n", i));
+        }
+        std::fs::write(&path, &content).unwrap();
+        let len = content.len() as u64;
+
+        // Under the cap: untouched.
+        trim_log_file(&path, len + 1, 100).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+
+        // Over the cap: only the tail survives, starting on a whole line.
+        trim_log_file(&path, 1000, 200).unwrap();
+        let kept = std::fs::read_to_string(&path).unwrap();
+        assert!(kept.len() <= 200);
+        assert!(kept.starts_with("line "));
+        assert!(kept.ends_with("line 1999\n"));
+
+        // A missing log is not an error.
+        trim_log_file(&dir.path().join("missing.log"), 10, 5).unwrap();
     }
 }

@@ -43,6 +43,11 @@ pub struct FileManager {
 
     /// Container-specific directory
     server_dir: PathBuf,
+
+    /// Who should own what this manager creates: the user the game runs as.
+    /// The node runs as root, and a file it writes as root is one the game
+    /// can no longer modify.
+    owner: Option<(u32, u32)>,
 }
 
 impl FileManager {
@@ -53,6 +58,30 @@ impl FileManager {
             container_id: container_id.to_string(),
             _data_dir: data_dir.to_path_buf(),
             server_dir,
+            owner: None,
+        }
+    }
+
+    /// Give everything this manager creates to `uid:gid`.
+    pub fn with_owner(mut self, owner: (u32, u32)) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
+    /// Hand a path (and, for a directory, its contents) to the owner.
+    /// Best-effort: a node not running as root cannot, and its game runs as
+    /// the same user anyway.
+    fn claim(&self, path: &Path) {
+        let Some((uid, gid)) = self.owner else {
+            return;
+        };
+        for entry in walkdir::WalkDir::new(path).follow_links(false).into_iter().flatten() {
+            if let Err(e) = std::os::unix::fs::lchown(entry.path(), Some(uid), Some(gid)) {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    return;
+                }
+                warn!("Could not chown {:?}: {}", entry.path(), e);
+            }
         }
     }
 
@@ -262,6 +291,8 @@ impl FileManager {
         let mut file = fs::File::create(&file_path).await?;
         file.write_all(content).await?;
         file.flush().await?;
+        drop(file);
+        self.claim(&file_path);
 
         info!(
             "Wrote {} bytes to file {} in container {}",
@@ -348,6 +379,7 @@ impl FileManager {
         } else {
             fs::copy(&src_path, &dst_path).await?;
         }
+        self.claim(&dst_path);
 
         info!(
             "Copied {} to {} in container {}",
@@ -366,6 +398,7 @@ impl FileManager {
         } else {
             fs::create_dir(&dir_path).await?;
         }
+        self.claim(&dir_path);
 
         info!(
             "Created directory {} in container {}",
@@ -406,6 +439,7 @@ impl FileManager {
             }
         }
 
+        self.claim(&output_path);
         let metadata = fs::metadata(&output_path).await?;
 
         info!(
@@ -450,6 +484,8 @@ impl FileManager {
                 "Unsupported archive format. Use .tar.gz, .tgz, or .zip".to_string(),
             ));
         };
+
+        self.claim(&output_path);
 
         info!(
             "Extracted {} files from {} to {} in container {}",

@@ -431,7 +431,9 @@ merge_config() {
         "UPDATE_CHANNEL=stable" \
         "NEXUS_SNAPSHOTTER=overlayfs" \
         "PROVISION_PORT_RANGE=20000-29999" \
-        "NODE_PUBLIC_IP="
+        "NODE_PUBLIC_IP=" \
+        "NEXUS_CONTAINER_UID=${NEXUS_GAME_UID:-988}" \
+        "NEXUS_CONTAINER_GID=${NEXUS_GAME_GID:-988}"
     do
         key="${entry%%=*}"
         value="${entry#*=}"
@@ -454,6 +456,9 @@ merge_config() {
                     >> "$config_file" ;;
             NODE_PUBLIC_IP)
                 printf '# The address customers connect to; set it when billing provisions servers here.\n# ' \
+                    >> "$config_file" ;;
+            NEXUS_CONTAINER_UID)
+                printf '# The unprivileged user game servers run as; their files belong to it.\n' \
                     >> "$config_file" ;;
         esac
         printf '%s=%s\n' "$key" "$value" >> "$config_file"
@@ -546,6 +551,17 @@ EOF
 # AUTH_PASSWORD=changeme
 EOF
     fi
+
+    cat >> "$config_file" <<EOF
+
+# The unprivileged user game servers run as (never root). Their files under
+# DATA_DIR belong to it.
+NEXUS_CONTAINER_UID=${NEXUS_GAME_UID:-988}
+NEXUS_CONTAINER_GID=${NEXUS_GAME_GID:-988}
+
+# Console logs are trimmed past this size (bytes); the last 4 MiB are kept.
+# NEXUS_CONSOLE_LOG_MAX_BYTES=33554432
+EOF
 
     cat >> "$config_file" <<EOF
 
@@ -645,6 +661,49 @@ EOF
         warn "Caddy may not have started cleanly. Check: journalctl -u caddy -n 20"
         warn "Make sure port 80 and 443 are open, and DNS points to this server."
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Game-server user
+# ---------------------------------------------------------------------------
+
+# Game servers run as an unprivileged user, never as root. Their files under
+# DATA_DIR belong to it. The default uid (988) is the one Pterodactyl uses, so
+# a migrated node keeps its ownership; if that uid already belongs to some
+# other account on this host, a fresh system user is created instead and the
+# node is told which.
+NEXUS_GAME_USER="${NEXUS_GAME_USER:-nexus-game}"
+NEXUS_GAME_UID=""
+NEXUS_GAME_GID=""
+
+setup_game_user() {
+    local existing
+    existing=$(getent passwd 988 | cut -d: -f1 || true)
+
+    if id "$NEXUS_GAME_USER" >/dev/null 2>&1; then
+        NEXUS_GAME_UID=$(id -u "$NEXUS_GAME_USER")
+        NEXUS_GAME_GID=$(id -g "$NEXUS_GAME_USER")
+        ok "Game servers run as $NEXUS_GAME_USER (uid $NEXUS_GAME_UID)"
+        return
+    fi
+
+    if [ -z "$existing" ]; then
+        groupadd -r -g 988 "$NEXUS_GAME_USER" 2>/dev/null || groupadd -r "$NEXUS_GAME_USER"
+        useradd -r -u 988 -g "$NEXUS_GAME_USER" -d /nonexistent -s /usr/sbin/nologin \
+            "$NEXUS_GAME_USER" 2>/dev/null \
+            || useradd -r -g "$NEXUS_GAME_USER" -d /nonexistent -s /usr/sbin/nologin "$NEXUS_GAME_USER"
+    elif [ "$existing" = "pterodactyl" ]; then
+        # A node migrated from Pterodactyl: keep its user and its file ownership.
+        NEXUS_GAME_USER=pterodactyl
+    else
+        warn "uid 988 already belongs to '$existing'; creating $NEXUS_GAME_USER with a free uid"
+        groupadd -r "$NEXUS_GAME_USER"
+        useradd -r -g "$NEXUS_GAME_USER" -d /nonexistent -s /usr/sbin/nologin "$NEXUS_GAME_USER"
+    fi
+
+    NEXUS_GAME_UID=$(id -u "$NEXUS_GAME_USER")
+    NEXUS_GAME_GID=$(id -g "$NEXUS_GAME_USER")
+    ok "Game servers run as $NEXUS_GAME_USER (uid $NEXUS_GAME_UID)"
 }
 
 setup_firewall() {
@@ -821,6 +880,7 @@ main() {
         # "Text file busy" errors (Linux prevents overwriting a running executable)
         info "Stopping nexus-node before binary replacement..."
         systemctl stop nexus-node 2>/dev/null || true
+        setup_game_user
         build_nexus
         # A new binary can need a new unit (resource limits, dependencies) or
         # understand new settings. Updating only the binary leaves those behind
@@ -856,6 +916,7 @@ main() {
     setup_containerd
     install_cni_plugins
     setup_directories
+    setup_game_user
     build_nexus
     write_config
     setup_tls

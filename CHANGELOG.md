@@ -6,6 +6,73 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Six of seven shipped blueprints could not start.** Startup arguments were
+  passed to the game verbatim, so a CS2, Rust, Valheim, Palworld or DayZ
+  server was launched with a literal `{{SERVER_PORT}}` on its command line
+  and each multi-word argument (`-port 27015`) as one token. Startup
+  commands are now rendered with the server's variables and split with shell
+  rules, so `+hostname "{{SERVER_NAME}}"` is two arguments and a name with
+  spaces stays one. Java servers get the JVM flags their blueprint declares
+  (`performance.jvm`: heap sizes, Aikar's collector settings), placed before
+  `-jar`; a Minecraft server sold 8 GiB no longer runs on the JVM's default
+  quarter of it.
+- **A crashed server showed as running forever.** Nothing watched a game
+  process exit: the panel, the API and the metrics all served the state
+  recorded at start. Every start now has a watcher that records the exit
+  (`Stopped` for a clean exit, `Failed` with the exit code otherwise) and a
+  `crash_count` on the server.
+- **Stops were unclean kills.** A blueprint's `pre_stop` console commands
+  (`save-all`, `stop`, `quit`) were never sent; every stop was SIGTERM then
+  SIGKILL. The shutdown sequence now runs first and the runtime only forces
+  the issue if the game ignores it. Blueprints may also name a `stop_signal`
+  (Valheim saves on `SIGINT`) and a `stop_timeout`.
+- **A timed-out shell command kept running inside the customer's container**
+  and leaked a FIFO directory in `/tmp`. It is killed and reaped.
+- **A container containerd had lost stayed unstartable forever.** On restart
+  the node rebuilds it from the stored blueprint. A server whose task was
+  reaped while the node was down is restored as stopped, not "created".
+- **A suspended server could be started** from the panel or API, which is
+  not what a billing suspension means.
+- Imported Pterodactyl eggs carry their `stop` command (or `^C`) into the
+  blueprint's shutdown sequence.
+
+### Added
+- **Crash recovery.** A server that exits with a failure is started again
+  after `startup.restart.delay` (5 s), up to `max_retries` (5) times within
+  `reset_after` (10 min); past that it stays down and says so. A clean exit
+  is treated as intentional. Settable per blueprint; on by default.
+- **Game servers no longer run as root.** The process runs as an
+  unprivileged user (`NEXUS_CONTAINER_UID`/`GID`, default 988, the id
+  Pterodactyl uses so a migrated node keeps its ownership); the installer
+  creates the account. Server directories belong to that user, files the
+  panel writes are handed to it, and a server created before this change is
+  re-owned on its next start. The one-shot install container still runs as
+  root, because egg scripts expect to, and hands its output over when done.
+- **Containers are confined.** The blueprint `security` block, parsed and
+  ignored until now, is applied: capabilities (`drop: [ALL]`, `add: […]`)
+  from the Docker default set, `no_new_privileges`, `read_only_root`, and a
+  seccomp allowlist (`runtime/default`, the standard container profile: no
+  `mount`, `bpf`, `setns`, module loading, or new namespaces). A
+  `pids_limit` (1024) stops a fork bomb at one server. The hostname is the
+  server's id rather than `container` for every server on the node.
+- **Resource limits mean what they say.** `resources.cpu.max` is now a hard
+  cap (CPU quota), not just a weight; `memory.swap` is applied (and is zero
+  by default, so a server sold N GiB gets N GiB of RAM, not part of it in
+  swap); every `performance.kernel.ulimits` key is honoured, not only
+  `nofile`.
+- **Disk allowances are enforced.** Each server's directory is measured every
+  minute (`disk_used_bytes` in the API and the panel header). A server over
+  its `resources.disk.min` cannot be started, and a running one that stays
+  over for a minute is stopped, with the reason logged. A quota you report
+  but never enforce is a support ticket at 3 a.m.
+- **Console logs are capped.** A log past 32 MiB (`NEXUS_CONSOLE_LOG_MAX_BYTES`)
+  is trimmed to its last 4 MiB; a viewer following it picks up from the
+  trim. Before this a chatty server grew its log without bound.
+- The server header shows crashes and disk usage, and refreshes every cell
+  (it used to update only the status badge, so uptime and PID froze at
+  page load).
+
 ### Added
 - **WHMCS provisioning module.** `whmcs/modules/servers/nexuspanel` is a
   standard WHMCS server module: a paid order creates a server from the
