@@ -205,6 +205,11 @@ AUTH_API_KEYS=key1,key2
 # NEXUS_BILLING_URL=https://billing.example.com
 # NEXUS_PANEL_URL=https://panel.example.com   # used in notification links
 
+# SFTP for customers (the node serves SFTP itself; no shell, no exec)
+# NEXUS_SFTP=on
+# NEXUS_SFTP_BIND=0.0.0.0:2022
+# NEXUS_SFTP_HOST=node1.example.com            # defaults to NODE_PUBLIC_IP
+
 # Notifications (defaults; the Settings page can override and persist them)
 # NEXUS_WEBHOOKS=https://discord.com/api/webhooks/…,https://hooks.slack.com/…
 # NEXUS_ALERT_EMAILS=ops@example.com

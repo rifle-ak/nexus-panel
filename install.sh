@@ -598,6 +598,12 @@ EOF
 # The panel's public address, used in notification links.
 # NEXUS_PANEL_URL=https://panel.example.com
 
+# SFTP access for customers, served by the node itself (SFTP only, no shell).
+# NEXUS_SFTP=on
+# NEXUS_SFTP_BIND=0.0.0.0:2022
+# The host customers connect to; defaults to NODE_PUBLIC_IP.
+# NEXUS_SFTP_HOST=
+
 # Where crashes, disk stops, failed backups and health changes are reported.
 # Discord/Slack webhooks are formatted; any other URL gets JSON. Comma-separated.
 # NEXUS_WEBHOOKS=
@@ -762,6 +768,8 @@ setup_firewall() {
     local range_ufw="${range/-/:}"
     ufw allow "$range_ufw/tcp" > /dev/null 2>&1
     ufw allow "$range_ufw/udp" > /dev/null 2>&1
+    # SFTP for customers (NEXUS_SFTP_BIND).
+    ufw allow 2022/tcp > /dev/null 2>&1
 
     if [ "$ENABLE_TLS" = "true" ]; then
         ufw allow 80/tcp > /dev/null 2>&1   # ACME challenges

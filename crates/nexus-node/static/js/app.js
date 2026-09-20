@@ -2677,6 +2677,7 @@ NX.loadServerSettings = async function() {
   const id = NX.currentServer;
   if (!el || !id) return;
   loadServerNotify(id);
+  loadServerSftp(id);
   try {
     const st = await api(`/containers/${id}/settings`);
     NX.serverSettings = st;
@@ -2793,5 +2794,57 @@ NX.saveServerNotify = async function(id) {
   try {
     await api(`/containers/${id}/notifications`, { method: 'PUT', body: JSON.stringify({ webhook_url: url || null, events }) });
     toast(url ? 'Notifications saved' : 'Notifications turned off', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ── SFTP ──────────────────────────────────────────────────────────
+
+async function loadServerSftp(id) {
+  const el = document.getElementById('server-sftp-form');
+  if (!el) return;
+  try {
+    const i = await api(`/containers/${id}/sftp`);
+    if (!i.enabled) {
+      el.innerHTML = '<p class="text-muted text-sm">SFTP is turned off on this node (NEXUS_SFTP=off).</p>';
+      return;
+    }
+    const host = i.host || location.hostname;
+    const isAccount = i.username.includes('.');
+    el.innerHTML = `
+      <div class="kv-row"><span class="kv-key">Host</span><span class="kv-value" style="font-family:monospace">${esc(host)}</span></div>
+      <div class="kv-row"><span class="kv-key">Port</span><span class="kv-value" style="font-family:monospace">${i.port}</span></div>
+      <div class="kv-row"><span class="kv-key">Username</span><span class="kv-value" style="font-family:monospace">${esc(i.username)}</span></div>
+      <div class="kv-row"><span class="kv-key">Password</span><span class="kv-value">${isAccount
+        ? 'Your panel password'
+        : (i.has_password ? 'Set <span class="text-muted text-xs">(this server’s SFTP password)</span>' : '<span class="text-warning">Not set yet</span>')}</span></div>
+      <div class="kv-row"><span class="kv-key">URL</span><span class="kv-value" style="font-family:monospace">sftp://${esc(i.username)}@${esc(host)}:${i.port}</span></div>
+      <div style="margin-top:1rem">
+        <label class="form-label">${isAccount ? "Server password (for customers without a panel account)" : "Set the SFTP password for this server"}</label>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <input type="password" class="form-input" id="sftp-password" placeholder="At least 10 characters" autocomplete="new-password" style="flex:1;min-width:200px">
+          <button class="btn btn-primary btn-sm" onclick="NX.setSftpPassword('${id}')">Set password</button>
+          ${i.has_password ? `<button class="btn btn-sm" onclick="NX.clearSftpPassword('${id}')">Remove</button>` : ''}
+        </div>
+        <div class="form-hint">The server's password signs in as <code>${esc(i.username.split('.').pop())}</code>. Panel accounts with SFTP access sign in as <code>account.${esc(i.username.split('.').pop())}</code> with their own password.</div>
+      </div>`;
+  } catch (e) { el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`; }
+}
+
+NX.setSftpPassword = async function(id) {
+  const password = document.getElementById('sftp-password').value;
+  if (!password) return toast('Enter a password', 'error');
+  try {
+    await api(`/containers/${id}/sftp`, { method: 'PUT', body: JSON.stringify({ password }) });
+    toast('SFTP password set', 'success');
+    loadServerSftp(id);
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.clearSftpPassword = async function(id) {
+  if (!confirm('Remove the SFTP password? Customers will not be able to sign in over SFTP until a new one is set.')) return;
+  try {
+    await api(`/containers/${id}/sftp`, { method: 'DELETE' });
+    toast('SFTP password removed', 'success');
+    loadServerSftp(id);
   } catch (e) { toast(e.message, 'error'); }
 };

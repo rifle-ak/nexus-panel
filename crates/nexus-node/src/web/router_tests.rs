@@ -58,6 +58,8 @@ async fn harness() -> Harness {
     let firewall = Arc::new(crate::firewall::Firewall::disabled("test"));
     let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
     let notifier = Arc::new(crate::notify::Notifier::load(&data_dir, "test"));
+    let users = Arc::new(crate::users::UserStore::load(&data_dir));
+    let login_throttle = Arc::new(super::auth::LoginThrottle::new());
     let manager = Arc::new(
         crate::container::ContainerManager::new(data_dir.clone())
             .with_firewall(firewall.clone())
@@ -107,7 +109,7 @@ async fn harness() -> Harness {
             public_ip: Some("203.0.113.10".into()),
         },
         sso: Arc::new(SsoTokenStore::new()),
-        login_throttle: Arc::new(super::auth::LoginThrottle::new()),
+        login_throttle: login_throttle.clone(),
         audit: Some(Arc::new(
             crate::audit::AuditLogger::new(crate::audit::AuditConfig {
                 enabled: true,
@@ -123,9 +125,22 @@ async fn harness() -> Harness {
         )),
         firewall,
         monitor: monitor.clone(),
-        users: Arc::new(crate::users::UserStore::load(&data_dir)),
+        users: users.clone(),
         notifier: notifier.clone(),
         brand: Arc::new(crate::branding::BrandStore::load(&data_dir)),
+        sftp: Arc::new(crate::sftp::SftpServer::new(
+            crate::sftp::SftpSettings {
+                enabled: false,
+                bind: "127.0.0.1:0".into(),
+                public_host: Some("node.example".into()),
+            },
+            data_dir.clone(),
+            manager.clone(),
+            users.clone(),
+            login_throttle.clone(),
+            None,
+            "test",
+        )),
     };
     Harness {
         app: build_router(Arc::new(state)),
@@ -2358,5 +2373,99 @@ async fn notifications_settings_and_server_hooks() {
     assert_eq!(
         h.notifier.server_hook(&id).await,
         crate::notify::ServerHook::default()
+    );
+}
+
+#[tokio::test]
+async fn sftp_settings_follow_the_session() {
+    let h = harness().await;
+    let id = provisioned(&h, "sftp-1").await;
+    let short: String = id.chars().take(8).collect();
+
+    // The operator (no named account) is told the server username.
+    let (status, info, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/sftp", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", info);
+    assert_eq!(info["enabled"], false);
+    assert_eq!(info["host"], "node.example");
+    assert_eq!(info["username"], short);
+    assert_eq!(info["has_password"], false);
+
+    // Too short is refused; a proper one is stored hashed.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/sftp", id),
+            Some(serde_json::json!({ "password": "short" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, info, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/sftp", id),
+            Some(serde_json::json!({ "password": "customer password" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", info);
+    assert_eq!(info["has_password"], true);
+
+    // A panel account with file.sftp sees its own username; one without
+    // the grant cannot reach the endpoint.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::POST, "/api/v1/users", Some(serde_json::json!({ "username": "ops", "password": "ops password 123", "grants": { id.clone(): ["file.sftp", "settings.read"] } }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let token = login_as(&h, "ops", "ops password 123").await;
+    let (status, info, _) = send(
+        &h.app,
+        bearer(
+            &token,
+            Method::GET,
+            &format!("/api/v1/containers/{}/sftp", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", info);
+    assert_eq!(info["username"], format!("ops.{}", short));
+    send(&h.app, admin(Method::POST, "/api/v1/users", Some(serde_json::json!({ "username": "viewer", "password": "viewer password 1", "grants": { id.clone(): "read_only" } })))).await;
+    let token = login_as(&h, "viewer", "viewer password 1").await;
+    let (status, _, _) = send(
+        &h.app,
+        bearer(
+            &token,
+            Method::GET,
+            &format!("/api/v1/containers/{}/sftp", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Deleting the server drops its password.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !std::fs::read_to_string(h._dir.path().join(".nexus/sftp.json"))
+            .unwrap_or_default()
+            .contains(&id)
     );
 }
