@@ -260,6 +260,14 @@ impl Firewall {
         &self.settings
     }
 
+    /// Why the firewall is off, when it is.
+    pub fn disabled_reason(&self) -> Option<&str> {
+        match &self.backend {
+            Backend::Disabled { reason } => Some(reason.as_str()),
+            Backend::Nft { .. } => None,
+        }
+    }
+
     /// Put the base ruleset in place (replacing any left by a previous
     /// run) and tune the kernel. Server chains are added as servers start.
     pub async fn install(&self) -> Result<()> {

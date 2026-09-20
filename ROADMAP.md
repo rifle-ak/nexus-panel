@@ -8,7 +8,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 |---------|--------|
 | Container create / start / stop / restart / delete | Done |
 | Container suspend / unsuspend | Done |
-| Console (xterm.js) — game-process stdin | Done |
+| Console (xterm.js) — live output stream + history, game-process stdin | Done |
 | **Real shell console (exec)** — run arbitrary commands (e.g. `npm`, shell) in the container, separate from the game-process/RCON console | Done (UI + API; containerd exec pending real-runtime validation) |
 | File manager (browse, edit, create, delete, rename) | Done |
 | Backups (create, restore, delete) | Done |
@@ -79,9 +79,10 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Feature | Status |
 |---------|--------|
 | Dashboard stats (memory, disk, uptime, server count) | Done |
-| Node health checks | Done |
-| Prometheus metrics export | Done |
-| Per-container resource metrics (CPU, memory, network, disk I/O) | Backend Ready |
+| Node health checks (containerd round-trip, disk, memory, firewall, crash loops) | Done |
+| Prometheus metrics export (node + per-server CPU/memory gauges) | Done |
+| Per-container resource metrics (CPU, memory, processes, disk I/O) with 10-minute history, resource meters on the server page, Analytics page | Done |
+| Per-container network metrics | Not possible while servers share the host network namespace |
 | gRPC request latency tracking | Backend Ready |
 
 ## Security

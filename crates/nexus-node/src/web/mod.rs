@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod firewall;
+pub mod observe;
 pub mod provision;
 #[cfg(test)]
 mod router_tests;
@@ -107,6 +108,8 @@ pub struct AppState {
     /// The node's firewall (may be disabled, in which case it answers
     /// honestly and does nothing).
     pub firewall: Arc<crate::firewall::Firewall>,
+    /// Resource usage per server and for the node, sampled on a schedule.
+    pub monitor: Arc<crate::stats::ResourceMonitor>,
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +248,7 @@ pub fn build_router(shared: S) -> Router {
         .route("/api/v1/node/info", get(api_node_info))
         .route("/api/v1/node/health", get(api_node_health))
         .route("/api/v1/node/metrics", get(api_node_metrics))
+        .route("/api/v1/node/stats", get(observe::api_node_stats))
         .route("/api/v1/node/update-check", get(api_update_check))
         .route(
             "/api/v1/node/update",
@@ -275,6 +279,18 @@ pub fn build_router(shared: S) -> Router {
             post(api_unsuspend_container),
         )
         .route("/api/v1/containers/:id/command", post(api_send_command))
+        .route(
+            "/api/v1/containers/:id/stats",
+            get(observe::api_container_stats),
+        )
+        .route(
+            "/api/v1/containers/:id/console",
+            get(observe::api_console_tail),
+        )
+        .route(
+            "/api/v1/containers/:id/console/stream",
+            get(observe::api_console_stream),
+        )
         .route("/api/v1/containers/:id/exec", post(api_exec))
         // ── Files ────────────────────────────────────────────────────
         .route("/api/v1/containers/:id/files", get(api_list_files))
@@ -851,6 +867,9 @@ struct ContainerJson {
     created_at: u64,
     started_at: Option<u64>,
     stopped_at: Option<u64>,
+    /// The latest resource sample, while the server runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<crate::stats::ResourceSample>,
 }
 
 #[derive(Serialize)]
@@ -1031,7 +1050,8 @@ async fn api_node_health(State(s): State<S>) -> impl IntoResponse {
             name: name.clone(),
             status: match c.status {
                 crate::health::HealthStatus::Healthy => "pass",
-                _ => "fail",
+                crate::health::HealthStatus::Degraded => "warn",
+                crate::health::HealthStatus::Unhealthy => "fail",
             }
             .to_string(),
             message: c.error.clone(),
@@ -1072,10 +1092,15 @@ async fn api_list_containers(
     Extension(scope): Extension<auth::SessionScope>,
 ) -> impl IntoResponse {
     let containers = s.manager.list_containers().await;
+    let usage = s.monitor.all_usage().await;
     let out: Vec<ContainerJson> = containers
         .iter()
         .filter(|c| scope.allows_server(&c.id))
-        .map(container_to_json)
+        .map(|c| {
+            let mut json = container_to_json(c);
+            json.usage = usage.get(&c.id).cloned();
+            json
+        })
         .collect();
     Json(out)
 }
@@ -1089,7 +1114,9 @@ async fn api_get_container(
         .get_state(&id)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok(Json(container_to_json(&c)))
+    let mut json = container_to_json(&c);
+    json.usage = s.monitor.usage(&id).await;
+    Ok(Json(json))
 }
 
 async fn api_create_container(
@@ -2341,6 +2368,7 @@ fn container_to_json(c: &crate::container::ContainerState) -> ContainerJson {
         created_at: system_time_to_epoch(c.created_at),
         started_at: c.started_at.map(system_time_to_epoch),
         stopped_at: c.stopped_at.map(system_time_to_epoch),
+        usage: None,
     }
 }
 

@@ -76,6 +76,47 @@ pub trait ContainerRuntime: Send + Sync {
         command: &[String],
         timeout: std::time::Duration,
     ) -> Result<ExecOutput>;
+
+    /// What a running container is using right now: cumulative CPU time,
+    /// memory, process count and block I/O, as its cgroup reports them.
+    ///
+    /// Counters are cumulative; a sampler turns two readings into rates.
+    /// A container that is not running has no cgroup and errors.
+    async fn stats(&self, id: &str) -> Result<ContainerStats>;
+
+    /// The last `max_bytes` of a container's console output, for a console
+    /// that opens on a server already running. A runtime that keeps no log
+    /// returns an empty string.
+    async fn console_tail(&self, _id: &str, _max_bytes: u64) -> Result<String> {
+        Ok(String::new())
+    }
+
+    /// Round-trip to the runtime daemon, for health checks. Errors when the
+    /// daemon is unreachable.
+    async fn ping(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// A point-in-time reading of a container's cgroup.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContainerStats {
+    /// CPU time consumed since the container started, in microseconds
+    /// (user + system).
+    pub cpu_usage_usec: u64,
+    /// Memory in use, in bytes (`memory.current`: anonymous + page cache).
+    pub memory_bytes: u64,
+    /// Anonymous memory alone, in bytes: what the game really holds, as
+    /// opposed to file cache the kernel can drop.
+    pub memory_anon_bytes: u64,
+    /// The memory limit in bytes; `None` when unlimited.
+    pub memory_limit_bytes: Option<u64>,
+    /// Processes and threads in the container.
+    pub pids: u64,
+    /// Bytes read from block devices since start.
+    pub io_read_bytes: u64,
+    /// Bytes written to block devices since start.
+    pub io_write_bytes: u64,
 }
 
 /// Default timeout for interactive `exec` calls (the shell console).

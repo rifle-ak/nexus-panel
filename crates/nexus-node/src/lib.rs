@@ -54,6 +54,7 @@ pub mod runtime;
 pub mod schedule;
 pub mod secrets;
 pub mod selfupdate;
+pub mod stats;
 pub mod update;
 pub mod version;
 
@@ -68,6 +69,7 @@ pub mod web;
 // Enterprise modules
 pub mod audit;
 pub mod auth;
+pub mod cgroup;
 pub mod circuit_breaker;
 pub mod cloudflare;
 pub mod config_reload;

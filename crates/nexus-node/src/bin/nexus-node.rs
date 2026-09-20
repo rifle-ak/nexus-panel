@@ -237,12 +237,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  Game servers run as uid {} gid {}", game_uid, game_gid);
 
     // Create health checker
-    let health_checker = Arc::new(RwLock::new(HealthChecker::new(
-        containerd_socket,
-        data_dir.clone(),
-        min_disk_space,
-        min_memory,
-    )));
+    let health_checker = Arc::new(RwLock::new(
+        HealthChecker::new(
+            containerd_socket,
+            data_dir.clone(),
+            min_disk_space,
+            min_memory,
+        )
+        .with_runtime(manager.runtime())
+        .with_firewall(firewall.clone())
+        .with_manager(manager.clone()),
+    ));
+
+    // Resource usage per server and for the node, sampled every few seconds.
+    let monitor = Arc::new(nexus_node::stats::ResourceMonitor::new(
+        (*manager).clone(),
+        metrics.clone(),
+    ));
+    monitor.start();
 
     // Initialize enterprise components
     let graceful_shutdown = Arc::new(GracefulShutdown::new());
@@ -429,6 +441,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             login_throttle: Arc::new(nexus_node::web::auth::LoginThrottle::new()),
             audit: audit_logger.clone(),
             firewall: firewall.clone(),
+            monitor: monitor.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

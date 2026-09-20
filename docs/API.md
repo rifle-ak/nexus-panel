@@ -333,6 +333,29 @@ the node's `WEB_SESSION_TTL_SECS`.
 everything under `/api/v1/containers/:id/…` for its servers except deleting the
 server, and the read-only marketplace routes; everything else answers `403`.
 
+## Observability Endpoints (REST)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/containers/:id/stats` | `{"running", "current", "history", "interval_secs"}`: the server's latest resource sample and the last ten minutes of them, oldest first |
+| `GET` | `/api/v1/containers/:id/console?bytes=65536` | `{"text"}`: the tail of the console log (up to 512 KiB) |
+| `GET` | `/api/v1/containers/:id/console/stream` | Server-sent events, one `line` event per line of new output, keep-alives every 15 s. Starts at the current end of the log; fetch history first |
+| `GET` | `/api/v1/node/stats` | Operator only. Node CPU %, memory, swap, load averages, with history, and every running server's latest sample |
+| `GET` | `/api/v1/node/health` | Operator only. Checks: `containerd` (a version round-trip), `disk` (free space on the data directory's filesystem against `MIN_DISK_SPACE_BYTES`), `memory` (available against `MIN_MEMORY_BYTES`), `data_directory` (writable), `firewall` (on), `servers` (no crash loops). Each is `pass`, `warn` or `fail` |
+
+A resource sample has `cpu_percent` (of one core; 200 means two cores),
+`memory_bytes` (with page cache), `memory_anon_bytes` (what the process
+holds), `memory_limit_bytes` (absent when unlimited), `pids`, cumulative
+`io_read_bytes`/`io_write_bytes` and their rates `io_read_bps`/`io_write_bps`.
+Samples are taken every 5 seconds from the container's cgroup; the same
+numbers feed `nexus_node_container_cpu_usage_millicores` and
+`nexus_node_container_memory_usage_bytes` on `/metrics`. `GET
+/api/v1/containers` and `GET /api/v1/containers/:id` carry the latest
+sample as `usage` while the server runs.
+
+Network traffic is not attributed per server: servers share the host's
+network namespace, so the kernel keeps no per-container counters.
+
 ## Firewall Endpoints (REST)
 
 Operator (admin session or API key):
