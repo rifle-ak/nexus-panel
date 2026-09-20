@@ -404,6 +404,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provision: provision_store.clone(),
             provision_settings: provision_settings.clone(),
             sso: Arc::new(nexus_node::web::auth::SsoTokenStore::new()),
+            login_throttle: Arc::new(nexus_node::web::auth::LoginThrottle::new()),
+            audit: audit_logger.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

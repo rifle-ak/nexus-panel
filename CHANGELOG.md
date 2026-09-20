@@ -6,7 +6,46 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Archive extraction could write anywhere on the node.** A zip or tar
+  entry named `../../etc/cron.d/x` was joined to the extraction directory as
+  given, so a customer-uploaded archive could drop a file anywhere the node
+  can write. Zip entries now go through the archive library's traversal
+  check (`enclosed_name`) and tar entries through `unpack_in`; an entry
+  that would escape is skipped and logged. Tests cover both.
+- **The gRPC `DownloadFile` RPC read any file on the node.** It joined the
+  raw request path under the server directory, stripping only leading
+  slashes, so `../../etc/shadow` was served. It now resolves through the
+  same jail every other file operation uses.
+- **Uploads were buffered whole in memory** before being written; a world
+  the size of RAM took the node down. They stream to disk.
+- **Copying a directory followed symlinks.** A link the game planted to a
+  path outside its directory became a copy of that path's contents. Links
+  are recreated as links.
+- **The panel password could be guessed at full speed.** The login endpoint
+  had no attempt limit. Ten failures from one address, or two hundred
+  node-wide, in fifteen minutes now answer `429` with `Retry-After`;
+  every failure and lockout is an audit event. Behind the installer's Caddy
+  the address is the real client's (`X-Forwarded-For` is trusted only from
+  a local or private-network proxy).
+- **Cross-site scripting through file names.** The panel's HTML escaper left
+  quotes alone while most of the UI interpolates into single-quoted `onclick`
+  attributes; a file named `x');alert(1);('` ran script. Quotes are escaped.
+- **Blueprint variable rules are enforced.** A `MAX_PLAYERS=-1` or a port
+  outside a variable's declared range reached the game unchallenged; a
+  provisioning request that breaks a rule is refused with the rule.
+
+### Added
+- **Audit logging covers what the panel does.** With `AUDIT_ENABLED=true`
+  the node records logins (success, failure, lockout), SSO sign-ins,
+  container create/start/stop/restart/suspend/unsuspend/delete, and file
+  writes, deletes and renames — with the acting session, the source
+  address, the target server and the outcome. Before this the audit log
+  held two events per process lifetime: node started, node stopped.
+
 ### Fixed
+- **File "Edit" was broken for password-authenticated admins**: it used a
+  bare `fetch` with no session header and got `401` on every click.
 - **Six of seven shipped blueprints could not start.** Startup arguments were
   passed to the game verbatim, so a CS2, Rust, Valheim, Palworld or DayZ
   server was launched with a literal `{{SERVER_PORT}}` on its command line

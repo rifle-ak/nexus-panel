@@ -80,6 +80,17 @@ pub enum AuditEventType {
     LogsAccessed,
     MetricsAccessed,
     DataExported,
+
+    // File events (the panel's file manager)
+    FileWritten,
+    FileDeleted,
+    FileRenamed,
+
+    // Billing events
+    ServerProvisioned,
+    ServerTerminated,
+    PackageChanged,
+    SsoTokenIssued,
 }
 
 impl AuditEventType {
@@ -94,9 +105,12 @@ impl AuditEventType {
 
             Self::ContainerFailed | Self::NodeStopped => AuditSeverity::Error,
 
-            Self::PermissionElevation | Self::ApiKeyCreated | Self::ApiKeyRevoked => {
-                AuditSeverity::Notice
-            }
+            Self::PermissionElevation
+            | Self::ApiKeyCreated
+            | Self::ApiKeyRevoked
+            | Self::ServerProvisioned
+            | Self::ServerTerminated
+            | Self::SsoTokenIssued => AuditSeverity::Notice,
 
             _ => AuditSeverity::Info,
         }

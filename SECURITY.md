@@ -43,6 +43,17 @@ The node ships secure-by-default, but production operators should verify:
   minute, and only their hash is held in memory. The session cookie is
   `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the reverse proxy reports
   `X-Forwarded-Proto: https` — make sure yours does.
+- **Logins are throttled.** Ten failed attempts from one address, or two
+  hundred node-wide, within fifteen minutes lock the login endpoint for the
+  rest of the window (`429` with `Retry-After`). Failures are audited with
+  the source address when `AUDIT_ENABLED=true`.
+- **Turn on audit logging** (`AUDIT_ENABLED=true`, `AUDIT_LOG_FILE=…`). The
+  node records who did what to which server from where: logins, SSO
+  sign-ins, every container lifecycle action, and file writes, deletes and
+  renames. Entries are hash-chained, so a tampered log shows.
+- **Archives and paths are jailed.** Uploads, extractions, downloads and
+  every file operation stay inside the server's directory; an archive entry
+  that would escape is skipped, not written.
 - **Game servers are unprivileged and confined.** Each runs as
   `NEXUS_CONTAINER_UID` (never root) with only the capabilities its
   blueprint grants, `no_new_privileges`, a pids limit, and the standard

@@ -91,7 +91,7 @@ impl NodeServiceImpl {
 
     /// Create a FileManager for a container
     fn file_manager(&self, container_id: &str) -> FileManager {
-        FileManager::new(container_id, self.manager.data_dir())
+        FileManager::new(container_id, self.manager.data_dir()).with_owner(self.manager.game_user())
     }
 }
 
@@ -1096,9 +1096,12 @@ impl NodeService for NodeServiceImpl {
         info!("gRPC: DownloadFile {} path={}", container_id, path);
 
         let fm = self.file_manager(&container_id);
-        let file_path = fm.server_dir().join(path.trim_start_matches('/'));
+        // Through the same jail every other file operation uses; joining
+        // the raw path let `../` read anything on the node.
+        let file_path =
+            fm.resolve_path(&path).map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        if !file_path.exists() {
+        if !file_path.is_file() {
             return Err(Status::not_found(format!("File not found: {}", path)));
         }
 
@@ -1181,26 +1184,42 @@ impl NodeService for NodeServiceImpl {
 
         let fm = self.file_manager(&container_id);
 
-        // Collect all data
-        let mut data = first_chunk.data;
+        // Stream straight to disk. Buffering the whole upload first meant a
+        // world backup the size of RAM took the node down with it.
+        let file_path = fm.resolve_for_write(&path).await.map_err(|e| {
+            self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
+            Status::invalid_argument(e.to_string())
+        })?;
+        let mut file = tokio::fs::File::create(&file_path).await.map_err(|e| {
+            self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
+            Status::internal(format!("Failed to create uploaded file: {}", e))
+        })?;
 
-        if !first_chunk.is_last {
-            while let Some(chunk) = stream
+        use tokio::io::AsyncWriteExt;
+        let mut bytes_written: u64 = 0;
+        let mut chunk = first_chunk;
+        loop {
+            file.write_all(&chunk.data)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to write uploaded file: {}", e)))?;
+            bytes_written += chunk.data.len() as u64;
+            if chunk.is_last {
+                break;
+            }
+            match stream
                 .message()
                 .await
                 .map_err(|e| Status::internal(format!("Failed to read chunk: {}", e)))?
             {
-                data.extend_from_slice(&chunk.data);
-                if chunk.is_last {
-                    break;
-                }
+                Some(next) => chunk = next,
+                None => break,
             }
         }
-
-        let bytes_written = fm.write_file(&path, &data, true).await.map_err(|e| {
-            self.metrics.record_grpc_request("UploadFile", "error", start.elapsed());
-            Status::internal(format!("Failed to write uploaded file: {}", e))
-        })?;
+        file.flush()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to flush uploaded file: {}", e)))?;
+        drop(file);
+        fm.claim_path(&file_path);
 
         self.metrics.record_grpc_request("UploadFile", "ok", start.elapsed());
 
