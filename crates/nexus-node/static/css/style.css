@@ -975,3 +975,74 @@ body.scope-servers .admin-only { display: none; }
   margin: 0;
   background: #000;
 }
+
+/* ── Resource meters ────────────────────────────────────────── */
+
+.detail-resources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.detail-resources:empty { display: none; }
+
+.meter {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+}
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.meter-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.meter-bar {
+  height: 6px;
+  margin-top: 0.5rem;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+  transition: width 0.4s ease;
+}
+.meter-fill.warn { background: var(--warning); }
+.meter-fill.hot { background: var(--danger); }
+.meter-sub {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.spark-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.spark { width: 100%; height: 64px; display: block; }
+.spark-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+.spark-line { fill: none; stroke: var(--success); stroke-width: 1.5; }
+.spark-area { fill: var(--success); opacity: 0.12; }
+.spark.mem .spark-line { stroke: #818cf8; }
+.spark.mem .spark-area { fill: #818cf8; }
+

@@ -7,6 +7,29 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **The console shows the server's output.** It never did: the Console tab
+  had a terminal and a command box, and nothing came back. It now loads
+  the last 64 KiB of the log (`GET /api/v1/containers/:id/console`) and
+  follows new output as server-sent events
+  (`…/console/stream`), reconnecting with backoff when a server restarts.
+- **Per-server resource usage from cgroups.** The runtime reads each
+  running server's cgroup (v2 or v1, found from the task's pid): CPU time,
+  memory with and without page cache, the memory limit, process count and
+  block I/O. A monitor (`stats.rs`) samples every 5 seconds, turns the
+  counters into rates, keeps ten minutes of history, and feeds the
+  Prometheus gauges that were registered but never set. Meters under the
+  server's status bar, CPU/memory columns on the server list,
+  `GET /api/v1/containers/:id/stats`, and `usage` on the container JSON.
+- **An Analytics page with real numbers**: node CPU, memory, swap and load
+  with ten-minute sparklines, every running server's share, and the health
+  checks (`GET /api/v1/node/stats`).
+- **Health checks that measure something.** `containerd` was "the socket
+  file exists" and `disk` and `memory` always passed. Now containerd must
+  answer a version request within five seconds, free space on the data
+  directory's filesystem is compared with `MIN_DISK_SPACE_BYTES` and
+  available memory with `MIN_MEMORY_BYTES` (below the minimum fails;
+  below twice it warns), a disabled firewall warns with its reason, and a
+  server that has crashed three or more times warns as crash-looping.
 - **A real firewall.** The unfinished XDP module is replaced by an nftables
   firewall (`firewall.rs`) that owns one table, `inet nexus`, and keeps it
   in step with what runs. Node-wide: a blocklist (timed or permanent) and a

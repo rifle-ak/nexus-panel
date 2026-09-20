@@ -47,6 +47,7 @@ security:
 
 struct Harness {
     app: Router,
+    monitor: Arc<crate::stats::ResourceMonitor>,
     _dir: tempfile::TempDir,
 }
 
@@ -54,9 +55,14 @@ fn harness() -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
     let firewall = Arc::new(crate::firewall::Firewall::disabled("test"));
+    let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
     let manager = Arc::new(
         crate::container::ContainerManager::new(data_dir.clone()).with_firewall(firewall.clone()),
     );
+    let monitor = Arc::new(crate::stats::ResourceMonitor::new(
+        (*manager).clone(),
+        metrics.clone(),
+    ));
     let auth = WebAuthConfig {
         enabled: true,
         password: None,
@@ -64,18 +70,22 @@ fn harness() -> Harness {
         session_ttl: Duration::from_secs(3600),
     };
     let state = AppState {
-        manager,
+        manager: manager.clone(),
         backup_manager: Arc::new(crate::backup::BackupManager::new(&data_dir)),
         schedule_manager: Arc::new(crate::schedule::ScheduleManager::with_data_dir(
             data_dir.clone(),
         )),
-        health_checker: Arc::new(RwLock::new(crate::health::HealthChecker::new(
-            "/nonexistent.sock".into(),
-            data_dir.to_string_lossy().to_string(),
-            0,
-            0,
-        ))),
-        metrics: Arc::new(crate::metrics::Metrics::new().unwrap()),
+        health_checker: Arc::new(RwLock::new(
+            crate::health::HealthChecker::new(
+                "/nonexistent.sock".into(),
+                data_dir.to_string_lossy().to_string(),
+                0,
+                0,
+            )
+            .with_runtime(manager.runtime())
+            .with_manager(manager.clone()),
+        )),
+        metrics: metrics.clone(),
         marketplace: Arc::new(nexus_marketplace::MarketplaceManager::new()),
         node_id: "test-node".into(),
         data_dir: data_dir.to_string_lossy().to_string(),
@@ -96,9 +106,11 @@ fn harness() -> Harness {
         login_throttle: Arc::new(super::auth::LoginThrottle::new()),
         audit: None,
         firewall,
+        monitor: monitor.clone(),
     };
     Harness {
         app: build_router(Arc::new(state)),
+        monitor,
         _dir: dir,
     }
 }
@@ -889,6 +901,180 @@ async fn firewall_status_and_per_server_rules() {
     let (status, _, _) = send(
         &h.app,
         with_cookie(Method::GET, "/api/v1/firewall", &cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn stats_console_and_node_usage() {
+    let h = harness();
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/servers",
+            Some(serde_json::json!({
+                "external_id": "obs-1",
+                "name": "Observed",
+                "blueprint_yaml": SIMPLE_BLUEPRINT,
+                "auto_start": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", body);
+    let id = body["id"].as_str().unwrap().to_string();
+
+    // Unknown server: 404. Known but stopped: nothing to show yet.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::GET, "/api/v1/containers/nope/stats", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, stats, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/stats", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", stats);
+    assert_eq!(stats["running"], false);
+    assert!(stats["current"].is_null());
+    assert_eq!(stats["interval_secs"], 5);
+
+    // Running and sampled: usage everywhere it belongs.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/start", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    h.monitor.sample().await;
+    h.monitor.sample().await;
+    let (status, stats, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/stats", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", stats);
+    assert_eq!(stats["running"], true);
+    assert!(stats["current"]["memory_bytes"].as_u64().unwrap() > 0);
+    assert!(stats["current"]["memory_limit_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(stats["history"].as_array().unwrap().len(), 2);
+    let (_, c, _) = send(
+        &h.app,
+        admin(Method::GET, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert!(c["usage"]["cpu_percent"].is_number(), "{}", c);
+    let (_, list, _) = send(&h.app, admin(Method::GET, "/api/v1/containers", None)).await;
+    assert!(list[0]["usage"]["memory_bytes"].is_number(), "{}", list);
+
+    // The node's view names the server.
+    let (status, node, _) = send(&h.app, admin(Method::GET, "/api/v1/node/stats", None)).await;
+    assert_eq!(status, StatusCode::OK, "{}", node);
+    assert!(node["current"]["memory_total_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(node["servers"][0]["name"], "Observed");
+    assert_eq!(node["servers"][0]["id"], id);
+
+    // Console: history as text, live output as server-sent events.
+    let (status, tail, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/console?bytes=200", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", tail);
+    let text = tail["text"].as_str().unwrap();
+    assert!(
+        text.len() <= 200 && text.ends_with("Save complete\n"),
+        "{:?}",
+        text
+    );
+    assert!(!text.starts_with('\n'));
+    let resp = h
+        .app
+        .clone()
+        .oneshot(admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/console/stream", id),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers()[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("text/event-stream"));
+
+    // Health reports the firewall as a warning, not a failure, and
+    // includes the servers check.
+    let (status, health, _) = send(&h.app, admin(Method::GET, "/api/v1/node/health", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(health["status"], "healthy");
+    let names: Vec<&str> = health["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"disk") && names.contains(&"memory"));
+
+    // A customer sees their own server's stats and console, not the node's.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    for path in [
+        format!("/api/v1/containers/{}/stats", id),
+        format!("/api/v1/containers/{}/console", id),
+    ] {
+        let (status, _, _) = send(&h.app, with_cookie(Method::GET, &path, &cookie)).await;
+        assert_eq!(status, StatusCode::OK, "{}", path);
+    }
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(Method::GET, "/api/v1/node/stats", &cookie),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);

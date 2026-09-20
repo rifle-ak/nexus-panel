@@ -1284,6 +1284,36 @@ impl ContainerManager {
         Ok(())
     }
 
+    /// The runtime this manager drives.
+    pub fn runtime(&self) -> Arc<dyn ContainerRuntime> {
+        self.runtime.clone()
+    }
+
+    /// A running container's raw cgroup counters.
+    pub async fn raw_stats(&self, container_id: &str) -> Result<crate::runtime::ContainerStats> {
+        {
+            let states = self.states.read().await;
+            let state = states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+            if !state.status.is_running() {
+                return Err(NodeError::ContainerNotRunning(container_id.to_string()));
+            }
+        }
+        self.runtime.stats(container_id).await
+    }
+
+    /// The last `max_bytes` of a container's console output.
+    pub async fn console_tail(&self, container_id: &str, max_bytes: u64) -> Result<String> {
+        {
+            let states = self.states.read().await;
+            states
+                .get(container_id)
+                .ok_or_else(|| NodeError::ContainerNotFound(container_id.to_string()))?;
+        }
+        self.runtime.console_tail(container_id, max_bytes).await
+    }
+
     /// Get container state
     pub async fn get_state(&self, container_id: &str) -> Result<ContainerState> {
         let states = self.states.read().await;

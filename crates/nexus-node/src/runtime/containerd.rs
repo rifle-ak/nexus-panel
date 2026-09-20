@@ -7,11 +7,11 @@ use containerd_client::{
         images_client::ImagesClient, leases_client::LeasesClient,
         snapshots::snapshots_client::SnapshotsClient, snapshots::MountsRequest,
         snapshots::PrepareSnapshotRequest, snapshots::RemoveSnapshotRequest,
-        tasks_client::TasksClient, Container as ContainerdContainer, CreateContainerRequest,
-        CreateRequest as CreateLeaseRequest, CreateTaskRequest, DeleteContainerRequest,
-        DeleteProcessRequest, DeleteRequest as DeleteLeaseRequest, DeleteTaskRequest,
-        ExecProcessRequest, GetContainerRequest, GetImageRequest, GetRequest as GetTaskRequest,
-        KillRequest, ReadContentRequest, StartRequest, WaitRequest,
+        tasks_client::TasksClient, version_client::VersionClient, Container as ContainerdContainer,
+        CreateContainerRequest, CreateRequest as CreateLeaseRequest, CreateTaskRequest,
+        DeleteContainerRequest, DeleteProcessRequest, DeleteRequest as DeleteLeaseRequest,
+        DeleteTaskRequest, ExecProcessRequest, GetContainerRequest, GetImageRequest,
+        GetRequest as GetTaskRequest, KillRequest, ReadContentRequest, StartRequest, WaitRequest,
     },
     tonic::{transport::Channel, Code, Request},
     with_namespace,
@@ -1074,6 +1074,63 @@ impl ContainerRuntime for ContainerdRuntime {
         }
 
         info!("Successfully sent command to container {}", id);
+        Ok(())
+    }
+
+    async fn stats(&self, id: &str) -> Result<ContainerStats> {
+        let info = self.inspect(id).await?;
+        let Some(pid) = info.pid.filter(|_| info.status == "running") else {
+            return Err(NodeError::ContainerNotRunning(id.to_string()));
+        };
+        // The cgroup files are small and local; reading them blocks for
+        // microseconds, so this stays on the runtime thread.
+        crate::cgroup::stats_for_pid(pid)
+    }
+
+    async fn console_tail(&self, id: &str, max_bytes: u64) -> Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut file = match tokio::fs::File::open(self.log_path(id)).await {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+            Err(e) => {
+                return Err(NodeError::Internal(format!(
+                    "Failed to open console log: {}",
+                    e
+                )))
+            }
+        };
+        let len = file
+            .metadata()
+            .await
+            .map_err(|e| NodeError::Internal(format!("Failed to stat console log: {}", e)))?
+            .len();
+        let start = len.saturating_sub(max_bytes);
+        if start > 0 {
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| NodeError::Internal(format!("Failed to seek console log: {}", e)))?;
+        }
+        let mut buf = Vec::with_capacity((len - start) as usize);
+        file.read_to_end(&mut buf)
+            .await
+            .map_err(|e| NodeError::Internal(format!("Failed to read console log: {}", e)))?;
+        let mut text = String::from_utf8_lossy(&buf).into_owned();
+        // A seek lands mid-line; drop the partial first line.
+        if start > 0 {
+            if let Some(nl) = text.find('\n') {
+                text.drain(..=nl);
+            }
+        }
+        Ok(text)
+    }
+
+    async fn ping(&self) -> Result<()> {
+        let channel = self.get_channel().await?;
+        let mut client = VersionClient::new(channel);
+        tokio::time::timeout(Duration::from_secs(3), client.version(()))
+            .await
+            .map_err(|_| NodeError::ContainerdError("version request timed out".to_string()))?
+            .map_err(|e| NodeError::ContainerdError(format!("version request failed: {}", e)))?;
         Ok(())
     }
 

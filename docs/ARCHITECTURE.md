@@ -207,6 +207,28 @@ everything else runs unchanged.
 5. Stream → gRPC → Client
 ```
 
+The panel's console does the same over HTTP: `GET …/console` returns the
+tail of the log the shim writes, and `GET …/console/stream` follows it as
+server-sent events, one event per line, polling the file every 250 ms
+while there is nothing new.
+
+### Resource Monitoring
+
+`stats.rs` samples every running server and the node every 5 seconds:
+
+```
+1. ResourceMonitor → ContainerManager: list_containers()
+2. For each running server → Runtime: stats(id)
+3. Runtime → /proc/<pid>/cgroup → /sys/fs/cgroup/<path>/{cpu.stat,
+   memory.current, memory.max, memory.stat, pids.current, io.stat}
+4. Monitor → rates from the previous reading; 120-sample history;
+   Prometheus gauges
+5. Web: /containers/:id/stats, /node/stats, `usage` on container JSON
+```
+
+cgroup v1 hosts are read through their per-controller hierarchies. Network
+is not per server: servers share the host network namespace.
+
 ## Crate Structure
 
 ```

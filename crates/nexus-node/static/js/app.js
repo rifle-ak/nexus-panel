@@ -96,6 +96,7 @@ function route() {
   });
 
   clearInterval(NX.refreshTimer);
+  if (NX.consoleAbort) { NX.consoleAbort.abort(); NX.consoleAbort = null; }
 
   switch (page) {
     case '':
@@ -224,6 +225,8 @@ function renderServerTable(containers) {
         </div>
       </td>
       <td>${statusBadge(c.status)}</td>
+      <td class="text-muted text-sm">${c.usage ? c.usage.cpu_percent.toFixed(1) + '%' : '—'}</td>
+      <td class="text-muted text-sm">${c.usage ? fmtBytes(c.usage.memory_bytes) + (c.usage.memory_limit_bytes ? ' / ' + fmtBytes(c.usage.memory_limit_bytes) : '') : '—'}</td>
       <td class="text-muted text-sm">${esc(c.image)}</td>
       <td class="text-muted">${c.restart_count}</td>
       <td class="text-muted text-sm">${fmtTime(c.created_at)}</td>
@@ -347,6 +350,7 @@ async function renderServerDetail(id) {
     `;
 
     NX.renderDetailActions(id, c);
+    renderResourceMeters(c);
     const installing = c.install_state === 'running';
 
     // An install kicked off at creation time is already running when the
@@ -388,6 +392,7 @@ async function renderServerDetail(id) {
         }
         const uptime = document.querySelector('#detail-status-bar .status-item:last-child .status-item-value');
         if (uptime) uptime.textContent = u.started_at && u.status === 'running' ? fmtDuration(Date.now()/1000 - u.started_at) : '—';
+        renderResourceMeters(u);
       } catch (_) {}
     }, 5000);
 
@@ -744,7 +749,94 @@ function initConsole() {
     disableStdin: true,
   });
   NX.term.open(el);
-  NX.term.writeln('\x1b[34m[nexus]\x1b[0m Console connected. Type commands below.');
+  NX.openConsole(NX.currentServer);
+}
+
+// Show what the server has printed so far, then follow it live. The
+// stream is server-sent events over fetch (an EventSource cannot carry the
+// session header); it is aborted when the operator leaves the page.
+NX.openConsole = async function(id) {
+  if (NX.consoleAbort) { NX.consoleAbort.abort(); NX.consoleAbort = null; }
+  const term = NX.term;
+  if (!term) return;
+
+  try {
+    const tail = await api(`/containers/${id}/console?bytes=65536`);
+    if (tail.text) {
+      for (const line of tail.text.replace(/\n$/, '').split('\n')) term.writeln(line);
+    }
+  } catch (e) {
+    term.writeln(`\x1b[31m[nexus] Could not load console history: ${e.message}\x1b[0m`);
+  }
+  term.writeln('\x1b[34m[nexus]\x1b[0m Following live output. Type commands below.');
+
+  const abort = new AbortController();
+  NX.consoleAbort = abort;
+  const headers = {};
+  if (Auth.token) headers['Authorization'] = 'Bearer ' + Auth.token;
+  let delay = 1000;
+  while (!abort.signal.aborted) {
+    try {
+      const res = await fetch(`${API}/containers/${id}/console/stream`, { headers, signal: abort.signal });
+      if (res.status === 401) { Auth.clear(); showLogin('Your session expired. Please sign in again.'); return; }
+      if (!res.ok) throw new Error(res.statusText);
+      delay = 1000;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let event = 'message';
+          const data = [];
+          for (const l of chunk.split('\n')) {
+            if (l.startsWith('event:')) event = l.slice(6).trim();
+            else if (l.startsWith('data:')) data.push(l.slice(5).replace(/^ /, ''));
+          }
+          if (event === 'line') term.writeln(data.join('\n'));
+          else if (event === 'error') term.writeln(`\x1b[31m[nexus] ${data.join(' ')}\x1b[0m`);
+        }
+      }
+    } catch (e) {
+      if (abort.signal.aborted) return;
+    }
+    // The stream ended (the server restarted, the connection dropped);
+    // come back after a pause rather than hammering the node.
+    if (abort.signal.aborted) return;
+    await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 15000);
+  }
+};
+
+// The CPU / memory / disk meters under a server's status bar.
+function renderResourceMeters(c) {
+  const el = document.getElementById('detail-resources');
+  if (!el) return;
+  const u = c.usage;
+  if (!u) { el.innerHTML = ''; return; }
+  const memPct = u.memory_limit_bytes ? Math.min(100, u.memory_bytes / u.memory_limit_bytes * 100) : null;
+  const diskPct = c.disk_limit_bytes ? Math.min(100, c.disk_used_bytes / c.disk_limit_bytes * 100) : null;
+  el.innerHTML = `
+    ${meter('CPU', `${u.cpu_percent.toFixed(1)}%`, Math.min(100, u.cpu_percent), 'of one core')}
+    ${meter('Memory', fmtBytes(u.memory_bytes), memPct, u.memory_limit_bytes ? `of ${fmtBytes(u.memory_limit_bytes)} · ${fmtBytes(u.memory_anon_bytes)} resident` : 'no limit')}
+    ${meter('Disk', fmtBytes(c.disk_used_bytes), diskPct, c.disk_limit_bytes ? `of ${fmtBytes(c.disk_limit_bytes)}` : 'no limit')}
+    ${meter('Disk I/O', `${fmtBytes(u.io_read_bps)}/s ↓ ${fmtBytes(u.io_write_bps)}/s ↑`, null, `${u.pids} processes`)}
+  `;
+}
+
+function meter(label, value, pct, sub) {
+  const cls = pct === null ? '' : pct >= 90 ? ' hot' : pct >= 70 ? ' warn' : '';
+  return `
+    <div class="meter">
+      <div class="meter-head"><span>${label}</span><span class="meter-value">${value}</span></div>
+      ${pct === null ? '' : `<div class="meter-bar"><div class="meter-fill${cls}" style="width:${pct.toFixed(1)}%"></div></div>`}
+      <div class="meter-sub">${sub}</div>
+    </div>`;
 }
 
 NX.sendCommand = async function() {
@@ -1216,36 +1308,86 @@ NX.deployBlueprint = async function(bpId) {
 
 async function renderAnalytics() {
   renderPage('analytics');
+  await refreshAnalytics();
+  NX.refreshTimer = setInterval(refreshAnalytics, 5000);
+}
+
+async function refreshAnalytics() {
   try {
-    const [info, health] = await Promise.all([api('/node/info'), api('/node/health')]);
+    const [stats, health] = await Promise.all([api('/node/stats'), api('/node/health')]);
+    const n = stats.current;
 
     const el = document.getElementById('analytics-stats');
-    if (el) {
+    if (el && n) {
+      const memPct = n.memory_total_bytes ? (n.memory_used_bytes / n.memory_total_bytes * 100).toFixed(1) : 0;
       el.innerHTML = `
-        <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(info.uptime_secs)}</div></div>
-        <div class="stat-card"><div class="stat-label">CPUs</div><div class="stat-value">${info.system.cpu_count}</div></div>
-        <div class="stat-card"><div class="stat-label">Total Memory</div><div class="stat-value">${fmtBytes(info.system.total_memory_bytes)}</div></div>
-        <div class="stat-card"><div class="stat-label">Total Disk</div><div class="stat-value">${fmtBytes(info.system.total_disk_bytes)}</div></div>
+        <div class="stat-card"><div class="stat-label">Node CPU</div><div class="stat-value">${n.cpu_percent.toFixed(1)}%</div><div class="stat-sub">load ${n.load_1.toFixed(2)} / ${n.load_5.toFixed(2)} / ${n.load_15.toFixed(2)}</div></div>
+        <div class="stat-card"><div class="stat-label">Node Memory</div><div class="stat-value">${memPct}%</div><div class="stat-sub">${fmtBytes(n.memory_used_bytes)} / ${fmtBytes(n.memory_total_bytes)}</div></div>
+        <div class="stat-card"><div class="stat-label">Swap</div><div class="stat-value">${n.swap_total_bytes ? fmtBytes(n.swap_used_bytes) : 'none'}</div><div class="stat-sub">${n.swap_total_bytes ? 'of ' + fmtBytes(n.swap_total_bytes) : 'no swap configured'}</div></div>
+        <div class="stat-card"><div class="stat-label">Servers online</div><div class="stat-value text-success">${n.containers_running}</div><div class="stat-sub">sampled every ${stats.interval_secs}s</div></div>
       `;
+    } else if (el) {
+      el.innerHTML = '<div class="stat-card"><div class="stat-label">Node</div><div class="stat-value">—</div><div class="stat-sub">first sample pending</div></div>';
+    }
+
+    const sparks = document.getElementById('analytics-sparks');
+    if (sparks) {
+      const h = stats.history;
+      sparks.innerHTML = `
+        <div><div class="spark-label">CPU %</div>${sparkSvg(h.map(x => x.cpu_percent), 100, 'cpu')}</div>
+        <div><div class="spark-label">Memory used</div>${sparkSvg(h.map(x => x.memory_used_bytes), n ? n.memory_total_bytes : 0, 'mem')}</div>
+      `;
+    }
+
+    const tbody = document.getElementById('analytics-servers');
+    if (tbody) {
+      tbody.innerHTML = stats.servers.length === 0
+        ? '<tr><td colspan="5" class="text-muted">No servers running</td></tr>'
+        : stats.servers.map(sv => `
+          <tr>
+            <td><a href="#/servers/${sv.id}" class="server-name">${esc(sv.name)}</a></td>
+            <td>${sv.cpu_percent.toFixed(1)}%</td>
+            <td>${fmtBytes(sv.memory_bytes)}${sv.memory_limit_bytes ? ` <span class="text-muted">/ ${fmtBytes(sv.memory_limit_bytes)}</span>` : ''}</td>
+            <td class="text-muted">${sv.pids}</td>
+            <td class="text-muted text-sm">${fmtBytes(sv.io_read_bps)}/s ↓ ${fmtBytes(sv.io_write_bps)}/s ↑</td>
+          </tr>`).join('');
     }
 
     const hc = document.getElementById('health-checks');
     if (hc) {
+      const badge = st => st === 'pass' ? '<span class="badge badge-success">Pass</span>'
+        : st === 'warn' ? '<span class="badge badge-warning">Warning</span>'
+        : '<span class="badge badge-danger">Fail</span>';
       hc.innerHTML = `
         <div class="kv-row"><span class="kv-key">Overall</span><span class="kv-value">${statusBadge(health.status)}</span></div>
-        ${health.checks.map(c => `
+        ${health.checks.sort((a, b) => a.name.localeCompare(b.name)).map(c => `
           <div class="kv-row">
             <span class="kv-key">${esc(c.name)}</span>
-            <span class="kv-value">${c.status === 'pass'
-              ? '<span class="badge badge-success">Pass</span>'
-              : '<span class="badge badge-danger">Fail</span>'}
+            <span class="kv-value">${badge(c.status)}
               ${c.message ? `<span class="text-muted text-sm" style="margin-left:0.5rem">${esc(c.message)}</span>` : ''}
             </span>
           </div>
         `).join('')}
       `;
     }
+    const upd = document.getElementById('analytics-updated');
+    if (upd) upd.textContent = 'updated ' + new Date().toLocaleTimeString();
   } catch (e) { toast(e.message, 'error'); }
+}
+
+// A small inline-SVG line chart; `max` fixes the scale (0 = auto).
+function sparkSvg(values, max, cls) {
+  const w = 300, h = 64, pad = 2;
+  if (!values.length) return `<svg class="spark ${cls}" viewBox="0 0 ${w} ${h}"></svg>`;
+  const top = max > 0 ? max : Math.max(1, ...values);
+  const step = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
+  const pts = values.map((v, i) => [pad + i * step, h - pad - Math.min(1, v / top) * (h - pad * 2)]);
+  const line = pts.map(p => p.map(n => n.toFixed(1)).join(',')).join(' ');
+  const area = `${pad},${h - pad} ${line} ${pts[pts.length - 1][0].toFixed(1)},${h - pad}`;
+  return `<svg class="spark ${cls}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polygon class="spark-area" points="${area}"></polygon>
+    <polyline class="spark-line" points="${line}"></polyline>
+  </svg>`;
 }
 
 // ── Settings ──────────────────────────────────────────────────────

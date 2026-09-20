@@ -523,8 +523,8 @@ scrape_configs:
 | `nexus_node_containers_running` | Running containers |
 | `nexus_node_grpc_requests_total` | gRPC request count |
 | `nexus_node_grpc_request_duration_seconds` | Request latency |
-| `nexus_node_container_cpu_usage_seconds` | CPU usage |
-| `nexus_node_container_memory_bytes` | Memory usage |
+| `nexus_node_container_cpu_usage_millicores` | Per-server CPU use (1000 = one core), sampled every 5 s from its cgroup |
+| `nexus_node_container_memory_usage_bytes` | Per-server resident memory, sampled every 5 s from its cgroup |
 
 ## Firewall
 

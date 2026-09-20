@@ -17,11 +17,12 @@ pub struct MockRuntime {
 #[derive(Clone)]
 struct MockContainer {
     id: String,
-    #[allow(dead_code)]
     spec: ContainerSpec,
     pid: Option<u32>,
     status: String,
     exit_code: Option<i32>,
+    /// When the imaginary process started, for its imaginary CPU time.
+    started: Option<std::time::Instant>,
 }
 
 impl Default for MockRuntime {
@@ -123,6 +124,7 @@ impl ContainerRuntime for MockRuntime {
             pid: None,
             status: "created".to_string(),
             exit_code: None,
+            started: None,
         };
 
         let mut containers = self.containers.write().await;
@@ -154,6 +156,7 @@ impl ContainerRuntime for MockRuntime {
             container.pid = Some(pid);
             container.status = "running".to_string();
             container.exit_code = None;
+            container.started = Some(std::time::Instant::now());
         }
 
         Ok(pid)
@@ -299,6 +302,48 @@ impl ContainerRuntime for MockRuntime {
             self.schedule_exit(id, 0);
         }
         Ok(())
+    }
+
+    async fn stats(&self, id: &str) -> Result<ContainerStats> {
+        let containers = self.containers.read().await;
+        let container =
+            containers.get(id).ok_or_else(|| NodeError::ContainerNotFound(id.to_string()))?;
+        if container.status != "running" {
+            return Err(NodeError::ContainerNotRunning(id.to_string()));
+        }
+        // An imaginary server burning a steady quarter of a core with a
+        // fixed footprint: enough for the panel to have something to show.
+        let elapsed = container.started.map(|t| t.elapsed()).unwrap_or_default();
+        Ok(ContainerStats {
+            cpu_usage_usec: elapsed.as_micros() as u64 / 4,
+            memory_bytes: 768 * 1024 * 1024,
+            memory_anon_bytes: 640 * 1024 * 1024,
+            memory_limit_bytes: Some(container.spec.resources.memory_bytes).filter(|m| *m > 0),
+            pids: 12,
+            io_read_bytes: 4096 * elapsed.as_secs(),
+            io_write_bytes: 1024 * elapsed.as_secs(),
+        })
+    }
+
+    async fn console_tail(&self, id: &str, max_bytes: u64) -> Result<String> {
+        let containers = self.containers.read().await;
+        if !containers.contains_key(id) {
+            return Err(NodeError::ContainerNotFound(id.to_string()));
+        }
+        let mut stream = MockConsoleStream::new(id);
+        let mut text = String::new();
+        while let Some(line) = stream.read_line().await? {
+            text.push_str(&line);
+            if !line.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+        if text.len() as u64 > max_bytes {
+            let cut = text.len() - max_bytes as usize;
+            let cut = text[cut..].find('\n').map(|n| cut + n + 1).unwrap_or(cut);
+            text.drain(..cut);
+        }
+        Ok(text)
     }
 
     async fn exec(
