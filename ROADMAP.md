@@ -97,9 +97,9 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Game servers run unprivileged (non-root uid, capability set from blueprint) | Done |
 | Seccomp allowlist, `no_new_privileges`, `read_only_root`, pids limit | Done |
 | Hard CPU quota, memory+swap limit, all `ulimits` | Done |
-| XDP/eBPF firewall UI (SYN flood, UDP amplification, rate limiting) | Planned |
-| Per-server firewall rule configuration | Planned |
-| Cloudflare Spectrum integration | Planned |
+| nftables firewall: SYN flood, UDP flood, blocklist/trusted list, Security page | Done |
+| Per-server firewall rules (blueprint + Firewall tab), live counters | Done |
+| Cloudflare Spectrum integration | Planned (client exists, not wired to provisioning) |
 
 ## User Management
 

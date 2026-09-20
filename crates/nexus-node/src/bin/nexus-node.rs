@@ -192,12 +192,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create metrics instance
     let metrics = Arc::new(nexus_node::Metrics::new()?);
 
-    // Create container manager with metrics
-    let manager = Arc::new(ContainerManager::with_runtime_and_metrics(
-        runtime,
-        PathBuf::from(data_dir.clone()),
-        metrics.clone(),
+    // The firewall goes in before any server is (re)attached: its base
+    // ruleset replaces whatever a previous run left, and servers found
+    // running during restore get their chains back on top of it.
+    let firewall = Arc::new(nexus_node::Firewall::new(
+        nexus_node::FirewallSettings::from_env(),
     ));
+    if let Err(e) = firewall.install().await {
+        error!("Firewall could not be installed: {}", e);
+        return Err(e.into());
+    }
+    info!(
+        "  Firewall: {}",
+        if firewall.is_enabled() {
+            "enabled (nftables)"
+        } else {
+            "disabled"
+        }
+    );
+
+    // Create container manager with metrics
+    let manager = Arc::new(
+        ContainerManager::with_runtime_and_metrics(
+            runtime,
+            PathBuf::from(data_dir.clone()),
+            metrics.clone(),
+        )
+        .with_firewall(firewall.clone()),
+    );
 
     // Restore previously-tracked containers from disk and reconcile them
     // against the runtime, so a node restart does not lose the server list.
@@ -406,6 +428,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sso: Arc::new(nexus_node::web::auth::SsoTokenStore::new()),
             login_throttle: Arc::new(nexus_node::web::auth::LoginThrottle::new()),
             audit: audit_logger.clone(),
+            firewall: firewall.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

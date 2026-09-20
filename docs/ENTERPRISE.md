@@ -4,7 +4,9 @@ Advanced features for production deployments.
 
 ## Cloudflare Spectrum Integration
 
-DDoS protection via Cloudflare Spectrum proxy.
+Upstream L4 mitigation through Cloudflare Spectrum, in front of the node's
+own firewall (below). The client exists in `cloudflare.rs`; it is not yet
+called by provisioning, so Spectrum applications are created by hand.
 
 ### Configuration
 
@@ -23,41 +25,61 @@ export CLOUDFLARE_SPECTRUM_ENABLED=true
 - Automatic failover
 - Real-time analytics
 
-## XDP/eBPF Firewall
+## Firewall and DDoS Protection
 
-Kernel-level packet filtering for high-performance protection.
+Every node runs an nftables firewall (`NEXUS_FIREWALL=auto`, on whenever
+`nft` is installed and the node runs as root; the installer sets both up).
+It protects all game ports at once and gives each server its own rules.
 
-### Firewall Rules
+### Node-wide protection
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `NEXUS_FIREWALL` | `auto` | `auto`, `on` (missing `nft` is a startup error), `off` |
+| `NEXUS_FIREWALL_SYN_PER_SOURCE` | `50` | New TCP connections per second one address may open to game ports |
+| `NEXUS_FIREWALL_SYN_GLOBAL` | `20000` | New TCP connections per second across all game ports |
+| `NEXUS_FIREWALL_UDP_PER_SOURCE` | `2000` | UDP packets per second one address may send to game ports |
+| `NEXUS_FIREWALL_TRUSTED` | empty | Comma-separated CIDRs never filtered (your office, monitoring) |
+| `NEXUS_FIREWALL_SYSCTL` | `on` | Apply SYN cookies, SYN backlog and conntrack sysctls |
+
+The operator's blocklist and trusted list live on the **Security** page and
+under `/api/v1/firewall`. A block can carry a TTL; it lifts on its own.
+
+### Per-server rules
+
+Rules in a blueprint's `security.firewall_rules` apply to that server's
+ports while it runs, and can be edited on the server's **Firewall** tab (or
+`PUT /api/v1/containers/:id/firewall`) by the operator or by the customer
+who owns it. Counters per rule show what each one dropped.
 
 ```yaml
 security:
   firewall_rules:
-    # Rate limit connections
+    # New TCP connections per second (and UDP packets per second)
     - type: connection_rate
       name: rate_limit
       limit: 100/s
       action: drop
 
-    # Limit packet size (anti-amplification)
+    # Drop oversized UDP (anti-amplification)
     - type: packet_size
       name: size_limit
-      max_bytes: 1500
+      max_size: 1500
       action: drop
 
-    # Block specific IPs
-    - type: ip_block
-      name: blocked_ips
-      addresses:
-        - 192.168.1.100
-      action: drop
+    # Always let a network in, ahead of the rate limits
+    - type: allow_cidr
+      name: office
+      cidr: 203.0.113.0/24
+
+    # Ban an address or network from this server only
+    - type: block_cidr
+      name: griefer
+      cidr: 198.51.100.7
 ```
 
-### XDP Programs
-
-- Connection tracking
-- SYN flood protection
-- UDP amplification prevention
-- Per-IP rate limiting
+`action` is `drop` or `reject`; rates accept `100/s`, `100/second`,
+or `6000/m` (converted to a per-second rate).
 
 ## Authentication
 

@@ -40,7 +40,7 @@ If you prefer to install manually, follow the steps below.
 ### Prerequisites
 
 - Rust 1.85+ (latest stable recommended)
-- Linux 5.15+ (for cgroup v2, eBPF)
+- Linux 5.15+ (cgroup v2) and `nftables` for the firewall
 - Containerd 1.7+ (for production)
 - Protobuf compiler (`protoc`)
 

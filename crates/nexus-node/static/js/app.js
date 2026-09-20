@@ -107,7 +107,7 @@ function route() {
     case 'blueprints':  renderBlueprints(); break;
     case 'marketplace': renderMarketplace(); break;
     case 'analytics':   renderAnalytics(); break;
-    case 'security':    renderPage('security'); break;
+    case 'security':    renderSecurity(); break;
     case 'settings':    renderSettings(); break;
     case 'users':       renderPage('users'); break;
     default:            renderDashboard();
@@ -408,6 +408,7 @@ NX.switchTab = function(tab) {
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
   if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
   if (tab === 'install') NX.refreshGameFiles();
+  if (tab === 'firewall') NX.loadServerFirewall();
 };
 
 // ── Install game files ────────────────────────────────────────────
@@ -1803,3 +1804,151 @@ window.addEventListener('hashchange', () => {
   if (!document.body.classList.contains('login-mode')) route();
 });
 document.addEventListener('DOMContentLoaded', boot);
+
+// ── Security page (node firewall) ─────────────────────────────────
+
+function fwCount(n) { return Number(n || 0).toLocaleString(); }
+
+function fwRuleLabel(r) {
+  switch (r.type) {
+    case 'connection_rate': return [`Rate limit`, `${esc(r.limit)} (UDP packets / new TCP connections)`, r.action];
+    case 'packet_size':     return [`Packet size`, `UDP packets over ${r.max_size} bytes`, r.action];
+    case 'block_cidr':      return [`Block`, esc(r.cidr), 'drop'];
+    case 'allow_cidr':      return [`Allow`, esc(r.cidr), 'accept'];
+    default:                return [esc(r.type), '', ''];
+  }
+}
+
+async function renderSecurity() {
+  renderPage('security');
+  let fw;
+  try { fw = await api('/firewall'); }
+  catch (e) { toast('Could not load firewall status: ' + e.message, 'error'); return; }
+
+  const backend = document.getElementById('fw-backend');
+  backend.textContent = fw.enabled ? fw.backend : 'disabled';
+  backend.className = 'badge ' + (fw.enabled ? 'badge-success' : 'badge-warning');
+  document.getElementById('fw-summary').textContent = fw.enabled
+    ? `Every game port is behind per-source SYN and UDP flood meters (${fw.settings.syn_per_source} new connections/s and ${fw.settings.udp_per_source} packets/s per address), a global SYN ceiling of ${fwCount(fw.settings.syn_global)}/s, and each server's own rules.${fw.settings.kernel_tuned ? ' Kernel SYN-cookie and backlog settings are applied.' : ''}`
+    : `The firewall is off: ${esc(fw.disabled_reason || 'unknown reason')}. Install nftables on the node and set NEXUS_FIREWALL=auto.`;
+
+  const total = (tags) => fw.base_rules.filter(r => tags.includes(r.tag)).reduce((a, r) => a + (r.counter.packets || 0), 0);
+  document.getElementById('fw-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">SYN flood drops</div><div class="stat-value">${fwCount(total(['syn-flood', 'syn-flood-source', 'syn-flood-source6']))}</div></div>
+    <div class="stat-card"><div class="stat-label">UDP flood drops</div><div class="stat-value">${fwCount(total(['udp-flood-source', 'udp-flood-source6']))}</div></div>
+    <div class="stat-card"><div class="stat-label">Blocked-address drops</div><div class="stat-value">${fwCount(total(['blocked', 'blocked6']))}</div></div>
+    <div class="stat-card"><div class="stat-label">Servers protected</div><div class="stat-value">${fw.servers.length}</div></div>`;
+
+  document.getElementById('fw-rules').innerHTML = fw.base_rules.map(r => `
+    <tr><td>${esc(r.description)}</td><td>${fwCount(r.counter.packets)}</td><td>${fmtBytes(r.counter.bytes)}</td></tr>`).join('');
+
+  document.getElementById('fw-blocked').innerHTML = fw.blocked.length ? fw.blocked.map(b => `
+    <tr>
+      <td><code>${esc(b.cidr)}</code></td>
+      <td>${b.expires_in_secs == null ? 'never' : fmtDuration(b.expires_in_secs)}</td>
+      <td class="text-muted">${esc(b.reason || '')}</td>
+      <td><button class="btn btn-xs" onclick="NX.fwUnblock('${esc(b.cidr)}')">Unblock</button></td>
+    </tr>`).join('') : '<tr><td colspan="4" class="text-muted">Nothing blocked.</td></tr>';
+
+  document.getElementById('fw-trusted').innerHTML = fw.trusted.length
+    ? fw.trusted.map(t => `<span class="badge badge-info" style="margin:0 0.25rem 0.25rem 0"><code>${esc(t)}</code> <a href="#" onclick="NX.fwUntrust('${esc(t)}');return false" title="Remove">×</a></span>`).join('')
+    : '<span class="text-muted text-sm">None.</span>';
+
+  const names = Object.fromEntries((NX.containers || []).map(c => [c.id, c.name]));
+  document.getElementById('fw-servers').innerHTML = fw.servers.length ? fw.servers.map(sv => `
+    <tr>
+      <td><a href="#/servers/${esc(sv.container_id)}">${esc(names[sv.container_id] || sv.container_id.slice(0, 12))}</a></td>
+      <td class="text-sm">${sv.ports.map(p => `${p.port}/${esc(p.protocol)}`).join(', ')}</td>
+      <td>${sv.rules.length}</td>
+      <td>${fwCount(sv.rules.reduce((a, r) => a + (r.counter.packets || 0), 0))}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="text-muted">No running servers.</td></tr>';
+}
+
+NX.fwBlock = async function() {
+  const cidr = document.getElementById('fw-block-cidr').value.trim();
+  const minutes = parseInt(document.getElementById('fw-block-ttl').value, 10);
+  const reason = document.getElementById('fw-block-reason').value.trim();
+  if (!cidr) return toast('Enter an address or CIDR', 'error');
+  try {
+    await api('/firewall/blocks', { method: 'POST', body: JSON.stringify({ cidr, ttl_secs: minutes > 0 ? minutes * 60 : null, reason: reason || null }) });
+    toast(`Blocked ${cidr}`, 'success'); renderSecurity();
+  } catch (e) { toast(e.message, 'error'); }
+};
+NX.fwUnblock = async function(cidr) {
+  try { await api('/firewall/unblock', { method: 'POST', body: JSON.stringify({ cidr }) }); toast(`Unblocked ${cidr}`, 'success'); renderSecurity(); }
+  catch (e) { toast(e.message, 'error'); }
+};
+NX.fwTrust = async function() {
+  const cidr = document.getElementById('fw-trust-cidr').value.trim();
+  if (!cidr) return;
+  try { await api('/firewall/trusted', { method: 'POST', body: JSON.stringify({ cidr }) }); toast(`Trusting ${cidr}`, 'success'); renderSecurity(); }
+  catch (e) { toast(e.message, 'error'); }
+};
+NX.fwUntrust = async function(cidr) {
+  try { await api('/firewall/untrust', { method: 'POST', body: JSON.stringify({ cidr }) }); renderSecurity(); }
+  catch (e) { toast(e.message, 'error'); }
+};
+
+// ── Server firewall tab ───────────────────────────────────────────
+
+NX.serverFirewallRules = [];
+
+NX.loadServerFirewall = async function() {
+  const id = NX.currentServer;
+  let fw;
+  try { fw = await api(`/containers/${id}/firewall`); }
+  catch (e) { toast(e.message, 'error'); return; }
+  NX.serverFirewallRules = fw.rules;
+  const applied = fw.applied;
+  document.getElementById('sfw-status').textContent = !fw.enabled
+    ? 'The node firewall is off; rules are kept and will apply once it is on.'
+    : applied
+    ? `Applied on ${applied.ports.map(p => `${p.port}/${p.protocol}`).join(', ')}. Counters are since the server last started.`
+    : 'Rules apply when the server starts.';
+  const counters = Object.fromEntries((applied ? applied.rules : []).map(r => [r.tag, r.counter]));
+  document.getElementById('sfw-rules').innerHTML = fw.rules.length ? fw.rules.map((r, i) => {
+    const [kind, detail, action] = fwRuleLabel(r);
+    const tag = applied && applied.rules[i] ? applied.rules[i].tag : null;
+    const c = tag ? counters[tag] : null;
+    return `<tr>
+      <td>${kind}${r.name ? ` <span class="text-muted text-sm">${esc(r.name)}</span>` : ''}</td>
+      <td>${detail}</td>
+      <td>${esc(action)}</td>
+      <td>${c ? fwCount(c.packets) : '—'}</td>
+      <td><button class="btn btn-xs btn-danger" onclick="NX.sfwRemove(${i})">Remove</button></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="text-muted">No rules. The node-wide flood protection still applies.</td></tr>';
+};
+
+NX.sfwTypeChanged = function() {
+  const type = document.getElementById('sfw-type').value;
+  const v = document.getElementById('sfw-value');
+  v.placeholder = { block_cidr: '203.0.113.0/24', allow_cidr: '198.51.100.7', connection_rate: '100/s', packet_size: '1500' }[type] || '';
+};
+
+NX.sfwSave = async function(rules) {
+  try {
+    await api(`/containers/${NX.currentServer}/firewall`, { method: 'PUT', body: JSON.stringify({ rules }) });
+    toast('Firewall rules saved', 'success');
+    NX.loadServerFirewall();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.sfwAdd = function() {
+  const type = document.getElementById('sfw-type').value;
+  const value = document.getElementById('sfw-value').value.trim();
+  const name = document.getElementById('sfw-name').value.trim() || type.replace('_', ' ');
+  if (!value) return toast('Enter a value', 'error');
+  let rule;
+  if (type === 'block_cidr') rule = { type, name, cidr: value };
+  else if (type === 'allow_cidr') rule = { type, name, cidr: value };
+  else if (type === 'connection_rate') rule = { type, name, limit: /\//.test(value) ? value : value + '/s', action: 'drop' };
+  else rule = { type, name, max_size: parseInt(value, 10) || 0, action: 'drop' };
+  NX.sfwSave([...NX.serverFirewallRules, rule]);
+  document.getElementById('sfw-value').value = '';
+  document.getElementById('sfw-name').value = '';
+};
+
+NX.sfwRemove = function(index) {
+  NX.sfwSave(NX.serverFirewallRules.filter((_, i) => i !== index));
+};

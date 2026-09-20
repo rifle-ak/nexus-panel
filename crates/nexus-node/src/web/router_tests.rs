@@ -53,7 +53,10 @@ struct Harness {
 fn harness() -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
-    let manager = Arc::new(crate::container::ContainerManager::new(data_dir.clone()));
+    let firewall = Arc::new(crate::firewall::Firewall::disabled("test"));
+    let manager = Arc::new(
+        crate::container::ContainerManager::new(data_dir.clone()).with_firewall(firewall.clone()),
+    );
     let auth = WebAuthConfig {
         enabled: true,
         password: None,
@@ -92,6 +95,7 @@ fn harness() -> Harness {
         sso: Arc::new(SsoTokenStore::new()),
         login_throttle: Arc::new(super::auth::LoginThrottle::new()),
         audit: None,
+        firewall,
     };
     Harness {
         app: build_router(Arc::new(state)),
@@ -714,4 +718,178 @@ async fn login_is_throttled_after_repeated_failures() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn firewall_status_and_per_server_rules() {
+    let h = harness();
+    // Node-wide status is admin-only and honest about being disabled here.
+    let (status, fw, _) = send(&h.app, admin(Method::GET, "/api/v1/firewall", None)).await;
+    assert_eq!(status, StatusCode::OK, "{}", fw);
+    assert_eq!(fw["enabled"], false);
+    assert!(fw["disabled_reason"].is_string());
+    assert!(fw["base_rules"].as_array().unwrap().len() >= 8);
+
+    // Input is validated even with the firewall off.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/firewall/blocks",
+            Some(serde_json::json!({ "cidr": "not an address" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/firewall/blocks",
+            Some(
+                serde_json::json!({ "cidr": "203.0.113.0/24", "ttl_secs": 600, "reason": "abuse" }),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A server's rules come from its blueprint and are editable.
+    let (_, created, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/servers",
+            Some(create_body("whmcs-fw")),
+        ),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, sfw, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/firewall", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", sfw);
+    assert_eq!(sfw["rules"].as_array().unwrap().len(), 0);
+    assert!(
+        sfw["applied"].is_null(),
+        "stopped server has nothing applied"
+    );
+
+    let (status, sfw, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/firewall", id),
+            Some(serde_json::json!({ "rules": [
+                { "type": "connection_rate", "name": "r", "limit": "100/s", "action": "drop" },
+                { "type": "block_cidr", "name": "b", "cidr": "203.0.113.5" }
+            ] })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", sfw);
+    assert_eq!(sfw["rules"].as_array().unwrap().len(), 2);
+
+    // A bad rule is refused with the reason.
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/firewall", id),
+            Some(serde_json::json!({ "rules": [
+                { "type": "connection_rate", "name": "r", "limit": "fast", "action": "drop" }
+            ] })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+
+    // One-click block appends a rule, once.
+    for _ in 0..2 {
+        let (status, sfw, _) = send(
+            &h.app,
+            admin(
+                Method::POST,
+                &format!("/api/v1/containers/{}/firewall/blocks", id),
+                Some(serde_json::json!({ "cidr": "198.51.100.9" })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", sfw);
+        assert_eq!(sfw["rules"].as_array().unwrap().len(), 3);
+    }
+
+    // Rules persist in the stored blueprint and apply when it starts.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/start", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, sfw, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/firewall", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(sfw["applied"]["rules"].as_array().unwrap().len(), 3);
+    assert_eq!(sfw["applied"]["ports"][0]["port"], 30000);
+
+    // A customer session reaches its own server's firewall, not the node's.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(
+            Method::GET,
+            &format!("/api/v1/containers/{}/firewall", id),
+            &cookie,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        with_cookie(Method::GET, "/api/v1/firewall", &cookie),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

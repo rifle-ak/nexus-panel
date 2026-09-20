@@ -89,6 +89,10 @@ pub struct ContainerManager {
 
     /// The unprivileged user game servers run as and their files belong to.
     game_user: (u32, u32),
+
+    /// The node's firewall, which gets each server's rules when it starts
+    /// and drops them when it stops.
+    firewall: Option<Arc<crate::firewall::Firewall>>,
 }
 
 impl ContainerManager {
@@ -112,7 +116,58 @@ impl ContainerManager {
             crashes: Arc::new(RwLock::new(HashMap::new())),
             disk_over_since: Arc::new(RwLock::new(HashMap::new())),
             game_user: container_user(),
+            firewall: None,
         }
+    }
+
+    /// Attach the node's firewall, so servers get their rules on start.
+    pub fn with_firewall(mut self, firewall: Arc<crate::firewall::Firewall>) -> Self {
+        self.firewall = Some(firewall);
+        self
+    }
+
+    /// Put a running server's firewall rules in place, if there is a firewall.
+    async fn firewall_attach(&self, container_id: &str) {
+        let Some(fw) = &self.firewall else {
+            return;
+        };
+        let Some(config) = self.load_blueprint(container_id).await else {
+            return;
+        };
+        crate::firewall::attach_best_effort(fw, container_id, &config).await;
+    }
+
+    async fn firewall_detach(&self, container_id: &str) {
+        if let Some(fw) = &self.firewall {
+            crate::firewall::detach_best_effort(fw, container_id).await;
+        }
+    }
+
+    /// Replace a server's firewall rules in its stored blueprint and, if it
+    /// is running, in the kernel.
+    pub async fn set_firewall_rules(
+        &self,
+        container_id: &str,
+        rules: Vec<nexus_config::FirewallRule>,
+    ) -> Result<GameConfig> {
+        for rule in &rules {
+            crate::firewall::validate_rule(rule).map_err(NodeError::InvalidInput)?;
+        }
+        let running = self.get_state(container_id).await?.status.is_running();
+        let mut config = self.load_blueprint(container_id).await.ok_or_else(|| {
+            NodeError::InvalidInput(format!(
+                "server {} has no stored blueprint to hold firewall rules",
+                container_id
+            ))
+        })?;
+        config.security.firewall_rules = rules;
+        self.persist_blueprint(container_id, &config).await;
+        if running {
+            if let Some(fw) = &self.firewall {
+                fw.apply_server(container_id, &config).await?;
+            }
+        }
+        Ok(config)
     }
 
     /// The uid/gid game servers run as and their files belong to.
@@ -317,10 +372,12 @@ impl ContainerManager {
             self.persist_state(&state).await;
 
             // A server still running under the restarted node needs someone
-            // watching for its exit again.
+            // watching for its exit again, and its firewall rules back (the
+            // base ruleset was just replaced).
             if state.status.is_running() {
                 let generation = self.bump_generation(&state.id).await;
                 self.spawn_exit_watcher(state.id.clone(), generation);
+                self.firewall_attach(&state.id).await;
             }
             restored += 1;
         }
@@ -721,6 +778,7 @@ impl ContainerManager {
 
         // Watch for the process exiting on its own.
         self.spawn_exit_watcher(container_id.to_string(), generation);
+        self.firewall_attach(container_id).await;
 
         // Update metrics
         self.metrics.record_container_operation("start", "success", start.elapsed());
@@ -798,6 +856,7 @@ impl ContainerManager {
         state.mark_stopped(exit_code);
         state.status = ContainerStatus::Stopped;
         self.disk_over_since.write().await.remove(container_id);
+        self.firewall_detach(container_id).await;
 
         // Update state (in memory + on disk)
         self.set_state(state).await;
@@ -977,6 +1036,7 @@ impl ContainerManager {
 
         // Reap the exited task so the next start does not collide with it.
         let _ = self.runtime.stop(container_id, 1).await;
+        self.firewall_detach(container_id).await;
 
         if !crashed {
             return;
@@ -1213,6 +1273,7 @@ impl ContainerManager {
         // Remove from state (in memory + on disk)
         self.remove_state(container_id).await;
         self.remove_blueprint(container_id).await;
+        self.firewall_detach(container_id).await;
 
         // Update metrics
         self.metrics.record_container_operation("delete", "success", start.elapsed());
