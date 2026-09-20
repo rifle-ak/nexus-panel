@@ -504,6 +504,7 @@ pub(super) async fn api_provision_delete(
         Err(crate::error::NodeError::ContainerNotFound(_)) => false,
         Err(e) => return Err(err_json(node_err_status(&e), e.to_string())),
     };
+    super::forget_server(&s, &id).await;
     if existed {
         info!("Terminated provisioned server {}", id);
     }

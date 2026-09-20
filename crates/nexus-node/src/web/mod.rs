@@ -9,6 +9,7 @@ pub mod observe;
 pub mod provision;
 #[cfg(test)]
 mod router_tests;
+pub mod storage;
 
 use crate::backup::BackupManager;
 use crate::container::ContainerManager;
@@ -302,6 +303,22 @@ pub fn build_router(shared: S) -> Router {
         )
         .route("/api/v1/containers/:id/files/rename", post(api_rename_file))
         .route("/api/v1/containers/:id/files/mkdir", post(api_create_dir))
+        .route(
+            "/api/v1/containers/:id/files/upload",
+            post(storage::api_upload_file).route_layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/api/v1/containers/:id/files/download",
+            get(storage::api_download_file),
+        )
+        .route(
+            "/api/v1/containers/:id/files/compress",
+            post(storage::api_compress),
+        )
+        .route(
+            "/api/v1/containers/:id/files/decompress",
+            post(storage::api_decompress),
+        )
         // ── Backups ──────────────────────────────────────────────────
         .route(
             "/api/v1/containers/:id/backups",
@@ -310,6 +327,10 @@ pub fn build_router(shared: S) -> Router {
         .route(
             "/api/v1/containers/:id/backups/:backup_id/restore",
             post(api_restore_backup),
+        )
+        .route(
+            "/api/v1/containers/:id/backups/:backup_id/download",
+            get(storage::api_download_backup),
         )
         .route(
             "/api/v1/containers/:id/backups/:backup_id",
@@ -953,12 +974,24 @@ struct BackupJson {
     checksum: String,
     status: String,
     error: Option<String>,
+    /// The paths the backup was limited to; empty means everything.
+    include: Vec<String>,
 }
 
 #[derive(Deserialize)]
 struct CreateBackupReq {
     name: Option<String>,
+    /// Paths to back up instead of the blueprint's.
     paths: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Default)]
+struct RestoreBackupReq {
+    /// Replace the server directory instead of unpacking over it.
+    delete_existing: Option<bool>,
+    /// Stop the server first if it is running; otherwise a running server
+    /// is refused.
+    stop: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -967,11 +1000,17 @@ struct ScheduleJson {
     container_id: String,
     name: String,
     cron_expression: String,
+    /// IANA zone the expression is read in; `null` is UTC.
+    timezone: Option<String>,
     is_active: bool,
     tasks: Vec<ScheduleTaskJson>,
     created_at: i64,
     last_run: Option<i64>,
     next_run: Option<i64>,
+    /// What went wrong on the last run, if anything did.
+    last_error: Option<String>,
+    /// Whether it is executing right now.
+    running: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -985,6 +1024,8 @@ struct ScheduleTaskJson {
 struct CreateScheduleReq {
     name: String,
     cron_expression: String,
+    timezone: Option<String>,
+    is_active: Option<bool>,
     tasks: Vec<ScheduleTaskJson>,
 }
 
@@ -992,6 +1033,7 @@ struct CreateScheduleReq {
 struct UpdateScheduleReq {
     name: Option<String>,
     cron_expression: Option<String>,
+    timezone: Option<String>,
     is_active: Option<bool>,
     tasks: Option<Vec<ScheduleTaskJson>>,
 }
@@ -1384,6 +1426,7 @@ async fn api_delete_container(
         Err(e) => audit(&s, event.failure(e.to_string())).await,
     }
     result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    forget_server(&s, &id).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -1671,25 +1714,72 @@ async fn api_create_backup(
     Path(id): Path<String>,
     Json(body): Json<CreateBackupReq>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let name = body.name.unwrap_or_else(|| "manual-backup".to_string());
-    let include = body.paths.unwrap_or_default();
-    let info = s
-        .backup_manager
-        .create_backup(&id, &name, &include, &[])
-        .await
-        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    let name = body
+        .name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| format!("manual-{}", chrono::Utc::now().format("%Y%m%d-%H%M")));
+    let info = crate::backup::backup_server(
+        &s.manager,
+        &s.backup_manager,
+        &id,
+        &name,
+        body.paths,
+        crate::schedule::PRE_BACKUP_SETTLE,
+    )
+    .await
+    .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     Ok((StatusCode::CREATED, Json(backup_to_json(info))))
 }
 
+/// Restore a backup into a stopped server. Restoring under a running game
+/// would have it overwrite the files as they land, so a running server is
+/// refused unless the request says to stop it first.
 async fn api_restore_backup(
     State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+    peer: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
     Path((id, backup_id)): Path<(String, String)>,
+    body: Option<Json<RestoreBackupReq>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    s.backup_manager
-        .restore_backup(&id, &backup_id, false)
+    let req = body.map(|Json(b)| b).unwrap_or_default();
+    let state = s
+        .manager
+        .get_state(&id)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let mut stopped = false;
+    if state.status.is_running() {
+        if !req.stop.unwrap_or(false) {
+            return Err(err_json(
+                StatusCode::CONFLICT,
+                "the server is running; stop it first, or pass \"stop\": true",
+            ));
+        }
+        s.manager
+            .stop_container(&id, None)
+            .await
+            .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+        stopped = true;
+    }
+    let delete_existing = req.delete_existing.unwrap_or(false);
+    let result = s.backup_manager.restore_backup(&id, &backup_id, delete_existing).await;
+    let ip = client_ip(peer.map(|c| c.0), &headers);
+    let event = container_event(
+        crate::audit::AuditEventType::FileWritten,
+        "backup.restore",
+        &scope,
+        &ip,
+        &id,
+    )
+    .with_context("backup_id", &backup_id)
+    .with_context("delete_existing", delete_existing);
+    match &result {
+        Ok(()) => audit(&s, event.success()).await,
+        Err(e) => audit(&s, event.failure(e.to_string())).await,
+    }
+    result.map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true, "stopped": stopped })))
 }
 
 async fn api_delete_backup(
@@ -1716,7 +1806,12 @@ async fn api_list_schedules(
         .list_schedules(&id)
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok(Json(schedules.into_iter().map(schedule_to_json).collect()))
+    let mut out = Vec::with_capacity(schedules.len());
+    for sch in schedules {
+        let running = s.schedule_manager.is_running(&sch.id).await;
+        out.push(schedule_to_json(sch, running));
+    }
+    Ok(Json(out))
 }
 
 async fn api_create_schedule(
@@ -1724,13 +1819,24 @@ async fn api_create_schedule(
     Path(id): Path<String>,
     Json(body): Json<CreateScheduleReq>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    s.manager
+        .get_state(&id)
+        .await
+        .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
     let tasks: Vec<ScheduleTask> = body.tasks.into_iter().map(task_from_json).collect();
     let info = s
         .schedule_manager
-        .create_schedule(&id, &body.name, &body.cron_expression, true, tasks)
+        .create_schedule(
+            &id,
+            &body.name,
+            &body.cron_expression,
+            body.timezone.as_deref(),
+            body.is_active.unwrap_or(true),
+            tasks,
+        )
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok((StatusCode::CREATED, Json(schedule_to_json(info))))
+    Ok((StatusCode::CREATED, Json(schedule_to_json(info, false))))
 }
 
 async fn api_update_schedule(
@@ -1746,12 +1852,14 @@ async fn api_update_schedule(
             &schedule_id,
             body.name.as_deref(),
             body.cron_expression.as_deref(),
+            body.timezone.as_deref(),
             body.is_active,
             tasks,
         )
         .await
         .map_err(|e| err_json(node_err_status(&e), e.to_string()))?;
-    Ok(Json(schedule_to_json(info)))
+    let running = s.schedule_manager.is_running(&schedule_id).await;
+    Ok(Json(schedule_to_json(info, running)))
 }
 
 async fn api_delete_schedule(
@@ -2372,6 +2480,15 @@ fn container_to_json(c: &crate::container::ContainerState) -> ContainerJson {
     }
 }
 
+/// Drop what the node keeps about a server beyond its container: backups
+/// and schedules. Best-effort, after the container itself is gone.
+pub(super) async fn forget_server(s: &S, id: &str) {
+    if let Err(e) = s.backup_manager.delete_all(id).await {
+        warn!("Backups of deleted server {} were not removed: {}", id, e);
+    }
+    s.schedule_manager.delete_all(id).await;
+}
+
 fn backup_to_json(b: crate::backup::BackupInfo) -> BackupJson {
     BackupJson {
         id: b.id,
@@ -2382,16 +2499,20 @@ fn backup_to_json(b: crate::backup::BackupInfo) -> BackupJson {
         checksum: b.checksum,
         status: format!("{:?}", b.status).to_lowercase(),
         error: b.error,
+        include: b.include,
     }
 }
 
-fn schedule_to_json(s: crate::schedule::ScheduleInfo) -> ScheduleJson {
+fn schedule_to_json(s: crate::schedule::ScheduleInfo, running: bool) -> ScheduleJson {
     ScheduleJson {
         id: s.id,
         container_id: s.container_id,
         name: s.name,
         cron_expression: s.cron_expression,
+        timezone: s.timezone,
         is_active: s.is_active,
+        last_error: s.last_error,
+        running,
         tasks: s
             .tasks
             .into_iter()

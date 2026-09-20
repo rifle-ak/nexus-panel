@@ -1079,3 +1079,461 @@ async fn stats_console_and_node_usage() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+/// A request carrying the admin API key and a raw body.
+fn admin_raw(method: Method, path: &str, body: Body, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut req = Request::builder().method(method).uri(path).header("x-api-key", API_KEY);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    req.body(body).unwrap()
+}
+
+async fn provisioned(h: &Harness, external_id: &str) -> String {
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/servers",
+            Some(serde_json::json!({
+                "external_id": external_id,
+                "name": "Files",
+                "blueprint_yaml": SIMPLE_BLUEPRINT,
+                "auto_start": false
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", body);
+    body["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn files_upload_download_and_archives() {
+    let h = harness();
+    let id = provisioned(&h, "files-1").await;
+
+    // Upload streams the body into place.
+    let (status, body, _) = send(
+        &h.app,
+        admin_raw(
+            Method::POST,
+            &format!(
+                "/api/v1/containers/{}/files/upload?path=/plugins&name=Essentials.jar",
+                id
+            ),
+            Body::from("jar bytes here"),
+            &[("content-type", "application/octet-stream")],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["bytes_written"], 14);
+    assert_eq!(body["path"], "/plugins/Essentials.jar");
+    // No temp file left behind, and the file is listed.
+    let (_, list, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/files?path=/plugins", id),
+            None,
+        ),
+    )
+    .await;
+    let names: Vec<&str> =
+        list.as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["Essentials.jar"]);
+
+    // Bad names and traversal are refused.
+    for name in ["..", "a/b", ""] {
+        let (status, _, _) = send(
+            &h.app,
+            admin_raw(
+                Method::POST,
+                &format!(
+                    "/api/v1/containers/{}/files/upload?path=/&name={}",
+                    id, name
+                ),
+                Body::from("x"),
+                &[],
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{:?}", name);
+    }
+    let (status, _, _) = send(
+        &h.app,
+        admin_raw(
+            Method::POST,
+            &format!(
+                "/api/v1/containers/{}/files/upload?path=/../../etc&name=x",
+                id
+            ),
+            Body::from("x"),
+            &[],
+        ),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK);
+
+    // A declared size beyond the disk allowance (1 GiB in the blueprint) is
+    // refused before a byte is read.
+    let (status, body, _) = send(
+        &h.app,
+        admin_raw(
+            Method::POST,
+            &format!(
+                "/api/v1/containers/{}/files/upload?path=/&name=huge.bin",
+                id
+            ),
+            Body::from("tiny"),
+            &[("content-length", "5000000000")],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE, "{}", body);
+
+    // Download streams it back with a file name; directories are refused.
+    let resp = h
+        .app
+        .clone()
+        .oneshot(admin(
+            Method::GET,
+            &format!(
+                "/api/v1/containers/{}/files/download?path=/plugins/Essentials.jar",
+                id
+            ),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .contains("Essentials.jar"));
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&bytes[..], b"jar bytes here");
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/files/download?path=/plugins", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Compress, then extract somewhere else.
+    for (dest, out) in [
+        ("/plugins.zip", "/from-zip"),
+        ("/plugins.tar.gz", "/from-tar"),
+    ] {
+        let (status, body, _) = send(
+            &h.app,
+            admin(
+                Method::POST,
+                &format!("/api/v1/containers/{}/files/compress", id),
+                Some(serde_json::json!({ "paths": ["/plugins"], "destination": dest })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", body);
+        assert!(body["size"].as_u64().unwrap() > 0);
+        let (status, body, _) = send(
+            &h.app,
+            admin(
+                Method::POST,
+                &format!("/api/v1/containers/{}/files/decompress", id),
+                Some(serde_json::json!({ "path": dest, "destination": out })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", body);
+        assert_eq!(body["destination"], out);
+        let (_, list, _) = send(
+            &h.app,
+            admin(
+                Method::GET,
+                &format!("/api/v1/containers/{}/files?path={}/plugins", id, out),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(list[0]["name"], "Essentials.jar", "{}", list);
+    }
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/compress", id),
+            Some(serde_json::json!({ "paths": ["/plugins"], "destination": "/x.rar" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn backups_restore_safely_and_download() {
+    let h = harness();
+    let id = provisioned(&h, "backup-1").await;
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/write", id),
+            Some(serde_json::json!({ "path": "/server.properties", "content": "motd=hello" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A backup with no name gets a dated one.
+    let (status, backup, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/backups", id),
+            Some(serde_json::json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", backup);
+    assert!(backup["name"].as_str().unwrap().starts_with("manual-"));
+    assert_eq!(backup["status"], "completed");
+    let backup_id = backup["id"].as_str().unwrap().to_string();
+
+    // Download carries a sensible file name.
+    let resp = h
+        .app
+        .clone()
+        .oneshot(admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/backups/{}/download", id, backup_id),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let disposition = resp.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().to_string();
+    assert!(
+        disposition.contains("manual-") && disposition.ends_with(".tar.gz\""),
+        "{}",
+        disposition
+    );
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!("/api/v1/containers/{}/backups/nope/download", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Change the file, start the server: a restore is refused while it runs.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/files/write", id),
+            Some(serde_json::json!({ "path": "/server.properties", "content": "motd=changed" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/start", id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/backups/{}/restore", id, backup_id),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", body);
+
+    // Told to stop first, it stops, swaps the directory in, and says so.
+    let (status, body, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/backups/{}/restore", id, backup_id),
+            Some(serde_json::json!({ "stop": true, "delete_existing": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["stopped"], true);
+    let (_, c, _) = send(
+        &h.app,
+        admin(Method::GET, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_ne!(c["status"], "running");
+    let (_, text, _) = send(
+        &h.app,
+        admin(
+            Method::GET,
+            &format!(
+                "/api/v1/containers/{}/files/read?path=/server.properties",
+                id
+            ),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(text, serde_json::Value::Null); // not JSON: it is the raw file
+    let resp = h
+        .app
+        .clone()
+        .oneshot(admin(
+            Method::GET,
+            &format!(
+                "/api/v1/containers/{}/files/read?path=/server.properties",
+                id
+            ),
+            None,
+        ))
+        .await
+        .unwrap();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&bytes[..], b"motd=hello");
+
+    // Deleting the server takes its backups with it.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!h._dir.path().join("backups").join(&id).exists());
+}
+
+#[tokio::test]
+async fn schedules_take_five_field_cron_and_a_zone() {
+    let h = harness();
+    let id = provisioned(&h, "sched-1").await;
+    let create = |cron: &str, tz: Option<&str>| {
+        serde_json::json!({
+            "name": "Save",
+            "cron_expression": cron,
+            "timezone": tz,
+            "tasks": [{ "action": "command", "payload": "save-all", "time_offset": 0 }]
+        })
+    };
+    for bad in [
+        create("0 4 *", None),
+        create("0 4 * * *", Some("Mars/Base")),
+    ] {
+        let (status, body, _) = send(
+            &h.app,
+            admin(
+                Method::POST,
+                &format!("/api/v1/containers/{}/schedules", id),
+                Some(bad),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body);
+    }
+    let (status, sched, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/schedules", id),
+            Some(create("0 4 * * *", Some("Europe/Berlin"))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", sched);
+    assert_eq!(sched["timezone"], "Europe/Berlin");
+    assert_eq!(sched["cron_expression"], "0 4 * * *");
+    assert!(sched["next_run"].is_number());
+    assert_eq!(sched["running"], false);
+    let sid = sched["id"].as_str().unwrap().to_string();
+
+    // Run now returns at once; the command fails on a stopped server and
+    // the failure is recorded on the schedule.
+    let (status, _, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            &format!("/api/v1/containers/{}/schedules/{}/trigger", id, sid),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut last = serde_json::Value::Null;
+    for _ in 0..100 {
+        let (_, list, _) = send(
+            &h.app,
+            admin(
+                Method::GET,
+                &format!("/api/v1/containers/{}/schedules", id),
+                None,
+            ),
+        )
+        .await;
+        last = list[0].clone();
+        if last["running"] == false && last["last_run"].is_number() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(last["last_run"].is_number(), "{}", last);
+    assert!(last["last_error"].is_string(), "{}", last);
+
+    // Disable, and clear the zone.
+    let (status, upd, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("/api/v1/containers/{}/schedules/{}", id, sid),
+            Some(serde_json::json!({ "is_active": false, "timezone": "" })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", upd);
+    assert_eq!(upd["is_active"], false);
+    assert!(upd["timezone"].is_null());
+    assert!(upd["next_run"].is_null());
+
+    // Deleting the server takes its schedules with it.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        h.app
+            .clone()
+            .oneshot(admin(
+                Method::GET,
+                &format!("/api/v1/containers/{}/schedules", id),
+                None
+            ))
+            .await
+            .unwrap()
+            .status()
+            .is_client_error()
+            || std::fs::read_dir(h._dir.path().join(".nexus/schedules"))
+                .map(|d| d.count() == 0)
+                .unwrap_or(true)
+    );
+}

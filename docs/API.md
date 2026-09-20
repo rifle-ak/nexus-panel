@@ -436,6 +436,40 @@ All file management, backup, and schedule RPCs are part of the unified `NodeServ
 (see the full service definition above). There are no separate `FileService`,
 `BackupService`, or `ScheduleService` services.
 
+The panel's REST equivalents live under `/api/v1/containers/:id/…` and follow
+the server's session scope.
+
+### Files
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `…/files/upload?path=/dir&name=file.jar` | Raw request body streamed to disk (any size; no body limit). Refused with `507` when `Content-Length` exceeds the server's remaining disk allowance, and aborted if the stream does. Lands atomically |
+| `GET` | `…/files/download?path=/file` | Streams the file with `Content-Disposition`; directories are refused (`400`) |
+| `POST` | `…/files/compress` | `{"paths": [...], "destination": "/x.zip"}`; the extension picks `.zip`, `.tar.gz` or `.tgz` |
+| `POST` | `…/files/decompress` | `{"path": "/x.zip", "destination": "/dir", "overwrite": true}`; `destination` defaults to the archive's directory. Entries that would escape the server directory are skipped |
+
+### Backups
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `…/backups` | List, newest first; each has `include` (the paths it was limited to) and `error` when failed |
+| `POST` | `…/backups` | `{"name": "…", "paths": [...]}` both optional. Sends the blueprint's `pre_backup_command` to a running server first, archives the blueprint's `backups.paths` (or `paths`) minus `backups.exclude`, then applies `backups.retention` |
+| `POST` | `…/backups/:backup_id/restore` | `{"delete_existing": false, "stop": false}`. A running server answers `409` unless `stop` is true, in which case it is stopped first (`"stopped": true` in the reply). `delete_existing` replaces the directory atomically; otherwise the archive is unpacked over it |
+| `GET` | `…/backups/:backup_id/download` | Streams the archive as `<name>-<id8>.tar.gz` |
+| `DELETE` | `…/backups/:backup_id` | Delete the archive and its record |
+
+Deleting a server deletes its backups and schedules.
+
+### Schedules
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `…/schedules` | Each has `cron_expression`, `timezone` (`null` is UTC), `is_active`, `running`, `last_run`, `last_error`, `next_run`, `tasks` |
+| `POST` | `…/schedules` | `{"name", "cron_expression": "0 4 * * *", "timezone": "Europe/Berlin", "is_active": true, "tasks": [{"action": "command"|"power"|"backup", "payload", "time_offset"}]}`. Five-field cron; six and seven fields accepted. Unknown zones and bad expressions answer `400` |
+| `PUT` | `…/schedules/:schedule_id` | Any of `name`, `cron_expression`, `timezone` (`""` clears to UTC), `is_active`, `tasks` |
+| `POST` | `…/schedules/:schedule_id/trigger` | Run now, on its own task; returns at once. `400` if it is already running |
+| `DELETE` | `…/schedules/:schedule_id` | |
+
 ## Performance
 
 - Request latency: <10ms (p99)
