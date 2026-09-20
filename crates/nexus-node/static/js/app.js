@@ -22,6 +22,10 @@ const Auth = {
 
 const NX = window.NX = {
   containers: [],
+  // 'admin', or 'servers' for a customer who arrived through their billing
+  // portal and may only see the servers they pay for.
+  scope: 'admin',
+  serverIds: [],
   currentServer: null,
   currentPath: '/',
   term: null,
@@ -77,7 +81,14 @@ async function api(path, opts = {}) {
 function route() {
   const hash = location.hash || '#/';
   const parts = hash.slice(2).split('/');
-  const page = parts[0] || 'dashboard';
+  let page = parts[0] || 'dashboard';
+
+  // A customer's session has no node-level pages; anything but their
+  // servers routes home rather than to a page full of 403s.
+  if (NX.scope !== 'admin' && !['', 'dashboard', 'servers', 'marketplace'].includes(page)) {
+    location.hash = '#/';
+    return;
+  }
 
   // Highlight active nav item
   document.querySelectorAll('.nav-item').forEach(el => {
@@ -117,6 +128,23 @@ async function renderDashboard() {
   renderPage('dashboard');
 
   try {
+    // A customer's session cannot read node stats; their dashboard is just
+    // their servers.
+    if (NX.scope !== 'admin') {
+      const containers = await api('/containers');
+      NX.containers = containers;
+      document.getElementById('stats-grid').innerHTML = '';
+      renderServerTable(containers);
+      NX.refreshTimer = setInterval(async () => {
+        try {
+          const c = await api('/containers');
+          NX.containers = c;
+          renderServerTable(c);
+        } catch (_) {}
+      }, 5000);
+      return;
+    }
+
     const [info, containers] = await Promise.all([
       api('/node/info'),
       api('/containers'),
@@ -287,19 +315,24 @@ async function renderServerDetail(id) {
     // start, so it is offered the install instead of a button that fails.
     const needsInstall = c.install_state === 'pending' || c.install_state === 'failed';
     const installing = c.install_state === 'running';
+    // A customer's server exists because their billing system created it;
+    // only that system's termination removes it, so they get no Delete.
+    const del = NX.scope === 'admin'
+      ? `<button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+      : '';
     document.getElementById('detail-actions').innerHTML = `
       ${c.status === 'running'
         ? `<button class="btn btn-sm btn-danger" onclick="NX.stopServer('${id}')">Stop</button>
            <button class="btn btn-sm" onclick="NX.restartServer('${id}')">Restart</button>
-           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+           ${del}`
         : installing
         ? `<button class="btn btn-sm" onclick="NX.switchTab('install')">Installing…</button>
-           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+           ${del}`
         : needsInstall
         ? `<button class="btn btn-sm btn-primary" onclick="NX.switchTab('install')">Install game files</button>
-           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+           ${del}`
         : `<button class="btn btn-sm btn-success" onclick="NX.startServer('${id}')">Start</button>
-           <button class="btn btn-sm btn-danger" onclick="NX.deleteServer('${id}')">Delete</button>`
+           ${del}`
       }
     `;
 
@@ -1676,6 +1709,7 @@ async function submitLogin(e) {
 }
 
 async function logout() {
+  const wasCustomer = NX.scope !== 'admin';
   try {
     await fetch(API + '/auth/logout', {
       method: 'POST',
@@ -1683,9 +1717,24 @@ async function logout() {
     });
   } catch (_) { /* best effort */ }
   Auth.clear();
-  showLogin('You have been signed out.');
+  applyScope('admin', []);
+  showLogin(wasCustomer
+    ? 'You have been signed out. Open the panel from your billing portal to sign in again.'
+    : 'You have been signed out.');
 }
 NX.logout = logout;
+
+// Shape the UI to what this session may do. A customer sees their servers
+/// and nothing node-level; the node-level pages would only 403.
+function applyScope(scope, serverIds) {
+  NX.scope = scope;
+  NX.serverIds = serverIds || [];
+  document.body.classList.toggle('scope-servers', scope !== 'admin');
+  if (scope !== 'admin') {
+    document.getElementById('sidebar-node-id').textContent = 'My servers';
+    document.getElementById('sidebar-version').textContent = '';
+  }
+}
 
 async function boot() {
   // Ask the node whether authentication is required.
@@ -1697,19 +1746,19 @@ async function boot() {
     authRequired = false;
   }
 
-  if (authRequired && !Auth.token) {
-    showLogin();
-    return;
-  }
-
-  if (authRequired && Auth.token) {
-    // Validate the stored token with a cheap protected call.
+  if (authRequired) {
+    // Whoever we are — a stored admin token, or the cookie a billing-portal
+    // sign-in set — the node says so. A 401 here shows the login screen.
+    let me;
     try {
-      await api('/node/info');
+      me = await api('/auth/me');
     } catch (_) {
-      // api() already surfaced the login screen on 401.
+      if (!document.body.classList.contains('login-mode')) showLogin();
       return;
     }
+    applyScope(me.scope, me.server_ids);
+  } else {
+    applyScope('admin', []);
   }
 
   hideLogin();

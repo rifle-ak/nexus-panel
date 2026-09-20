@@ -4,6 +4,9 @@
 //! All static assets are compiled into the binary via include_str!().
 
 pub mod auth;
+pub mod provision;
+#[cfg(test)]
+mod router_tests;
 
 use crate::backup::BackupManager;
 use crate::container::ContainerManager;
@@ -14,11 +17,11 @@ use crate::metrics::Metrics;
 use crate::schedule::{ScheduleManager, ScheduleTask, ScheduleTaskType};
 use axum::{
     extract::{Path, Query, Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post, put},
-    Json, Router,
+    Extension, Json, Router,
 };
 use nexus_marketplace::{MarketplaceManager, SearchQuery, SortOrder};
 use serde::{Deserialize, Serialize};
@@ -90,6 +93,11 @@ pub struct AppState {
     /// Shared outbound HTTP client, so an update check does not build a new
     /// TLS stack per request.
     pub http: reqwest::Client,
+    /// Servers created for a billing system, keyed by its service ids.
+    pub provision: Arc<crate::provision::ProvisionStore>,
+    pub provision_settings: crate::provision::ProvisionSettings,
+    /// One-time sign-in tokens minted for customers.
+    pub sso: Arc<auth::SsoTokenStore>,
 }
 
 type S = Arc<AppState>;
@@ -117,10 +125,26 @@ pub async fn start_web_server(
         );
     }
 
+    let app = build_router(shared);
+
+    let addr: std::net::SocketAddr = bind_addr.parse()?;
+    let listener = TcpListener::bind(addr).await?;
+
+    info!("Web panel listening on http://{}", addr);
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// The panel's routes. Separate from [`start_web_server`] so tests can drive
+/// the router without binding a port.
+pub fn build_router(shared: S) -> Router {
     // Protected API routes — everything that can read or mutate node state.
     // The auth middleware runs for every route registered before `route_layer`.
     let protected = Router::new()
         // ── Node API ─────────────────────────────────────────────────
+        .route("/api/v1/auth/me", get(api_auth_me))
         .route("/api/v1/node/info", get(api_node_info))
         .route("/api/v1/node/health", get(api_node_health))
         .route("/api/v1/node/metrics", get(api_node_metrics))
@@ -211,6 +235,7 @@ pub async fn start_web_server(
             get(api_update_config),
         )
         // ── Blueprints ───────────────────────────────────────────────
+        .route("/api/v1/blueprints", get(api_list_blueprints))
         .route("/api/v1/blueprints/import-egg", post(api_import_egg))
         .route("/api/v1/blueprints/:id", get(api_get_blueprint))
         // ── Marketplace ─────────────────────────────────────────────
@@ -219,27 +244,37 @@ pub async fn start_web_server(
             "/api/v1/marketplace/mods/:provider/:mod_id",
             get(api_marketplace_get_mod),
         )
+        // ── Provisioning (billing systems; admin only) ───────────────
+        .route(
+            "/api/v1/provision/servers",
+            get(provision::api_provision_list).post(provision::api_provision_create),
+        )
+        .route(
+            "/api/v1/provision/servers/:id",
+            get(provision::api_provision_get).delete(provision::api_provision_delete),
+        )
+        .route(
+            "/api/v1/provision/servers/:id/package",
+            post(provision::api_provision_change_package),
+        )
+        .route(
+            "/api/v1/provision/servers/:id/usage",
+            get(provision::api_provision_usage),
+        )
+        .route("/api/v1/provision/sso", post(provision::api_provision_sso))
         .route_layer(middleware::from_fn_with_state(shared.clone(), require_auth));
 
     // Public routes — static assets and the auth endpoints needed to log in.
-    let app = Router::new()
+    Router::new()
         .route("/", get(serve_index))
         .route("/css/style.css", get(serve_css))
         .route("/js/app.js", get(serve_js))
         .route("/api/v1/auth/config", get(api_auth_config))
         .route("/api/v1/auth/login", post(api_login))
         .route("/api/v1/auth/logout", post(api_logout))
+        .route("/sso/:token", get(sso_redeem))
         .merge(protected)
-        .with_state(shared);
-
-    let addr: std::net::SocketAddr = bind_addr.parse()?;
-    let listener = TcpListener::bind(addr).await?;
-
-    info!("Web panel listening on http://{}", addr);
-
-    axum::serve(listener, app).await?;
-
-    Ok(())
+        .with_state(shared)
 }
 
 // ---------------------------------------------------------------------------
@@ -247,9 +282,14 @@ pub async fn start_web_server(
 // ---------------------------------------------------------------------------
 
 /// Middleware that gates protected routes behind a valid session token or key.
-async fn require_auth(State(s): State<S>, req: Request, next: Next) -> Response {
+///
+/// On success the caller's [`auth::SessionScope`] is attached to the request
+/// so handlers that answer differently per scope (the container list, `me`)
+/// can read it.
+async fn require_auth(State(s): State<S>, mut req: Request, next: Next) -> Response {
     // Auth disabled: allow through (intended only for loopback/dev use).
     if !s.auth.enabled {
+        req.extensions_mut().insert(auth::SessionScope::Admin);
         return next.run(req).await;
     }
 
@@ -262,17 +302,39 @@ async fn require_auth(State(s): State<S>, req: Request, next: Next) -> Response 
         .into_response();
     }
 
-    let headers = req.headers();
+    let headers = req.headers().clone();
+    let Some(scope) = resolve_scope(&s, &headers).await else {
+        return err_json(StatusCode::UNAUTHORIZED, "Authentication required").into_response();
+    };
 
-    // Accept a bearer session token, a session cookie, or a raw API key.
+    if !scope_allows(&scope, req.method(), req.uri().path()) {
+        return err_json(
+            StatusCode::FORBIDDEN,
+            "This session is limited to its own servers",
+        )
+        .into_response();
+    }
+
+    req.extensions_mut().insert(scope);
+    next.run(req).await
+}
+
+/// Work out who is calling from a bearer session token, an API key (as a
+/// bearer or `x-api-key`), or the session cookie. A stale bearer token does
+/// not veto a valid cookie: a customer arriving through SSO may still have an
+/// old admin token in the browser's storage.
+async fn resolve_scope(s: &S, headers: &header::HeaderMap) -> Option<auth::SessionScope> {
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(auth::bearer_from_header);
 
     if let Some(token) = bearer {
-        if s.sessions.validate(token).await || s.auth.verify_api_key(token) {
-            return next.run(req).await;
+        if let Some(scope) = s.sessions.scope_of(token).await {
+            return Some(scope);
+        }
+        if s.auth.verify_api_key(token) {
+            return Some(auth::SessionScope::Admin);
         }
     }
 
@@ -281,18 +343,51 @@ async fn require_auth(State(s): State<S>, req: Request, next: Next) -> Response 
         .and_then(|v| v.to_str().ok())
         .and_then(auth::session_from_cookie)
     {
-        if s.sessions.validate(token).await {
-            return next.run(req).await;
+        if let Some(scope) = s.sessions.scope_of(token).await {
+            return Some(scope);
         }
     }
 
     if let Some(key) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
         if s.auth.verify_api_key(key) {
-            return next.run(req).await;
+            return Some(auth::SessionScope::Admin);
         }
     }
 
-    err_json(StatusCode::UNAUTHORIZED, "Authentication required").into_response()
+    None
+}
+
+/// What a session may reach. Admin sessions: everything. Server-scoped
+/// sessions: their own servers, the auth endpoints, the read-only mod
+/// catalogue, and nothing at node level.
+///
+/// Deleting a server is refused even for one the session owns: the server
+/// exists because a billing system created it, and only that system's
+/// termination should remove it.
+fn scope_allows(scope: &auth::SessionScope, method: &Method, path: &str) -> bool {
+    let ids = match scope {
+        auth::SessionScope::Admin => return true,
+        auth::SessionScope::Servers(ids) => ids,
+    };
+
+    if path.starts_with("/api/v1/auth/") {
+        return true;
+    }
+    if path == "/api/v1/containers" {
+        // The list itself is filtered to the session's servers.
+        return method == Method::GET;
+    }
+    if let Some(rest) = path.strip_prefix("/api/v1/containers/") {
+        let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
+        if id.is_empty() || !ids.iter().any(|allowed| allowed == id) {
+            return false;
+        }
+        return !(tail.is_empty() && method == Method::DELETE);
+    }
+    if path.starts_with("/api/v1/marketplace/") {
+        return method == Method::GET;
+    }
+    false
 }
 
 #[derive(Serialize)]
@@ -347,7 +442,8 @@ async fn api_login(
     }))
 }
 
-/// Revoke the caller's session token.
+/// Revoke the caller's session, whether it arrived as a bearer token or as
+/// the cookie an SSO sign-in set. The cookie is cleared either way.
 async fn api_logout(State(s): State<S>, req: Request) -> impl IntoResponse {
     if let Some(token) = req
         .headers()
@@ -357,8 +453,110 @@ async fn api_logout(State(s): State<S>, req: Request) -> impl IntoResponse {
     {
         s.sessions.revoke(token).await;
     }
-    Json(serde_json::json!({ "ok": true }))
+    if let Some(token) = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::session_from_cookie)
+    {
+        s.sessions.revoke(token).await;
+    }
+    (
+        [(
+            header::SET_COOKIE,
+            "nexus_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )],
+        Json(serde_json::json!({ "ok": true })),
+    )
 }
+
+#[derive(Serialize)]
+struct MeResponse {
+    /// `admin` or `servers`.
+    scope: &'static str,
+    /// The servers a scoped session may act on; empty for admin.
+    server_ids: Vec<String>,
+}
+
+/// Who the caller is, so the UI can show a customer only their server.
+async fn api_auth_me(Extension(scope): Extension<auth::SessionScope>) -> impl IntoResponse {
+    let (scope_name, server_ids) = match scope {
+        auth::SessionScope::Admin => ("admin", Vec::new()),
+        auth::SessionScope::Servers(ids) => ("servers", ids),
+    };
+    Json(MeResponse {
+        scope: scope_name,
+        server_ids,
+    })
+}
+
+/// Turn a one-time SSO token into a browser session scoped to its server,
+/// and land the customer on that server's page.
+///
+/// The session is delivered as an `HttpOnly` cookie rather than a bearer
+/// token in the URL: the URL is the one thing here that gets written to
+/// proxy logs and browser history. `Secure` follows the scheme the reverse
+/// proxy reports, since the node itself speaks plain HTTP behind it.
+async fn sso_redeem(State(s): State<S>, Path(token): Path<String>, req: Request) -> Response {
+    // Redeem before the auth check so an expired or reused token is gone
+    // regardless; a token must never survive a failed attempt.
+    let grant = s.sso.redeem(&token).await;
+
+    if !s.auth.enabled {
+        // Nothing to sign in to; the panel is open. Still honour the link.
+        let target = grant
+            .map(|g| format!("/#/servers/{}", g.server_id))
+            .unwrap_or_else(|| "/".to_string());
+        return Redirect::to(&target).into_response();
+    }
+
+    let Some(grant) = grant else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            SSO_EXPIRED_HTML,
+        )
+            .into_response();
+    };
+
+    let scope = auth::SessionScope::Servers(vec![grant.server_id.clone()]);
+    let session = s.sessions.create_scoped(scope, grant.session_ttl).await;
+    let max_age = grant
+        .session_ttl
+        .map(|t| t.as_secs().min(s.sessions.ttl_secs()))
+        .unwrap_or_else(|| s.sessions.ttl_secs());
+
+    let https = req
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("https"))
+        .unwrap_or(false);
+    let cookie = format!(
+        "nexus_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
+        session,
+        max_age,
+        if https { "; Secure" } else { "" }
+    );
+
+    info!(
+        "SSO sign-in for server {} (subject {:?})",
+        grant.server_id, grant.subject
+    );
+
+    (
+        [(header::SET_COOKIE, cookie)],
+        Redirect::to(&format!("/#/servers/{}", grant.server_id)),
+    )
+        .into_response()
+}
+
+const SSO_EXPIRED_HTML: &str = r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign-in link expired</title>
+<style>body{font-family:system-ui,sans-serif;background:#0f1117;color:#e6e6e6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.25rem}p{color:#9aa0a6}</style></head>
+<body><main><h1>This sign-in link has expired</h1>
+<p>Sign-in links work once and only for a minute. Go back to your billing portal and open the panel again.</p></main></body></html>"#;
 
 // ---------------------------------------------------------------------------
 // Static asset handlers
@@ -673,9 +871,16 @@ async fn api_node_metrics(State(s): State<S>) -> impl IntoResponse {
 // Container API handlers
 // ---------------------------------------------------------------------------
 
-async fn api_list_containers(State(s): State<S>) -> impl IntoResponse {
+async fn api_list_containers(
+    State(s): State<S>,
+    Extension(scope): Extension<auth::SessionScope>,
+) -> impl IntoResponse {
     let containers = s.manager.list_containers().await;
-    let out: Vec<ContainerJson> = containers.iter().map(container_to_json).collect();
+    let out: Vec<ContainerJson> = containers
+        .iter()
+        .filter(|c| scope.allows_server(&c.id))
+        .map(container_to_json)
+        .collect();
     Json(out)
 }
 
@@ -1514,6 +1719,34 @@ struct ImportEggResp {
     port_count: usize,
     /// Advisory security findings from scanning the egg (may be empty).
     warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BlueprintSummary {
+    /// The id `GET /api/v1/blueprints/:id` and provisioning take.
+    id: String,
+    name: String,
+    game: String,
+    version: String,
+}
+
+/// The blueprints this node ships, so a billing system can offer them as
+/// products without a copy of the list.
+async fn api_list_blueprints() -> Json<Vec<BlueprintSummary>> {
+    Json(
+        SHIPPED_BLUEPRINTS
+            .iter()
+            .filter_map(|(id, yaml)| {
+                let bp: nexus_config::Blueprint = serde_yaml::from_str(yaml).ok()?;
+                Some(BlueprintSummary {
+                    id: id.to_string(),
+                    name: bp.metadata.name,
+                    game: bp.metadata.game,
+                    version: bp.metadata.version,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// Return the YAML for one of the shipped blueprints, by file stem.

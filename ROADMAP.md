@@ -98,6 +98,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 
 | Feature | Status |
 |---------|--------|
+| Customer sessions scoped to their own server (via billing-portal SSO) | Done (enforced by the node) |
 | Sub-user permissions (per-server) | Planned |
 | API key management UI | Planned |
 | Audit trail viewer in UI | Planned |
@@ -115,7 +116,8 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Configuration hot reload | Backend Ready |
 | Circuit breakers | Backend Ready |
 | Distributed tracing (OpenTelemetry) | Backend Ready |
-| WHMCS billing integration | Planned |
+| WHMCS billing integration (provisioning module: create / suspend / unsuspend / terminate / change package / SSO / usage) | Done (`whmcs/`, see `docs/WHMCS.md`) |
+| Provisioning REST API for billing systems (`/api/v1/provision`, idempotent, port allocation) | Done |
 
 ## Blueprints - Advanced Features
 

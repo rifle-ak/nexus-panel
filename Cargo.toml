@@ -9,7 +9,6 @@ members = [
     "crates/nexus-config",
     "crates/nexus-node",
     "crates/nexus-marketplace",
-    "crates/nexus-whmcs",
 ]
 
 [workspace.dependencies]

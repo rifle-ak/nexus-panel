@@ -848,6 +848,11 @@ textarea.form-input { resize: vertical; font-family: monospace; }
 body.login-mode .sidebar,
 body.login-mode .main { filter: blur(2px); pointer-events: none; }
 
+/* A customer signed in from their billing portal: only their servers. */
+body.scope-servers .nav-item:not([data-page="dashboard"]):not([data-page="servers"]):not([data-page="marketplace"]),
+body.scope-servers .nav-section:has(> .nav-item[data-page="users"]),
+body.scope-servers .admin-only { display: none; }
+
 .login-overlay {
   position: fixed;
   inset: 0;

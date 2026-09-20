@@ -12,7 +12,8 @@ A high-performance game server control panel built in Rust with security and per
 - **Blueprints**: Game server configs with performance tuning and mod support
 - **Mod Marketplace**: Unified search across Umod, Codefling, Lone.Design, and the Steam Workshop
   (the only mod source for DayZ, Arma and friends) — see [Steam Workshop mods](#steam-workshop-mods)
-- **WHMCS Integration**: Billing/provisioning integration (backend implemented; see the roadmap)
+- **WHMCS Integration**: A provisioning module that creates, suspends, upgrades and terminates
+  servers as orders come and go, with one-click customer sign-in — see [WHMCS](#whmcs-billing)
 
 > **Status:** Nexus is under active development. Some features listed below are implemented and
 > wired into the UI; others are backend-only or planned. See **[ROADMAP.md](ROADMAP.md)** for the
@@ -89,6 +90,21 @@ Configuration (all optional):
 | `STEAM_WORKSHOP_DOWNLOADER` | `steamcmd` (default), `depot_downloader`, or `auto` to try SteamCMD then fall back to DepotDownloader. |
 | `STEAM_WORKSHOP_CACHE_DIR` | Where Workshop content is downloaded. Kept between runs so re-downloads are incremental. |
 | `STEAM_WORKSHOP_TIMEOUT_SECS` | Per-download timeout (default 1800). |
+
+## WHMCS billing
+
+Nexus ships a WHMCS provisioning module (`whmcs/modules/servers/nexuspanel`).
+Assign a product to it and WHMCS drives the node: a paid order creates a server
+from the product's blueprint with the product's memory, CPU, disk and variables
+(ports allocated, game files installed, server started); an overdue invoice
+suspends it; an upgrade rebuilds it with the new limits; a cancellation removes
+it. Customers get their server's address and status on the service page and an
+**Open game panel** button that signs them straight in — to a session that can
+reach **only** that server, enforced by the node, not just hidden by the UI.
+
+Setup is in [docs/WHMCS.md](docs/WHMCS.md). The node side is a small REST API
+under `/api/v1/provision` that any billing system can use; see
+[docs/API.md](docs/API.md).
 
 ## Quick Start
 
@@ -291,7 +307,7 @@ Core subsystems are implemented and covered by tests:
 | 3 | gRPC API | Implemented |
 | 4 | Marketplace | Implemented |
 | 5 | File / Backup / Schedule | Implemented |
-| 6 | WHMCS Integration | Backend implemented |
+| 6 | WHMCS Integration | Implemented (provisioning module + node API) |
 
 For a feature-by-feature breakdown (Done / Backend Ready / Planned) see
 [ROADMAP.md](ROADMAP.md); for the path to a production deployment see
@@ -306,6 +322,7 @@ For a feature-by-feature breakdown (Done / Backend Ready / Planned) see
 | [API](docs/API.md) | gRPC API reference |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Technical architecture |
 | [ENTERPRISE](docs/ENTERPRISE.md) | Enterprise features |
+| [WHMCS](docs/WHMCS.md) | Billing integration: the WHMCS module, node setup, products |
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Error handling |
 
 ## Project Structure
@@ -317,8 +334,8 @@ nexus-panel/
 │   ├── nexus-node/       # Node daemon (container runtime, gRPC server)
 │   ├── nexus-config/     # Blueprint format definition
 │   ├── nexus-marketplace/# Mod marketplace integration
-│   ├── nexus-whmcs/      # WHMCS billing integration
 │   └── egg-importer/     # Pterodactyl egg converter
+├── whmcs/                # WHMCS provisioning module (PHP) and its tests
 ├── src/                  # CLI tool
 └── docs/                 # Documentation
 ```

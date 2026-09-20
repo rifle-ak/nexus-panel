@@ -247,6 +247,92 @@ GitHub is not evidence of being up to date.
 report completion, because completing means restarting the node serving the
 request. Poll `GET` for `running`, `succeeded`, `failed`, or `rolled_back`.
 
+## Provisioning Endpoints (REST)
+
+What a billing system uses. All require an admin credential (an API key from
+`AUTH_API_KEYS`, as `X-Api-Key` or a bearer token); a customer's scoped
+session cannot reach them.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/blueprints` | The blueprints this node ships: `[{id, name, game, version}]` |
+| `POST` | `/api/v1/provision/servers` | Create a server for a service. `201` when created, `200` with the existing server when the `external_id` was seen before |
+| `GET` | `/api/v1/provision/servers` | List provisioned servers; `?external_id=…` looks one up |
+| `GET` | `/api/v1/provision/servers/:id` | One provisioned server with its live status |
+| `POST` | `/api/v1/provision/servers/:id/package` | Apply new limits/variables and rebuild the container (ports and files kept). Restarts the server if it was running unless `"restart": false` |
+| `DELETE` | `/api/v1/provision/servers/:id` | Terminate: container, files, ports and record. Idempotent: `{"ok": true, "existed": false}` when already gone |
+| `GET` | `/api/v1/provision/servers/:id/usage` | `disk_used_bytes`, `disk_limit_bytes`, `memory_limit_bytes`, `status` |
+| `POST` | `/api/v1/provision/sso` | Mint a one-time sign-in link for a customer |
+
+Create request:
+
+```json
+{
+  "external_id": "whmcs-123",
+  "name": "Ryan's Minecraft server",
+  "blueprint": "minecraft-paper",
+  "memory_mb": 4096,
+  "cpu_millicores": 2000,
+  "disk_mb": 20480,
+  "variables": { "MAX_PLAYERS": "20", "SERVER_NAME": "Acme" },
+  "port": 25565,
+  "auto_start": true,
+  "owner": "client-42 <ryan@example.com>"
+}
+```
+
+`blueprint` names a shipped blueprint; `blueprint_yaml` carries a complete
+custom one instead. `memory_mb`, `cpu_millicores` and `disk_mb` become the
+blueprint's hard limits (a Java blueprint's `MEMORY` heap variable is derived
+from `memory_mb` unless set explicitly). `port` pins the primary port; omitted,
+the node allocates from `PROVISION_PORT_RANGE`. Every port the blueprint
+declares through a `{{VARIABLE}}` template is allocated; a port the blueprint
+pins to a literal number is refused with `409` if another server on the node
+already uses it.
+
+Response (`ProvisionedServer`):
+
+```json
+{
+  "id": "5a6d…", "external_id": "whmcs-123", "name": "…",
+  "blueprint": "minecraft-paper", "game": "minecraft",
+  "resources": { "memory_mb": 4096, "cpu_millicores": 2000, "disk_mb": 20480 },
+  "ports": [ { "name": "game", "port": 20000, "protocol": "tcp", "variable": "SERVER_PORT" },
+             { "name": "rcon", "port": 20001, "protocol": "tcp", "variable": "RCON_PORT" } ],
+  "primary_port": 20000, "ip": "203.0.113.10",
+  "variables": { "MAX_PLAYERS": "20" },
+  "status": "stopped", "install_state": "running", "installing": true,
+  "created_at": 1758326400, "updated_at": 1758326400
+}
+```
+
+`ip` is `NODE_PUBLIC_IP`, or `null` when the operator has not set it.
+
+Errors: `400` bad request (unknown blueprint, invalid variable name, memory
+below 256 MB…), `409` port conflict, `503` no free ports left in the range.
+Creating is serialised on the node, so two concurrent creates for different
+services never receive the same port.
+
+### Single sign-on
+
+`POST /api/v1/provision/sso` with `{"server_id": "…", "subject": "client-42",
+"ttl_secs": 60, "session_ttl_secs": 28800}` returns
+`{"token": "…", "path": "/sso/<token>", "expires_in_secs": 60}`. Send the
+customer's browser to `<panel URL><path>`.
+
+`GET /sso/:token` (public) redeems the token **once**: it sets a `nexus_session`
+cookie (`HttpOnly`, `SameSite=Lax`, `Secure` behind an HTTPS proxy) holding a
+session scoped to that server and redirects to `/#/servers/<id>`. An expired or
+reused token gets `401` and a page telling the customer to open the panel from
+their billing portal again. `ttl_secs` is capped at 300; `session_ttl_secs` at
+the node's `WEB_SESSION_TTL_SECS`.
+
+`GET /api/v1/auth/me` tells a session what it is: `{"scope": "admin"}` or
+`{"scope": "servers", "server_ids": ["…"]}`. A scoped session may use
+`/api/v1/auth/*`, `GET /api/v1/containers` (filtered to its servers),
+everything under `/api/v1/containers/:id/…` for its servers except deleting the
+server, and the read-only marketplace routes; everything else answers `403`.
+
 ## Error Codes
 
 | Code | Status | Description |

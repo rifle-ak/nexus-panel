@@ -222,18 +222,19 @@ crates/
 │       ├── models.rs     # Data structures
 │       └── cache.rs      # Metadata caching
 │
-├── nexus-whmcs/          # WHMCS integration
-│   └── src/
-│       ├── provisioning.rs
-│       ├── billing.rs
-│       ├── hooks.rs
-│       └── sso.rs
-│
 └── egg-importer/         # Pterodactyl converter
     └── src/
         ├── pterodactyl.rs
         └── converter.rs
 ```
+
+The WHMCS integration is not a crate: WHMCS calls a PHP provisioning module,
+which calls the node. The module lives in `whmcs/modules/servers/nexuspanel`
+and the node side is `nexus-node/src/provision.rs` (records, port allocation,
+blueprint overrides) plus the `/api/v1/provision` routes in
+`nexus-node/src/web/provision.rs`. Customer sign-in from WHMCS produces a
+session scoped to one server (`web/auth.rs`, `SessionScope`), which the auth
+middleware enforces on every route.
 
 ## File System Layout
 

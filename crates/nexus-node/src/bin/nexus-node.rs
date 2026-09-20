@@ -357,6 +357,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let web_auth_config = Arc::new(web_auth_config);
 
+    // Provisioning records (servers created for a billing system) and the
+    // settings that decide what those servers are given.
+    let provision_store = Arc::new(nexus_node::provision::ProvisionStore::new(&PathBuf::from(
+        &data_dir,
+    )));
+    let restored_records = provision_store.load().await;
+    if restored_records > 0 {
+        info!(
+            "Restored {} provisioning record(s) after restart",
+            restored_records
+        );
+    }
+    let provision_settings = nexus_node::provision::ProvisionSettings::from_env();
+    info!(
+        "  Provisioning: ports {}-{}, public address {}",
+        provision_settings.port_range.0,
+        provision_settings.port_range.1,
+        provision_settings.public_ip.as_deref().unwrap_or("not set (NODE_PUBLIC_IP)")
+    );
+
     // Spawn web panel server
     let web_server_handle = {
         let web_state = nexus_node::web::AppState {
@@ -376,6 +396,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             updater: nexus_node::selfupdate::SelfUpdater::new(&PathBuf::from(&data_dir)),
             http: reqwest::Client::new(),
             mod_jobs: Arc::new(nexus_node::mods::ModInstallJobStore::new()),
+            provision: provision_store.clone(),
+            provision_settings: provision_settings.clone(),
+            sso: Arc::new(nexus_node::web::auth::SsoTokenStore::new()),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {
