@@ -6,6 +6,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **A real firewall.** The unfinished XDP module is replaced by an nftables
+  firewall (`firewall.rs`) that owns one table, `inet nexus`, and keeps it
+  in step with what runs. Node-wide: a blocklist (timed or permanent) and a
+  trusted list, invalid-state drops, per-source SYN and UDP flood meters
+  and a global SYN ceiling on every game port, plus SYN-cookie and
+  conntrack sysctls. Per server: a chain of the blueprint's
+  `security.firewall_rules` (connection rate, packet size, allow and block
+  CIDRs), attached to its ports through verdict maps when it starts and
+  removed when it stops, with per-rule counters. Every change is one
+  atomic `nft -f` transaction. `NEXUS_FIREWALL=auto|on|off` and
+  `NEXUS_FIREWALL_{SYN_PER_SOURCE,SYN_GLOBAL,UDP_PER_SOURCE,TRUSTED,SYSCTL}`
+  tune it; the installer installs `nftables` and opens the provisioning
+  port range.
+- **Security page and Firewall tab.** Operators see the protections with
+  live counters, the blocklist and trusted list, and each attached server;
+  a server's owner edits its own rules and has a one-click ban. Endpoints:
+  `/api/v1/firewall*` and `/api/v1/containers/:id/firewall*`.
+
+### Removed
+- `xdp_firewall.rs`, which compiled a placeholder and filtered nothing.
+
 ### Security
 - **Archive extraction could write anywhere on the node.** A zip or tar
   entry named `../../etc/cron.d/x` was joined to the extraction directory as

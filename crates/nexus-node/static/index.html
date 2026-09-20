@@ -141,6 +141,7 @@
       <button class="tab" data-tab="schedules" onclick="NX.switchTab('schedules')">Schedules</button>
       <button class="tab" data-tab="install" onclick="NX.switchTab('install')">Install</button>
       <button class="tab" data-tab="update" onclick="NX.switchTab('update')">Update</button>
+      <button class="tab" data-tab="firewall" onclick="NX.switchTab('firewall')">Firewall</button>
       <button class="tab" data-tab="settings" onclick="NX.switchTab('settings')">Settings</button>
     </div>
     <div class="tab-content" id="tab-console">
@@ -267,6 +268,29 @@
       <div id="update-status" class="text-sm" style="margin-top:1rem"></div>
       <pre id="update-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
     </div>
+    <div class="tab-content hidden" id="tab-firewall">
+      <div id="sfw-status" class="text-muted text-sm" style="margin-bottom:0.75rem"></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Rule</th><th>Detail</th><th>Action</th><th>Matched</th><th></th></tr></thead>
+          <tbody id="sfw-rules"></tbody>
+        </table>
+      </div>
+      <div class="card" style="padding:1rem;margin-top:1rem">
+        <h4 style="margin-bottom:0.5rem">Add a rule</h4>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+          <select id="sfw-type" class="form-input" style="width:auto" onchange="NX.sfwTypeChanged()">
+            <option value="block_cidr">Block address / network</option>
+            <option value="allow_cidr">Always allow address / network</option>
+            <option value="connection_rate">Rate limit (per second)</option>
+            <option value="packet_size">Drop UDP packets larger than (bytes)</option>
+          </select>
+          <input type="text" id="sfw-value" class="form-input" placeholder="203.0.113.0/24" style="flex:1;min-width:10rem">
+          <input type="text" id="sfw-name" class="form-input" placeholder="Name (optional)" style="flex:1;min-width:8rem">
+          <button class="btn btn-primary" onclick="NX.sfwAdd()">Add</button>
+        </div>
+      </div>
+    </div>
     <div class="tab-content hidden" id="tab-settings">
       <div class="card" style="padding:1.5rem">
         <h3 style="margin-bottom:1rem">Server Information</h3>
@@ -353,20 +377,57 @@
   </template>
 
   <template id="tmpl-security">
-    <div class="page-header"><h1>Security</h1></div>
+    <div class="page-header">
+      <h1>Security</h1>
+      <div class="header-actions"><button class="btn btn-sm" onclick="renderSecurity()">Refresh</button></div>
+    </div>
     <div class="card" style="padding:1.5rem">
-      <h3>Firewall & DDoS Protection</h3>
-      <p class="text-muted" style="margin-top:0.5rem">XDP/eBPF firewall with game-specific profiles. Per-server rule configuration is on the roadmap.</p>
-      <div class="feature-grid" style="margin-top:1.5rem">
-        <div class="feature-card"><h4>SYN Flood Protection</h4><span class="badge badge-info">Planned</span></div>
-        <div class="feature-card"><h4>UDP Amplification Guard</h4><span class="badge badge-info">Planned</span></div>
-        <div class="feature-card"><h4>Per-IP Rate Limiting</h4><span class="badge badge-info">Planned</span></div>
-        <div class="feature-card"><h4>Connection Tracking</h4><span class="badge badge-info">Planned</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+        <h3>Firewall &amp; DDoS Protection</h3>
+        <span id="fw-backend" class="badge badge-info">…</span>
+      </div>
+      <p id="fw-summary" class="text-muted" style="margin-top:0.5rem"></p>
+      <div class="stats-grid" id="fw-stats" style="margin-top:1rem"></div>
+      <div class="table-wrap" style="margin-top:1rem">
+        <table class="table">
+          <thead><tr><th>Protection</th><th>Dropped packets</th><th>Dropped bytes</th></tr></thead>
+          <tbody id="fw-rules"></tbody>
+        </table>
       </div>
     </div>
     <div class="card" style="padding:1.5rem;margin-top:1rem">
-      <h3>Authentication</h3>
-      <div id="auth-status" style="margin-top:1rem"></div>
+      <h3>Blocked addresses</h3>
+      <p class="text-muted text-sm" style="margin-top:0.25rem">Dropped before any server sees them. An address or CIDR; leave the duration empty for a permanent block.</p>
+      <div class="form-row" style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+        <input type="text" id="fw-block-cidr" class="form-input" placeholder="203.0.113.0/24" style="flex:2;min-width:12rem">
+        <input type="number" id="fw-block-ttl" class="form-input" placeholder="Minutes (optional)" style="flex:1;min-width:8rem" min="1">
+        <input type="text" id="fw-block-reason" class="form-input" placeholder="Reason (optional)" style="flex:2;min-width:10rem">
+        <button class="btn btn-danger" onclick="NX.fwBlock()">Block</button>
+      </div>
+      <div class="table-wrap" style="margin-top:1rem">
+        <table class="table">
+          <thead><tr><th>Address</th><th>Expires</th><th>Reason</th><th></th></tr></thead>
+          <tbody id="fw-blocked"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Trusted addresses</h3>
+      <p class="text-muted text-sm" style="margin-top:0.25rem">Never filtered: your own address, a monitoring host.</p>
+      <div class="form-row" style="display:flex;gap:0.5rem;margin-top:0.75rem">
+        <input type="text" id="fw-trust-cidr" class="form-input" placeholder="198.51.100.7" style="flex:1">
+        <button class="btn" onclick="NX.fwTrust()">Trust</button>
+      </div>
+      <div id="fw-trusted" style="margin-top:0.75rem"></div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Servers</h3>
+      <div class="table-wrap" style="margin-top:0.75rem">
+        <table class="table">
+          <thead><tr><th>Server</th><th>Ports</th><th>Rules</th><th>Dropped</th></tr></thead>
+          <tbody id="fw-servers"></tbody>
+        </table>
+      </div>
     </div>
   </template>
 

@@ -4,6 +4,7 @@
 //! All static assets are compiled into the binary via include_str!().
 
 pub mod auth;
+pub mod firewall;
 pub mod provision;
 #[cfg(test)]
 mod router_tests;
@@ -103,6 +104,9 @@ pub struct AppState {
     /// Where security-relevant actions are recorded, when audit logging is
     /// enabled (`AUDIT_ENABLED`).
     pub audit: Option<Arc<crate::audit::AuditLogger>>,
+    /// The node's firewall (may be disabled, in which case it answers
+    /// honestly and does nothing).
+    pub firewall: Arc<crate::firewall::Firewall>,
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +359,32 @@ pub fn build_router(shared: S) -> Router {
             get(provision::api_provision_usage),
         )
         .route("/api/v1/provision/sso", post(provision::api_provision_sso))
+        // ── Firewall ─────────────────────────────────────────────────
+        .route("/api/v1/firewall", get(firewall::api_firewall_status))
+        .route(
+            "/api/v1/firewall/blocks",
+            post(firewall::api_firewall_block),
+        )
+        .route(
+            "/api/v1/firewall/unblock",
+            post(firewall::api_firewall_unblock),
+        )
+        .route(
+            "/api/v1/firewall/trusted",
+            post(firewall::api_firewall_trust),
+        )
+        .route(
+            "/api/v1/firewall/untrust",
+            post(firewall::api_firewall_untrust),
+        )
+        .route(
+            "/api/v1/containers/:id/firewall",
+            get(firewall::api_server_firewall).put(firewall::api_set_server_firewall),
+        )
+        .route(
+            "/api/v1/containers/:id/firewall/blocks",
+            post(firewall::api_server_firewall_block),
+        )
         .route_layer(middleware::from_fn_with_state(shared.clone(), require_auth));
 
     // Public routes — static assets and the auth endpoints needed to log in.

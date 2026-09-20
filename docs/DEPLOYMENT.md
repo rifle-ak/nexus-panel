@@ -164,6 +164,17 @@ NEXUS_CONTAINER_GID=988
 # Console logs are trimmed past this many bytes, keeping the last 4 MiB.
 # NEXUS_CONSOLE_LOG_MAX_BYTES=33554432
 
+# DDoS protection (nftables). auto: on when nft is installed and the node
+# runs as root; on: a missing nft is a startup error; off.
+NEXUS_FIREWALL=auto
+# Per-source limits on game ports: new TCP connections/s, UDP packets/s.
+# NEXUS_FIREWALL_SYN_PER_SOURCE=50
+# NEXUS_FIREWALL_UDP_PER_SOURCE=2000
+# Global new-connection ceiling across all game ports.
+# NEXUS_FIREWALL_SYN_GLOBAL=20000
+# Addresses never filtered (comma-separated CIDRs): your own, monitoring.
+# NEXUS_FIREWALL_TRUSTED=
+
 # Node identification
 NODE_ID=prod-node-1
 
@@ -517,6 +528,15 @@ scrape_configs:
 
 ## Firewall
 
+The node runs its own nftables table, `inet nexus`, for DDoS protection:
+per-source SYN and UDP flood meters and a global SYN ceiling on every game
+port, an operator blocklist and trusted list, and each running server's
+blueprint rules. The installer puts `nftables` in and opens the provisioning
+port range in ufw. See `docs/ENTERPRISE.md` for the settings and rule types.
+
+The panel's table only ever *drops* traffic; what is allowed in is still
+your host firewall's job:
+
 ```bash
 # Allow gRPC
 sudo ufw allow 8080/tcp
@@ -524,10 +544,13 @@ sudo ufw allow 8080/tcp
 # Allow metrics (internal only)
 sudo ufw allow from 10.0.0.0/8 to any port 9090
 
-# Allow game server ports
+# Allow game server ports (the installer opens PROVISION_PORT_RANGE)
 sudo ufw allow 25565:25665/tcp  # Minecraft
 sudo ufw allow 27015:27115/udp  # Source games
 ```
+
+`nft list table inet nexus` shows what is applied; a server's own view is
+its **Firewall** tab in the panel.
 
 ## Troubleshooting
 

@@ -236,7 +236,8 @@ container manager.
   **258** generated `converted_eggs/*.yaml`. None are covered by `.gitignore`. Remove them and extend
   `.gitignore`.
 - **L-2. Compiler warnings** (unused imports/variables in `web/mod.rs`, `auth.rs`, examples,
-  `xdp_firewall.rs`). Clean up so `-D warnings` can be enforced.
+  the old `xdp_firewall.rs`). **Resolved:** clippy runs with `-D warnings` in CI; the unfinished
+  XDP module was replaced by the nftables firewall (`firewall.rs`).
 - **L-3. Missing project-governance files:** no `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, issue/PR templates, or `CHANGELOG.md`.
 - **L-4. No integration test exercised the real containerd runtime.** *(Correction: the "11 ignored"

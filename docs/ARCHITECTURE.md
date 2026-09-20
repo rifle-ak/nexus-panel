@@ -159,15 +159,29 @@ Default policy: Drop ALL, add only required.
 - `CAP_SETUID/SETGID` - User switching
 - `CAP_NET_BIND_SERVICE` - Bind ports <1024
 
-### XDP Firewall
+### Firewall (nftables)
 
-eBPF-based packet filtering for DDoS protection.
+Game servers share the host's network namespace, so their traffic is
+filtered in the host's packet path. `firewall.rs` owns one nftables table,
+`inet nexus`, and keeps it in step with what is running. Every change is a
+single atomic `nft -f` transaction.
 
-**Rules:**
-- Connection rate limiting
-- Packet size limits
-- Per-port filtering
-- IP blacklisting
+**Node-wide, always on:**
+- Trusted list (never filtered) and blocklist (timed or permanent), as
+  interval sets, so a whole network is one element
+- `ct state invalid` drops; established TCP is accepted before any meter
+- Per-source SYN meter and a global SYN ceiling on every game port
+- Per-source UDP packet meter on every game port
+- Kernel tuning: SYN cookies, deep SYN backlog, larger conntrack table
+
+**Per server, while it runs:** a chain `srv_<id>` holding the blueprint's
+`security.firewall_rules` (connection rate, packet size, allowed and
+blocked CIDRs). Verdict maps keyed by port dispatch to it, so each server's
+rules cost one lookup and its counters are its own. Rules carry a comment
+the status reader keys on, which is how the panel shows what each dropped.
+
+Without `nft` or root the firewall is disabled and says so at startup;
+everything else runs unchanged.
 
 ## Data Flow
 

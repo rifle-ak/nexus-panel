@@ -14,14 +14,14 @@
 //! - **DDoS Protection**: Enterprise-grade protection for game traffic
 //! - **Easy Setup**: One-call game server setup with `setup_game_server()`
 //!
-//! ## XDP/eBPF Firewall
+//! ## Firewall
 //!
-//! Kernel-level packet filtering for maximum performance:
+//! nftables-backed DDoS protection on the host's packet path:
 //!
-//! - **High Performance**: Millions of packets per second filtering
-//! - **Game Profiles**: Pre-configured protections for Minecraft, Rust, ARK, etc.
-//! - **IP Management**: Allowlisting, blocklisting, and rate limiting
-//! - **Zero Copy**: Packets filtered before kernel network stack
+//! - **Node-wide**: blocklist, trusted list, per-source SYN and UDP flood
+//!   meters on every game port, a global SYN ceiling, kernel tuning
+//! - **Per server**: the blueprint's rules (rate, packet size, CIDRs) on
+//!   exactly that server's ports, attached at start and removed at stop
 //!
 //! # Enterprise Features
 //!
@@ -71,12 +71,12 @@ pub mod auth;
 pub mod circuit_breaker;
 pub mod cloudflare;
 pub mod config_reload;
+pub mod firewall;
 pub mod graceful;
 pub mod rate_limit;
 pub mod tls;
 pub mod tracing_middleware;
 pub mod validation;
-pub mod xdp_firewall;
 
 // Core re-exports
 pub use backup::{BackupInfo, BackupManager, BackupStatus};
@@ -105,10 +105,10 @@ pub use circuit_breaker::{
 };
 pub use cloudflare::{CloudflareClient, CloudflareConfig, DnsRecord, SpectrumApp};
 pub use config_reload::{ConfigHolder, ConfigWatcher, EnvConfig, ReloadableConfig};
+pub use firewall::{Firewall, FirewallSettings, FirewallStatus};
 pub use graceful::{Bulkhead, FeatureFlags, GracefulShutdown, LoadShedder, LoadShedderConfig};
 pub use rate_limit::{RateLimitConfig, RateLimiter_};
 pub use tls::{TlsConfig, TlsError};
 pub use tracing_middleware::{RequestContext, TracingConfig};
 pub use validation::{ValidationError, Validator};
 pub use web::start_web_server;
-pub use xdp_firewall::{FirewallConfig, FirewallRule, GameType, XdpFirewall};

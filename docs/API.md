@@ -333,6 +333,29 @@ the node's `WEB_SESSION_TTL_SECS`.
 everything under `/api/v1/containers/:id/…` for its servers except deleting the
 server, and the read-only marketplace routes; everything else answers `403`.
 
+## Firewall Endpoints (REST)
+
+Operator (admin session or API key):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/firewall` | Node-wide status: backend, protections with counters, blocklist, trusted list, attached servers |
+| `POST` | `/api/v1/firewall/blocks` | `{"cidr": "198.51.100.0/24", "ttl_secs": 3600, "reason": "…"}`; omit `ttl_secs` for a permanent block |
+| `POST` | `/api/v1/firewall/unblock` | `{"cidr": "…"}` |
+| `POST` | `/api/v1/firewall/trusted` | `{"cidr": "…"}`: never filtered |
+| `POST` | `/api/v1/firewall/untrust` | `{"cidr": "…"}` |
+
+Per server (operator, or the customer session that owns it):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/containers/:id/firewall` | `{"enabled", "rules", "applied"}`: the blueprint's rules, and what is in the kernel with counters while the server runs |
+| `PUT` | `/api/v1/containers/:id/firewall` | `{"rules": [...]}` replaces the rules (stored in the blueprint; applied at once if running). At most 200 |
+| `POST` | `/api/v1/containers/:id/firewall/blocks` | `{"cidr": "…", "name": "…"}` adds a `block_cidr` rule: the one-click ban |
+
+Invalid CIDRs and rates answer `400`. When the node's firewall is off,
+rules are still stored and `enabled` is `false`.
+
 ## Error Codes
 
 | Code | Status | Description |

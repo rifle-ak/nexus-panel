@@ -433,7 +433,8 @@ merge_config() {
         "PROVISION_PORT_RANGE=20000-29999" \
         "NODE_PUBLIC_IP=" \
         "NEXUS_CONTAINER_UID=${NEXUS_GAME_UID:-988}" \
-        "NEXUS_CONTAINER_GID=${NEXUS_GAME_GID:-988}"
+        "NEXUS_CONTAINER_GID=${NEXUS_GAME_GID:-988}" \
+        "NEXUS_FIREWALL=auto"
     do
         key="${entry%%=*}"
         value="${entry#*=}"
@@ -459,6 +460,9 @@ merge_config() {
                     >> "$config_file" ;;
             NEXUS_CONTAINER_UID)
                 printf '# The unprivileged user game servers run as; their files belong to it.\n' \
+                    >> "$config_file" ;;
+            NEXUS_FIREWALL)
+                printf '# DDoS protection on nftables: auto (on when nft is available), on, or off.\n' \
                     >> "$config_file" ;;
         esac
         printf '%s=%s\n' "$key" "$value" >> "$config_file"
@@ -561,6 +565,14 @@ NEXUS_CONTAINER_GID=${NEXUS_GAME_GID:-988}
 
 # Console logs are trimmed past this size (bytes); the last 4 MiB are kept.
 # NEXUS_CONSOLE_LOG_MAX_BYTES=33554432
+
+# DDoS protection (nftables). auto: on when nft is available.
+NEXUS_FIREWALL=auto
+# Per-source limits on game ports: new TCP connections/s and UDP packets/s.
+# NEXUS_FIREWALL_SYN_PER_SOURCE=50
+# NEXUS_FIREWALL_UDP_PER_SOURCE=2000
+# Addresses never filtered (comma-separated CIDRs): your own, monitoring.
+# NEXUS_FIREWALL_TRUSTED=
 EOF
 
     cat >> "$config_file" <<EOF
@@ -707,12 +719,29 @@ setup_game_user() {
 }
 
 setup_firewall() {
-    # Only configure firewall if ufw is available
+    # The node's own DDoS protection runs on nftables; make sure it is there.
+    if ! command -v nft &> /dev/null; then
+        info "Installing nftables (the node's firewall backend)..."
+        if command -v apt-get &> /dev/null; then
+            apt-get install -y -qq nftables > /dev/null 2>&1 || warn "Could not install nftables; the node's firewall will be disabled"
+        elif command -v dnf &> /dev/null; then
+            dnf install -y -q nftables > /dev/null 2>&1 || warn "Could not install nftables; the node's firewall will be disabled"
+        fi
+    fi
+
+    # Only configure ufw if it is available
     if ! command -v ufw &> /dev/null; then
         return
     fi
 
     info "Configuring firewall rules..."
+
+    # Game servers are reachable on the provisioning range; without this a
+    # default-deny ufw silently blocks every server the billing system makes.
+    local range="${PROVISION_PORT_RANGE:-20000-29999}"
+    local range_ufw="${range/-/:}"
+    ufw allow "$range_ufw/tcp" > /dev/null 2>&1
+    ufw allow "$range_ufw/udp" > /dev/null 2>&1
 
     if [ "$ENABLE_TLS" = "true" ]; then
         ufw allow 80/tcp > /dev/null 2>&1   # ACME challenges
