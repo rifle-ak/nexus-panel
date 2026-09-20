@@ -288,7 +288,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Initialize backup manager
-    let backup_manager = Arc::new(BackupManager::new(&PathBuf::from(data_dir.clone())));
+    let backup_manager = Arc::new(
+        BackupManager::new(&PathBuf::from(data_dir.clone())).with_owner(manager.game_user()),
+    );
     backup_manager.init().await?;
 
     // Initialize schedule manager (persists schedules under DATA_DIR).

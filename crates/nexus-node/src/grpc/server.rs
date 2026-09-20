@@ -1462,6 +1462,7 @@ impl NodeService for NodeServiceImpl {
                 &req.container_id,
                 &req.name,
                 &req.cron_expression,
+                None,
                 req.is_active,
                 tasks,
             )
@@ -1537,6 +1538,7 @@ impl NodeService for NodeServiceImpl {
                 &req.schedule_id,
                 req.name.as_deref(),
                 req.cron_expression.as_deref(),
+                None,
                 req.is_active,
                 tasks,
             )

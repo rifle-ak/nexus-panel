@@ -10,9 +10,9 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Container suspend / unsuspend | Done |
 | Console (xterm.js) — live output stream + history, game-process stdin | Done |
 | **Real shell console (exec)** — run arbitrary commands (e.g. `npm`, shell) in the container, separate from the game-process/RCON console | Done (UI + API; containerd exec pending real-runtime validation) |
-| File manager (browse, edit, create, delete, rename) | Done |
-| Backups (create, restore, delete) | Done |
-| Cron-based scheduling | Done |
+| File manager (browse, edit, create, delete, rename, upload, download, compress, extract) | Done |
+| Backups (blueprint paths + excludes, pre-backup command, retention, atomic restore, download, records survive restarts) | Done |
+| Cron-based scheduling (5-field cron, time zones, concurrent runner, last error) | Done |
 | On-demand game-file update (SteamCMD / DepotDownloader) | Done (UI + API; runs as a background job) |
 | Blueprint persistence per server (survives node restart) | Done |
 | One-click update using the server's own blueprint strategy | Done (no retyping; manual override still available) |

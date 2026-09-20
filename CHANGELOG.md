@@ -7,6 +7,34 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Backups that behave.** Records now live on disk beside their archives
+  (`<id>.json`), so the list survives a restart; archives dropped in by
+  hand are adopted and interrupted ones cleaned up. A backup follows its
+  blueprint: `pre_backup_command` is sent to a running server first,
+  `backups.paths` and `backups.exclude` pick the contents, and
+  `backups.retention` deletes the oldest beyond N. Restore verifies the
+  checksum, unpacks beside the server directory and swaps the two, so a
+  failure leaves the server untouched; files come out owned by the game
+  user; a running server is refused unless the caller asks to stop it.
+  Backups can be downloaded. Deleting a server deletes its backups and
+  schedules.
+- **Schedules in five-field cron, with time zones.** `0 4 * * *` is read as
+  everyone writes it (six and seven fields still work) and in the
+  schedule's IANA zone, so 4 a.m. is the operator's. The runner starts
+  each due schedule on its own task, computes its next run at once, and
+  never stacks a schedule on itself; a task's `time_offset` used to hold
+  every other schedule on the node. The first failing task is recorded as
+  `last_error` and shown; schedules can be paused and resumed.
+- **Files in and out of the panel.** Upload (streamed, atomic, refused
+  when it would exceed the server's disk allowance), download, compress
+  to `.zip`/`.tar.gz`, and extract, all on the Files tab.
+
+### Fixed
+- **Selective backups were empty.** A blueprint listing `/world` produced
+  an archive with nothing in it: the walk filter dropped the root
+  directory because `/` did not match `/world`, and never descended. The
+  filter now keeps the way to each include, and paths that match nothing
+  fail the backup instead of writing an empty archive.
 - **The console shows the server's output.** It never did: the Console tab
   had a terminal and a command box, and nothing came back. It now loads
   the last 64 KiB of the log (`GET /api/v1/containers/:id/console`) and

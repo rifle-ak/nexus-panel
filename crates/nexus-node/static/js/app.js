@@ -907,7 +907,10 @@ async function loadFiles(path) {
         <td class="text-muted text-sm">${new Date(f.modified_at * 1000).toLocaleString()}</td>
         <td>
           <div class="btn-group">
-            ${!f.is_directory ? `<button class="btn btn-xs" onclick="NX.editFile('${esc(clickPath)}')">Edit</button>` : ''}
+            ${!f.is_directory ? `<button class="btn btn-xs" onclick="NX.editFile('${esc(clickPath)}')">Edit</button>
+               <button class="btn btn-xs" onclick="NX.downloadFile('${esc(clickPath)}')">Download</button>` : ''}
+            ${isArchive(f.name) ? `<button class="btn btn-xs" onclick="NX.extractFile('${esc(clickPath)}')">Extract</button>` : ''}
+            <button class="btn btn-xs" onclick="NX.compressPath('${esc(clickPath)}')">Compress</button>
             <button class="btn btn-xs btn-danger" onclick="NX.deleteFile('${esc(clickPath)}', ${f.is_directory})">Delete</button>
           </div>
         </td>
@@ -918,6 +921,97 @@ async function loadFiles(path) {
 }
 // Expose to global for inline onclick
 window.loadFiles = loadFiles;
+
+function isArchive(name) {
+  const n = name.toLowerCase();
+  return n.endsWith('.zip') || n.endsWith('.tar.gz') || n.endsWith('.tgz');
+}
+
+function joinPath(dir, name) {
+  return (dir === '/' ? '/' : dir + '/') + name;
+}
+
+// Fetch with the session and hand the bytes to the browser as a download.
+// A plain link cannot carry the Authorization header.
+async function downloadToBrowser(path, filename) {
+  const headers = {};
+  if (Auth.token) headers['Authorization'] = 'Bearer ' + Auth.token;
+  const res = await fetch(API + path, { headers });
+  if (res.status === 401) { Auth.clear(); showLogin('Your session expired. Please sign in again.'); throw new Error('Authentication required'); }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error || res.statusText);
+  }
+  const cd = res.headers.get('content-disposition') || '';
+  const m = cd.match(/filename="([^"]+)"/);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (m && m[1]) || filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+NX.downloadFile = async function(path) {
+  try {
+    await downloadToBrowser(`/containers/${NX.currentServer}/files/download?path=${encodeURIComponent(path)}`, path.split('/').pop());
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.uploadFiles = async function(files) {
+  const status = document.getElementById('file-upload-status');
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const headers = { 'Content-Type': 'application/octet-stream' };
+  if (Auth.token) headers['Authorization'] = 'Bearer ' + Auth.token;
+  let done = 0;
+  for (const file of list) {
+    if (status) status.textContent = `Uploading ${file.name} (${fmtBytes(file.size)})… ${done}/${list.length} done`;
+    try {
+      const url = `${API}/containers/${NX.currentServer}/files/upload?path=${encodeURIComponent(NX.currentPath)}&name=${encodeURIComponent(file.name)}`;
+      const res = await fetch(url, { method: 'POST', headers, body: file });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(body.error || res.statusText);
+      }
+      done++;
+    } catch (e) {
+      toast(`${file.name}: ${e.message}`, 'error');
+    }
+  }
+  if (status) status.textContent = '';
+  if (done) toast(`Uploaded ${done} file${done === 1 ? '' : 's'}`, 'success');
+  const input = document.getElementById('file-upload-input');
+  if (input) input.value = '';
+  loadFiles(NX.currentPath);
+};
+
+NX.extractFile = async function(path) {
+  if (!confirm(`Extract ${path.split('/').pop()} here? Existing files with the same names are overwritten.`)) return;
+  try {
+    const res = await api(`/containers/${NX.currentServer}/files/decompress`, {
+      method: 'POST', body: JSON.stringify({ path })
+    });
+    toast(`Extracted ${res.extracted} file${res.extracted === 1 ? '' : 's'}`, 'success');
+    loadFiles(NX.currentPath);
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.compressPath = async function(path) {
+  const base = path.split('/').pop() || 'archive';
+  const name = prompt('Archive name (.zip or .tar.gz):', base + '.zip');
+  if (!name) return;
+  try {
+    await api(`/containers/${NX.currentServer}/files/compress`, {
+      method: 'POST', body: JSON.stringify({ paths: [path], destination: joinPath(NX.currentPath, name) })
+    });
+    toast('Archive created', 'success');
+    loadFiles(NX.currentPath);
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 NX.editFile = async function(path) {
   try {
@@ -990,19 +1084,21 @@ async function loadBackups() {
     if (!tbody) return;
 
     if (backups.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:2rem">No backups yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">No backups yet</td></tr>';
       return;
     }
 
     tbody.innerHTML = backups.map(b => `
       <tr>
-        <td>${esc(b.name)}</td>
+        <td>${esc(b.name)}${b.error ? `<div class="text-danger text-xs">${esc(b.error)}</div>` : ''}</td>
+        <td class="text-muted text-sm">${b.include && b.include.length ? esc(b.include.join(', ')) : 'everything'}</td>
         <td class="text-muted">${fmtBytes(b.size)}</td>
         <td class="text-muted text-sm">${new Date(b.created_at * 1000).toLocaleString()}</td>
         <td>${statusBadge(b.status)}</td>
         <td>
           <div class="btn-group">
-            <button class="btn btn-xs btn-success" onclick="NX.restoreBackup('${b.id}')">Restore</button>
+            ${b.status === 'completed' ? `<button class="btn btn-xs btn-success" onclick="NX.restoreBackup('${b.id}')">Restore</button>
+            <button class="btn btn-xs" onclick="NX.downloadBackup('${b.id}', '${esc(b.name)}')">Download</button>` : ''}
             <button class="btn btn-xs btn-danger" onclick="NX.deleteBackup('${b.id}')">Delete</button>
           </div>
         </td>
@@ -1012,22 +1108,42 @@ async function loadBackups() {
 }
 
 NX.createBackup = async function() {
-  const name = prompt('Backup name:', 'manual-backup');
-  if (!name) return;
+  const name = prompt('Backup name (blank for a dated one):', '');
+  if (name === null) return;
+  toast('Backing up…', 'info');
   try {
     await api(`/containers/${NX.currentServer}/backups`, {
-      method: 'POST', body: JSON.stringify({ name })
+      method: 'POST', body: JSON.stringify({ name: name || null })
     });
     toast('Backup created', 'success');
     loadBackups();
   } catch (e) { toast(e.message, 'error'); }
 };
 
-NX.restoreBackup = async function(backupId) {
-  if (!confirm('Restore this backup? Current server files may be overwritten.')) return;
+NX.downloadBackup = async function(backupId, name) {
   try {
-    await api(`/containers/${NX.currentServer}/backups/${backupId}/restore`, { method: 'POST' });
-    toast('Backup restored', 'success');
+    await downloadToBrowser(`/containers/${NX.currentServer}/backups/${backupId}/download`, `${name}.tar.gz`);
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// Restore replaces the server's files, so the server must be stopped;
+// the node refuses otherwise, and the operator is asked whether to stop it.
+NX.restoreBackup = async function(backupId) {
+  const replace = confirm('Replace ALL current files with the backup?\n\nOK: replace everything (files not in the backup are removed).\nCancel: unpack the backup over the current files, keeping the rest.');
+  const attempt = stop => api(`/containers/${NX.currentServer}/backups/${backupId}/restore`, {
+    method: 'POST', body: JSON.stringify({ delete_existing: replace, stop })
+  });
+  try {
+    let res;
+    try {
+      res = await attempt(false);
+    } catch (e) {
+      if (!/running/.test(e.message)) throw e;
+      if (!confirm('The server is running. Stop it and restore?')) return;
+      res = await attempt(true);
+    }
+    toast(res.stopped ? 'Server stopped and backup restored' : 'Backup restored', 'success');
+    NX.renderDetailActions && renderServerDetail(NX.currentServer);
   } catch (e) { toast(e.message, 'error'); }
 };
 
@@ -1051,22 +1167,26 @@ async function loadSchedules() {
     if (!tbody) return;
 
     if (schedules.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">No schedules yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:2rem">No schedules yet</td></tr>';
       return;
     }
 
     tbody.innerHTML = schedules.map(s => `
       <tr>
-        <td>${esc(s.name)}</td>
+        <td>${esc(s.name)}<div class="text-muted text-xs">${s.tasks.map(t => esc(t.action + (t.payload ? ': ' + t.payload : '') + (t.time_offset ? ` (+${t.time_offset}s)` : ''))).join(', ')}</div></td>
         <td class="text-muted text-sm" style="font-family:monospace">${esc(s.cron_expression)}</td>
-        <td>${s.is_active
+        <td class="text-muted text-sm">${esc(s.timezone || 'UTC')}</td>
+        <td>${s.running
+          ? '<span class="badge badge-warning"><span class="badge-dot"></span>Running</span>'
+          : s.is_active
           ? '<span class="badge badge-success"><span class="badge-dot"></span>Active</span>'
-          : '<span class="badge badge-muted"><span class="badge-dot"></span>Inactive</span>'}</td>
-        <td class="text-muted text-sm">${s.last_run ? new Date(s.last_run * 1000).toLocaleString() : '—'}</td>
+          : '<span class="badge badge-muted"><span class="badge-dot"></span>Paused</span>'}</td>
+        <td class="text-muted text-sm">${s.last_run ? new Date(s.last_run * 1000).toLocaleString() : '—'}${s.last_error ? `<div class="text-danger text-xs" title="${esc(s.last_error)}">failed: ${esc(s.last_error.slice(0, 60))}</div>` : ''}</td>
         <td class="text-muted text-sm">${s.next_run ? new Date(s.next_run * 1000).toLocaleString() : '—'}</td>
         <td>
           <div class="btn-group">
-            <button class="btn btn-xs" onclick="NX.triggerSchedule('${s.id}')">Run Now</button>
+            <button class="btn btn-xs" onclick="NX.triggerSchedule('${s.id}')" ${s.running ? 'disabled' : ''}>Run Now</button>
+            <button class="btn btn-xs" onclick="NX.toggleSchedule('${s.id}', ${!s.is_active})">${s.is_active ? 'Pause' : 'Resume'}</button>
             <button class="btn btn-xs btn-danger" onclick="NX.removeSchedule('${s.id}')">Delete</button>
           </div>
         </td>
@@ -1085,7 +1205,12 @@ NX.showCreateSchedule = function() {
     <div class="form-group">
       <label class="form-label">Cron Expression</label>
       <input type="text" class="form-input" id="sched-cron" style="width:100%" placeholder="0 4 * * *">
-      <div class="text-muted text-xs mt-1">minute hour day month weekday</div>
+      <div class="text-muted text-xs mt-1">minute hour day month weekday — e.g. <code>0 4 * * *</code> is 4:00 every day, <code>*/30 * * * *</code> every half hour</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Time zone</label>
+      <input type="text" class="form-input" id="sched-tz" style="width:100%" value="${esc((Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC')}">
+      <div class="text-muted text-xs mt-1">IANA name; the cron times are read in this zone</div>
     </div>
     <div class="form-group">
       <label class="form-label">Action</label>
@@ -1109,13 +1234,14 @@ NX.showCreateSchedule = function() {
 NX.createSchedule = async function() {
   const name = document.getElementById('sched-name').value;
   const cron = document.getElementById('sched-cron').value;
+  const timezone = document.getElementById('sched-tz').value.trim();
   const action = document.getElementById('sched-action').value;
   const payload = document.getElementById('sched-payload').value;
   if (!name || !cron) return toast('Name and cron are required', 'error');
   try {
     await api(`/containers/${NX.currentServer}/schedules`, {
       method: 'POST',
-      body: JSON.stringify({ name, cron_expression: cron, tasks: [{ action, payload, time_offset: 0 }] })
+      body: JSON.stringify({ name, cron_expression: cron, timezone: timezone || null, tasks: [{ action, payload, time_offset: 0 }] })
     });
     toast('Schedule created', 'success');
     NX.closeModal();
@@ -1126,7 +1252,19 @@ NX.createSchedule = async function() {
 NX.triggerSchedule = async function(scheduleId) {
   try {
     await api(`/containers/${NX.currentServer}/schedules/${scheduleId}/trigger`, { method: 'POST' });
-    toast('Schedule triggered', 'success');
+    toast('Schedule started', 'success');
+    setTimeout(loadSchedules, 1500);
+    loadSchedules();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.toggleSchedule = async function(scheduleId, active) {
+  try {
+    await api(`/containers/${NX.currentServer}/schedules/${scheduleId}`, {
+      method: 'PUT', body: JSON.stringify({ is_active: active })
+    });
+    toast(active ? 'Schedule resumed' : 'Schedule paused', 'success');
+    loadSchedules();
   } catch (e) { toast(e.message, 'error'); }
 };
 

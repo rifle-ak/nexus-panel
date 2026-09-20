@@ -112,12 +112,20 @@ Container data backup and restore.
 
 **Implementation:** `crates/nexus-node/src/backup.rs`
 
-**Features:**
-- Compressed tar.gz backups
-- SHA256 verification
-- Include/exclude patterns
-- Background backup creation
-- Integrity-verified restore
+- A backup is a gzip tar of the server directory, or of the blueprint's
+  `backups.paths` minus `backups.exclude`, with a SHA-256 checksum, under
+  `DATA_DIR/backups/<server>/<id>.tar.gz`.
+- Each archive has an `<id>.json` record beside it; the registry is
+  rebuilt from those at start, an archive without a record is adopted
+  (restorable, no checksum to verify), and a record without an archive is
+  dropped.
+- `backup_server` is the one path everything takes: the blueprint's
+  `pre_backup_command` (`save-all`) goes to a running server first, then
+  the archive, then `backups.retention` deletes the oldest beyond N.
+- Restore verifies the checksum, then unpacks beside the server directory
+  and swaps the two, so a failure leaves the server as it was. Files come
+  out owned by the game user. A running server is refused unless the
+  caller asks to stop it.
 
 ### Schedule Manager
 
@@ -125,11 +133,15 @@ Cron-based task automation.
 
 **Implementation:** `crates/nexus-node/src/schedule.rs`
 
-**Task Types:**
-- Console commands
-- Power actions (start, stop, restart)
-- Backup creation
-- Task chaining with offsets
+- Five-field cron (`0 4 * * *`); six and seven fields also accepted. Each
+  schedule may name an IANA time zone; otherwise UTC.
+- The runner ticks every second. A due schedule has its next run computed
+  at once and executes on its own task, so a task's `time_offset` and a
+  slow backup delay that schedule alone. A schedule still running when it
+  is due again is skipped for that run, and "Run now" refuses to stack.
+- Tasks: console command, power action (start/stop/restart), backup
+  (through `backup_server`). The first failure is kept as `last_error`.
+- Persisted as JSON under `DATA_DIR/.nexus/schedules`.
 
 ## Security Model
 

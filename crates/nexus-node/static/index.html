@@ -175,9 +175,12 @@
       <div class="file-toolbar">
         <div class="file-breadcrumb" id="file-breadcrumb"></div>
         <div class="file-actions">
+          <input type="file" id="file-upload-input" multiple hidden onchange="NX.uploadFiles(this.files)">
+          <button class="btn btn-sm btn-primary" onclick="document.getElementById('file-upload-input').click()">Upload</button>
           <button class="btn btn-sm" onclick="NX.createNewFile()">New File</button>
           <button class="btn btn-sm" onclick="NX.createNewFolder()">New Folder</button>
         </div>
+        <div class="text-muted text-xs" id="file-upload-status" style="width:100%"></div>
       </div>
       <div class="table-wrap">
         <table class="table">
@@ -196,7 +199,7 @@
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>Name</th><th>Size</th><th>Date</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Contents</th><th>Size</th><th>Date</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody id="backup-table-body"></tbody>
         </table>
@@ -210,7 +213,7 @@
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>Name</th><th>Cron</th><th>Active</th><th>Last Run</th><th>Next Run</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Cron</th><th>Zone</th><th>State</th><th>Last Run</th><th>Next Run</th><th>Actions</th></tr>
           </thead>
           <tbody id="schedule-table-body"></tbody>
         </table>

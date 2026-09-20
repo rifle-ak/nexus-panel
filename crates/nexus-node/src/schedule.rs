@@ -1,25 +1,39 @@
-//! Schedule management for automated container tasks
+//! Scheduled tasks: console commands, power actions and backups on a cron.
 //!
-//! Provides cron-based scheduling for container operations:
-//! - Console commands
-//! - Power actions (start, stop, restart)
-//! - Backup creation
+//! Expressions are the five-field cron everyone writes (`0 4 * * *`); the
+//! six- and seven-field forms with seconds and years are accepted too.
+//! Each schedule may carry an IANA time zone, so "4 a.m." means the
+//! operator's 4 a.m.; without one it is UTC.
+//!
+//! The runner ticks every second. A schedule that is due is marked running,
+//! has its next run computed at once, and executes on its own task, so a
+//! task's `time_offset` delays that schedule alone and a slow backup never
+//! holds up anything else. A schedule still running when it comes due again
+//! is skipped for that run, not stacked.
 
-use crate::backup::BackupManager;
-use crate::container::ContainerManager;
-use crate::error::{NodeError, Result};
-use cron::Schedule;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::TimeZone;
+use cron::Schedule;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::backup::BackupManager;
+use crate::container::ContainerManager;
+use crate::error::{NodeError, Result};
+
 /// Subdirectory of `DATA_DIR` where schedules are persisted.
 const SCHEDULE_SUBDIR: &str = ".nexus/schedules";
+
+/// How long a scheduled backup gives the game after its pre-backup command
+/// (`save-all`) before archiving.
+pub const PRE_BACKUP_SETTLE: Duration = Duration::from_secs(5);
 
 /// Schedule task type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +77,16 @@ pub struct ScheduleInfo {
     pub container_id: String,
     pub name: String,
     pub cron_expression: String,
+    /// IANA zone the expression is read in; `None` is UTC.
+    #[serde(default)]
+    pub timezone: Option<String>,
     pub is_active: bool,
     pub created_at: i64,
     pub last_run_at: Option<i64>,
     pub next_run_at: Option<i64>,
+    /// What went wrong on the last run, if anything did.
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub tasks: Vec<ScheduleTask>,
 }
 
@@ -103,34 +123,90 @@ pub fn dispatch_callback(
                 },
                 ScheduleTaskType::Backup => {
                     let name = if task.payload.is_empty() {
-                        format!("scheduled-{}", chrono::Utc::now().timestamp())
+                        format!("scheduled-{}", chrono::Utc::now().format("%Y%m%d-%H%M"))
                     } else {
                         task.payload.clone()
                     };
-                    backup_manager.create_backup(&container_id, &name, &[], &[]).await.map(|_| ())
+                    crate::backup::backup_server(
+                        &manager,
+                        &backup_manager,
+                        &container_id,
+                        &name,
+                        None,
+                        PRE_BACKUP_SETTLE,
+                    )
+                    .await
+                    .map(|_| ())
                 }
             }
         })
     })
 }
 
+/// Parse a cron expression in five-, six- or seven-field form.
+pub fn parse_cron(expression: &str) -> Result<Schedule> {
+    let fields = expression.split_whitespace().count();
+    let full = match fields {
+        5 => format!("0 {}", expression.trim()),
+        6 | 7 => expression.trim().to_string(),
+        _ => {
+            return Err(NodeError::InvalidInput(format!(
+                "Invalid cron expression {:?}: expected 5 fields (minute hour day month weekday)",
+                expression
+            )))
+        }
+    };
+    Schedule::from_str(&full)
+        .map_err(|e| NodeError::InvalidInput(format!("Invalid cron expression: {}", e)))
+}
+
+/// Resolve a zone name; `None` and empty mean UTC.
+pub fn parse_timezone(name: Option<&str>) -> Result<chrono_tz::Tz> {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        None => Ok(chrono_tz::UTC),
+        Some(n) => chrono_tz::Tz::from_str(n)
+            .map_err(|_| NodeError::InvalidInput(format!("Unknown time zone {:?}", n))),
+    }
+}
+
+/// The next time an expression fires after `after`, in the zone, as a Unix
+/// timestamp.
+pub fn next_run_after(
+    expression: &str,
+    timezone: Option<&str>,
+    after: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<i64>> {
+    let schedule = parse_cron(expression)?;
+    let tz = parse_timezone(timezone)?;
+    let after_local = tz.from_utc_datetime(&after.naive_utc());
+    Ok(schedule.after(&after_local).next().map(|dt| dt.timestamp()))
+}
+
+fn next_run(expression: &str, timezone: Option<&str>) -> Option<i64> {
+    next_run_after(expression, timezone, chrono::Utc::now()).ok().flatten()
+}
+
 /// Schedule manager
 pub struct ScheduleManager {
-    /// Schedules by container_id -> schedule_id -> ScheduleInfo
+    /// Schedules per container
     schedules: Arc<RwLock<HashMap<String, HashMap<String, ScheduleInfo>>>>,
 
-    /// Shutdown signal
+    /// Ids of schedules executing right now.
+    running: Arc<RwLock<HashSet<String>>>,
+
+    /// Runner shutdown signal
     shutdown: Arc<RwLock<bool>>,
 
-    /// Data directory for persistence (None = in-memory only, e.g. tests).
+    /// Where schedules are persisted (None = in-memory only, for tests).
     data_dir: Option<PathBuf>,
 }
 
 impl ScheduleManager {
-    /// Create a new in-memory schedule manager (no persistence).
+    /// Create a new schedule manager (in-memory only; nothing survives a restart).
     pub fn new() -> Self {
         Self {
             schedules: Arc::new(RwLock::new(HashMap::new())),
+            running: Arc::new(RwLock::new(HashSet::new())),
             shutdown: Arc::new(RwLock::new(false)),
             data_dir: None,
         }
@@ -140,12 +216,11 @@ impl ScheduleManager {
     pub fn with_data_dir(data_dir: PathBuf) -> Self {
         Self {
             schedules: Arc::new(RwLock::new(HashMap::new())),
+            running: Arc::new(RwLock::new(HashSet::new())),
             shutdown: Arc::new(RwLock::new(false)),
             data_dir: Some(data_dir),
         }
     }
-
-    // ── Persistence ──────────────────────────────────────────────────────
 
     fn schedule_dir(&self) -> Option<PathBuf> {
         self.data_dir.as_ref().map(|d| d.join(SCHEDULE_SUBDIR))
@@ -153,22 +228,7 @@ impl ScheduleManager {
 
     /// Write a schedule to disk (best-effort; failures are logged, not fatal).
     async fn persist(&self, schedule: &ScheduleInfo) {
-        let Some(dir) = self.schedule_dir() else {
-            return;
-        };
-        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            warn!("Failed to create schedule dir {:?}: {}", dir, e);
-            return;
-        }
-        match serde_json::to_vec_pretty(schedule) {
-            Ok(bytes) => {
-                let path = dir.join(format!("{}.json", schedule.id));
-                if let Err(e) = tokio::fs::write(&path, bytes).await {
-                    warn!("Failed to persist schedule {}: {}", schedule.id, e);
-                }
-            }
-            Err(e) => warn!("Failed to serialize schedule {}: {}", schedule.id, e),
-        }
+        persist_to(self.schedule_dir(), schedule).await;
     }
 
     /// Remove a schedule's persisted file.
@@ -212,10 +272,7 @@ impl ScheduleManager {
 
             // Recompute the next run from the cron expression.
             schedule.next_run_at = if schedule.is_active {
-                Schedule::from_str(&schedule.cron_expression)
-                    .ok()
-                    .and_then(|s| s.upcoming(chrono::Utc).next())
-                    .map(|dt| dt.timestamp())
+                next_run(&schedule.cron_expression, schedule.timezone.as_deref())
             } else {
                 None
             };
@@ -236,9 +293,7 @@ impl ScheduleManager {
 
     /// Validate a cron expression
     pub fn validate_cron(expression: &str) -> Result<()> {
-        Schedule::from_str(expression)
-            .map_err(|e| NodeError::InvalidInput(format!("Invalid cron expression: {}", e)))?;
-        Ok(())
+        parse_cron(expression).map(|_| ())
     }
 
     /// Create a new schedule
@@ -247,21 +302,19 @@ impl ScheduleManager {
         container_id: &str,
         name: &str,
         cron_expression: &str,
+        timezone: Option<&str>,
         is_active: bool,
         tasks: Vec<ScheduleTask>,
     ) -> Result<ScheduleInfo> {
-        // Validate cron expression
         Self::validate_cron(cron_expression)?;
+        let tz = parse_timezone(timezone)?;
+        let timezone = (tz != chrono_tz::UTC).then(|| tz.name().to_string());
 
         let schedule_id = Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
 
-        // Calculate next run time
-        let next_run = if is_active {
-            Schedule::from_str(cron_expression)
-                .ok()
-                .and_then(|s| s.upcoming(chrono::Utc).next())
-                .map(|dt| dt.timestamp())
+        let next_run_at = if is_active {
+            next_run(cron_expression, timezone.as_deref())
         } else {
             None
         };
@@ -270,11 +323,13 @@ impl ScheduleManager {
             id: schedule_id.clone(),
             container_id: container_id.to_string(),
             name: name.to_string(),
-            cron_expression: cron_expression.to_string(),
+            cron_expression: cron_expression.trim().to_string(),
+            timezone,
             is_active,
             created_at: now.timestamp(),
             last_run_at: None,
-            next_run_at: next_run,
+            next_run_at,
+            last_error: None,
             tasks,
         };
 
@@ -329,20 +384,29 @@ impl ScheduleManager {
             })
     }
 
-    /// Update a schedule
+    /// Update a schedule. `timezone` of `Some("")` or `Some("UTC")` clears
+    /// the zone; `None` leaves it as it is.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_schedule(
         &self,
         container_id: &str,
         schedule_id: &str,
         name: Option<&str>,
         cron_expression: Option<&str>,
+        timezone: Option<&str>,
         is_active: Option<bool>,
         tasks: Option<Vec<ScheduleTask>>,
     ) -> Result<ScheduleInfo> {
-        // Validate cron if provided
         if let Some(expr) = cron_expression {
             Self::validate_cron(expr)?;
         }
+        let new_timezone = match timezone {
+            Some(tz) => {
+                let tz = parse_timezone(Some(tz))?;
+                Some((tz != chrono_tz::UTC).then(|| tz.name().to_string()))
+            }
+            None => None,
+        };
 
         let mut schedules = self.schedules.write().await;
 
@@ -354,12 +418,14 @@ impl ScheduleManager {
             NodeError::InvalidInput(format!("Schedule {} not found", schedule_id))
         })?;
 
-        // Apply updates
         if let Some(n) = name {
             schedule.name = n.to_string();
         }
         if let Some(expr) = cron_expression {
-            schedule.cron_expression = expr.to_string();
+            schedule.cron_expression = expr.trim().to_string();
+        }
+        if let Some(tz) = new_timezone {
+            schedule.timezone = tz;
         }
         if let Some(active) = is_active {
             schedule.is_active = active;
@@ -368,15 +434,11 @@ impl ScheduleManager {
             schedule.tasks = t;
         }
 
-        // Recalculate next run time
-        if schedule.is_active {
-            schedule.next_run_at = Schedule::from_str(&schedule.cron_expression)
-                .ok()
-                .and_then(|s| s.upcoming(chrono::Utc).next())
-                .map(|dt| dt.timestamp());
+        schedule.next_run_at = if schedule.is_active {
+            next_run(&schedule.cron_expression, schedule.timezone.as_deref())
         } else {
-            schedule.next_run_at = None;
-        }
+            None
+        };
 
         let updated = schedule.clone();
         drop(schedules);
@@ -412,7 +474,18 @@ impl ScheduleManager {
         )))
     }
 
-    /// Manually trigger a schedule
+    /// Delete every schedule of a container (it is being removed).
+    pub async fn delete_all(&self, container_id: &str) {
+        let removed = self.schedules.write().await.remove(container_id);
+        if let Some(removed) = removed {
+            for id in removed.keys() {
+                self.remove_persisted(id).await;
+            }
+        }
+    }
+
+    /// Run a schedule now, on its own task. Returns at once; `Err` when the
+    /// schedule does not exist or is already running.
     pub async fn trigger_schedule(
         &self,
         container_id: &str,
@@ -420,125 +493,157 @@ impl ScheduleManager {
         callback: &ScheduleCallback,
     ) -> Result<()> {
         let schedule = self.get_schedule(container_id, schedule_id).await?;
-
+        if !self.running.write().await.insert(schedule.id.clone()) {
+            return Err(NodeError::InvalidInput(format!(
+                "Schedule {} is already running",
+                schedule_id
+            )));
+        }
         info!(
             "Manually triggering schedule {} for container {}",
             schedule_id, container_id
         );
-
-        // Execute tasks
-        for task in &schedule.tasks {
-            if let Err(e) = callback(container_id, task).await {
-                warn!("Task execution failed for schedule {}: {}", schedule_id, e);
-            }
-        }
-
-        // Update last_run_at
-        let updated = {
-            let mut schedules = self.schedules.write().await;
-            schedules
-                .get_mut(container_id)
-                .and_then(|cs| cs.get_mut(schedule_id))
-                .map(|schedule| {
-                    schedule.last_run_at = Some(chrono::Utc::now().timestamp());
-                    schedule.clone()
-                })
-        };
-        if let Some(updated) = updated {
-            self.persist(&updated).await;
-        }
-
+        self.spawn_run(schedule, callback.clone());
         Ok(())
+    }
+
+    /// Whether a schedule is executing right now.
+    pub async fn is_running(&self, schedule_id: &str) -> bool {
+        self.running.read().await.contains(schedule_id)
+    }
+
+    /// Execute a schedule's tasks on a new task; the caller has already put
+    /// it in `running`.
+    fn spawn_run(&self, schedule: ScheduleInfo, callback: ScheduleCallback) {
+        let schedules = Arc::clone(&self.schedules);
+        let running = Arc::clone(&self.running);
+        let dir = self.schedule_dir();
+        tokio::spawn(async move {
+            let started = chrono::Utc::now().timestamp();
+            let error = run_tasks(&schedule, &callback).await;
+            let updated = {
+                let mut all = schedules.write().await;
+                all.get_mut(&schedule.container_id).and_then(|cs| cs.get_mut(&schedule.id)).map(
+                    |s| {
+                        s.last_run_at = Some(started);
+                        s.last_error = error;
+                        s.clone()
+                    },
+                )
+            };
+            if let Some(updated) = updated {
+                persist_to(dir, &updated).await;
+            }
+            running.write().await.remove(&schedule.id);
+        });
     }
 
     /// Start the schedule runner background task
     pub async fn start_runner(&self, callback: ScheduleCallback) {
-        let schedules = Arc::clone(&self.schedules);
-        let shutdown = Arc::clone(&self.shutdown);
-
+        let this = self.clone_handles();
         tokio::spawn(async move {
             info!("Schedule runner started");
-
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                // Check for shutdown
-                if *shutdown.read().await {
+                interval.tick().await;
+                if *this.shutdown.read().await {
                     info!("Schedule runner shutting down");
                     break;
                 }
-
-                // Check all schedules
-                let now = chrono::Utc::now().timestamp();
-                let mut to_run: Vec<(String, String, Vec<ScheduleTask>)> = Vec::new();
-
-                {
-                    let schedules = schedules.read().await;
-                    for (container_id, container_schedules) in schedules.iter() {
-                        for (schedule_id, schedule) in container_schedules.iter() {
-                            if !schedule.is_active {
-                                continue;
-                            }
-
-                            if let Some(next_run) = schedule.next_run_at {
-                                if now >= next_run {
-                                    to_run.push((
-                                        container_id.clone(),
-                                        schedule_id.clone(),
-                                        schedule.tasks.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Execute due schedules
-                for (container_id, schedule_id, tasks) in to_run {
-                    info!(
-                        "Executing schedule {} for container {}",
-                        schedule_id, container_id
-                    );
-
-                    for task in &tasks {
-                        // Wait for task offset
-                        if task.time_offset > 0 {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(
-                                task.time_offset as u64,
-                            ))
-                            .await;
-                        }
-
-                        if let Err(e) = callback(&container_id, task).await {
-                            warn!("Task execution failed for schedule {}: {}", schedule_id, e);
-                        }
-                    }
-
-                    // Update schedule
-                    {
-                        let mut schedules = schedules.write().await;
-                        if let Some(container_schedules) = schedules.get_mut(&container_id) {
-                            if let Some(schedule) = container_schedules.get_mut(&schedule_id) {
-                                schedule.last_run_at = Some(now);
-
-                                // Calculate next run time
-                                schedule.next_run_at =
-                                    Schedule::from_str(&schedule.cron_expression)
-                                        .ok()
-                                        .and_then(|s| s.upcoming(chrono::Utc).next())
-                                        .map(|dt| dt.timestamp());
-                            }
-                        }
-                    }
-                }
-
-                // Sleep until next check
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                this.dispatch_due(&callback).await;
             }
         });
+    }
+
+    /// Start every schedule that is due and not already running. Public so
+    /// tests can tick the runner by hand.
+    pub async fn dispatch_due(&self, callback: &ScheduleCallback) {
+        let now = chrono::Utc::now().timestamp();
+        let mut due: Vec<ScheduleInfo> = Vec::new();
+        {
+            let running = self.running.read().await;
+            let mut schedules = self.schedules.write().await;
+            for container_schedules in schedules.values_mut() {
+                for schedule in container_schedules.values_mut() {
+                    if !schedule.is_active || running.contains(&schedule.id) {
+                        continue;
+                    }
+                    let Some(next) = schedule.next_run_at else {
+                        continue;
+                    };
+                    if now < next {
+                        continue;
+                    }
+                    // The next run is fixed now, not when this one finishes,
+                    // so a long task does not shift the timetable.
+                    schedule.next_run_at =
+                        next_run(&schedule.cron_expression, schedule.timezone.as_deref());
+                    due.push(schedule.clone());
+                }
+            }
+        }
+        for schedule in due {
+            info!(
+                "Executing schedule {} '{}' for container {}",
+                schedule.id, schedule.name, schedule.container_id
+            );
+            self.running.write().await.insert(schedule.id.clone());
+            self.persist(&schedule).await;
+            self.spawn_run(schedule, callback.clone());
+        }
+    }
+
+    fn clone_handles(&self) -> Self {
+        Self {
+            schedules: Arc::clone(&self.schedules),
+            running: Arc::clone(&self.running),
+            shutdown: Arc::clone(&self.shutdown),
+            data_dir: self.data_dir.clone(),
+        }
     }
 
     /// Stop the schedule runner
     pub async fn stop(&self) {
         *self.shutdown.write().await = true;
+    }
+}
+
+/// Run a schedule's tasks in order, honouring each one's offset. Returns
+/// the first failure's message; the remaining tasks still run.
+async fn run_tasks(schedule: &ScheduleInfo, callback: &ScheduleCallback) -> Option<String> {
+    let mut error = None;
+    for task in &schedule.tasks {
+        if task.time_offset > 0 {
+            tokio::time::sleep(Duration::from_secs(task.time_offset as u64)).await;
+        }
+        if let Err(e) = callback(&schedule.container_id, task).await {
+            warn!(
+                "Task {:?} of schedule {} failed: {}",
+                task.task_type, schedule.id, e
+            );
+            error.get_or_insert_with(|| format!("{:?}: {}", task.task_type, e));
+        }
+    }
+    error
+}
+
+async fn persist_to(dir: Option<PathBuf>, schedule: &ScheduleInfo) {
+    let Some(dir) = dir else {
+        return;
+    };
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        warn!("Failed to create schedule dir {:?}: {}", dir, e);
+        return;
+    }
+    match serde_json::to_vec_pretty(schedule) {
+        Ok(bytes) => {
+            let path = dir.join(format!("{}.json", schedule.id));
+            if let Err(e) = tokio::fs::write(&path, bytes).await {
+                warn!("Failed to persist schedule {}: {}", schedule.id, e);
+            }
+        }
+        Err(e) => warn!("Failed to serialize schedule {}: {}", schedule.id, e),
     }
 }
 
@@ -554,14 +659,30 @@ mod tests {
 
     #[test]
     fn test_validate_cron() {
-        // Valid expressions (cron crate uses 6-part format: sec min hour day month day-of-week)
+        // Five fields, as people write them.
+        assert!(ScheduleManager::validate_cron("0 4 * * *").is_ok());
+        assert!(ScheduleManager::validate_cron("*/5 * * * *").is_ok());
+        // Six and seven fields still work.
         assert!(ScheduleManager::validate_cron("0 0 0 * * *").is_ok());
         assert!(ScheduleManager::validate_cron("0 */5 * * * *").is_ok());
-        assert!(ScheduleManager::validate_cron("0 0 0 1 * *").is_ok());
+        assert!(ScheduleManager::validate_cron("0 0 0 1 * * 2030").is_ok());
 
-        // Invalid expressions
         assert!(ScheduleManager::validate_cron("invalid").is_err());
         assert!(ScheduleManager::validate_cron("60 * * * *").is_err());
+        assert!(ScheduleManager::validate_cron("* * *").is_err());
+    }
+
+    #[test]
+    fn next_run_respects_the_time_zone() {
+        // 2030-06-01 00:00 UTC. "4 a.m." in New York (UTC-4 in June) is
+        // 08:00 UTC; in UTC it is 04:00.
+        let after = chrono::Utc.with_ymd_and_hms(2030, 6, 1, 0, 0, 0).unwrap();
+        let utc = next_run_after("0 4 * * *", None, after).unwrap().unwrap();
+        let ny = next_run_after("0 4 * * *", Some("America/New_York"), after).unwrap().unwrap();
+        assert_eq!(utc, after.timestamp() + 4 * 3600);
+        assert_eq!(ny, after.timestamp() + 8 * 3600);
+        assert!(parse_timezone(Some("Mars/Olympus")).is_err());
+        assert_eq!(parse_timezone(Some("")).unwrap(), chrono_tz::UTC);
     }
 
     #[tokio::test]
@@ -574,19 +695,40 @@ mod tests {
             payload: "save-all".to_string(),
         }];
 
-        // Create schedule (cron crate uses 6-part format: sec min hour day month day-of-week)
         let schedule = manager
-            .create_schedule("container-1", "Hourly Save", "0 0 * * * *", true, tasks)
+            .create_schedule(
+                "container-1",
+                "Hourly Save",
+                "0 * * * *",
+                Some("Europe/Berlin"),
+                true,
+                tasks,
+            )
             .await
             .unwrap();
 
         assert_eq!(schedule.name, "Hourly Save");
+        assert_eq!(schedule.timezone.as_deref(), Some("Europe/Berlin"));
         assert!(schedule.is_active);
         assert!(schedule.next_run_at.is_some());
 
+        // A UTC zone is stored as "no zone".
+        let plain = manager
+            .create_schedule(
+                "container-1",
+                "Plain",
+                "0 * * * *",
+                Some("UTC"),
+                true,
+                vec![],
+            )
+            .await
+            .unwrap();
+        assert_eq!(plain.timezone, None);
+
         // List schedules
         let schedules = manager.list_schedules("container-1").await.unwrap();
-        assert_eq!(schedules.len(), 1);
+        assert_eq!(schedules.len(), 2);
     }
 
     #[tokio::test]
@@ -594,17 +736,17 @@ mod tests {
         let manager = ScheduleManager::new();
 
         let schedule = manager
-            .create_schedule("container-1", "Test", "0 0 * * * *", true, vec![])
+            .create_schedule("container-1", "Test", "0 0 * * * *", None, true, vec![])
             .await
             .unwrap();
 
-        // Update the schedule
         let updated = manager
             .update_schedule(
                 "container-1",
                 &schedule.id,
                 Some("Updated Name"),
-                Some("0 */30 * * * *"),
+                Some("*/30 * * * *"),
+                Some("Asia/Tokyo"),
                 Some(false),
                 None,
             )
@@ -612,9 +754,26 @@ mod tests {
             .unwrap();
 
         assert_eq!(updated.name, "Updated Name");
-        assert_eq!(updated.cron_expression, "0 */30 * * * *");
+        assert_eq!(updated.cron_expression, "*/30 * * * *");
+        assert_eq!(updated.timezone.as_deref(), Some("Asia/Tokyo"));
         assert!(!updated.is_active);
         assert!(updated.next_run_at.is_none());
+
+        // Clearing the zone and re-enabling.
+        let updated = manager
+            .update_schedule(
+                "container-1",
+                &schedule.id,
+                None,
+                None,
+                Some(""),
+                Some(true),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.timezone, None);
+        assert!(updated.next_run_at.is_some());
     }
 
     #[tokio::test]
@@ -622,7 +781,7 @@ mod tests {
         let manager = ScheduleManager::new();
 
         let schedule = manager
-            .create_schedule("container-1", "Test", "0 0 * * * *", true, vec![])
+            .create_schedule("container-1", "Test", "0 0 * * * *", None, true, vec![])
             .await
             .unwrap();
 
@@ -646,7 +805,8 @@ mod tests {
                 .create_schedule(
                     "container-1",
                     "Nightly Backup",
-                    "0 0 4 * * *",
+                    "0 4 * * *",
+                    Some("America/Chicago"),
                     true,
                     vec![ScheduleTask {
                         task_type: ScheduleTaskType::Backup,
@@ -667,8 +827,27 @@ mod tests {
         let schedules = manager2.list_schedules("container-1").await.unwrap();
         assert_eq!(schedules.len(), 1);
         assert_eq!(schedules[0].name, "Nightly Backup");
+        assert_eq!(schedules[0].timezone.as_deref(), Some("America/Chicago"));
         // next_run_at was recomputed from the cron expression on restore.
         assert!(schedules[0].next_run_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn schedules_written_by_older_builds_still_load() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dir = temp.path().join(SCHEDULE_SUBDIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        // No timezone or last_error fields, six-field cron.
+        std::fs::write(
+            dir.join("old.json"),
+            r#"{"id":"old","container_id":"c","name":"Old","cron_expression":"0 0 4 * * *","is_active":true,"created_at":1,"last_run_at":null,"next_run_at":null,"tasks":[]}"#,
+        )
+        .unwrap();
+        let manager = ScheduleManager::with_data_dir(temp.path().to_path_buf());
+        assert_eq!(manager.restore().await, 1);
+        let s = manager.get_schedule("c", "old").await.unwrap();
+        assert_eq!(s.timezone, None);
+        assert!(s.next_run_at.is_some());
     }
 
     #[tokio::test]
@@ -678,7 +857,7 @@ mod tests {
         let manager = ScheduleManager::with_data_dir(dir.clone());
 
         let schedule = manager
-            .create_schedule("container-1", "Test", "0 0 * * * *", true, vec![])
+            .create_schedule("container-1", "Test", "0 0 * * * *", None, true, vec![])
             .await
             .unwrap();
         manager.delete_schedule("container-1", &schedule.id).await.unwrap();
@@ -707,5 +886,121 @@ mod tests {
         };
         let result = cb("container-1", &task).await;
         assert!(result.is_err());
+    }
+
+    /// A callback that records what ran and can be told to fail or stall.
+    fn recording_callback(
+        log: Arc<RwLock<Vec<String>>>,
+        fail_on: Option<&'static str>,
+    ) -> ScheduleCallback {
+        Arc::new(move |container_id: &str, task: &ScheduleTask| {
+            let log = log.clone();
+            let entry = format!("{}:{}", container_id, task.payload);
+            let payload = task.payload.clone();
+            Box::pin(async move {
+                if payload == "slow" {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                log.write().await.push(entry);
+                if Some(payload.as_str()) == fail_on {
+                    Err(NodeError::Internal("boom".into()))
+                } else {
+                    Ok(())
+                }
+            })
+        })
+    }
+
+    async fn wait_until_idle(manager: &ScheduleManager, id: &str) {
+        for _ in 0..100 {
+            if !manager.is_running(id).await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("schedule {} did not finish", id);
+    }
+
+    #[tokio::test]
+    async fn due_schedules_run_concurrently_and_record_errors() {
+        let manager = ScheduleManager::new();
+        let log = Arc::new(RwLock::new(Vec::new()));
+        let cb = recording_callback(log.clone(), Some("bad"));
+
+        let slow = manager
+            .create_schedule(
+                "c1",
+                "Slow",
+                "* * * * *",
+                None,
+                true,
+                vec![ScheduleTask {
+                    task_type: ScheduleTaskType::Command,
+                    time_offset: 0,
+                    payload: "slow".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        let quick = manager
+            .create_schedule(
+                "c2",
+                "Quick",
+                "* * * * *",
+                None,
+                true,
+                vec![
+                    ScheduleTask {
+                        task_type: ScheduleTaskType::Command,
+                        time_offset: 0,
+                        payload: "bad".into(),
+                    },
+                    ScheduleTask {
+                        task_type: ScheduleTaskType::Command,
+                        time_offset: 0,
+                        payload: "after".into(),
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        // Make both due now.
+        {
+            let mut all = manager.schedules.write().await;
+            for cs in all.values_mut() {
+                for s in cs.values_mut() {
+                    s.next_run_at = Some(0);
+                }
+            }
+        }
+
+        manager.dispatch_due(&cb).await;
+        // Both are running; the quick one finishes while the slow one is
+        // still asleep, so the slow schedule did not block it.
+        assert!(manager.is_running(&slow.id).await);
+        wait_until_idle(&manager, &quick.id).await;
+        assert!(manager.is_running(&slow.id).await);
+        // A second tick does not start the slow one again while it runs.
+        manager.dispatch_due(&cb).await;
+        wait_until_idle(&manager, &slow.id).await;
+        assert_eq!(
+            log.read().await.iter().filter(|e| e.ends_with(":slow")).count(),
+            1
+        );
+
+        let q = manager.get_schedule("c2", &quick.id).await.unwrap();
+        assert!(q.last_run_at.is_some());
+        assert!(q.last_error.as_deref().unwrap().contains("boom"));
+        // The task after the failing one still ran.
+        assert!(log.read().await.contains(&"c2:after".to_string()));
+        let s = manager.get_schedule("c1", &slow.id).await.unwrap();
+        assert_eq!(s.last_error, None);
+        // Next run was moved into the future when dispatched.
+        assert!(s.next_run_at.unwrap() > chrono::Utc::now().timestamp() - 1);
+
+        // Manual trigger refuses to stack on a running schedule.
+        manager.trigger_schedule("c1", &slow.id, &cb).await.unwrap();
+        assert!(manager.trigger_schedule("c1", &slow.id, &cb).await.is_err());
+        wait_until_idle(&manager, &slow.id).await;
     }
 }
