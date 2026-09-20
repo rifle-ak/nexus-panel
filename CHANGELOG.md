@@ -7,6 +7,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Panel accounts and per-server permissions.** Named accounts (Argon2id
+  passwords, stored in `DATA_DIR/.nexus/users.json`) sign in with a
+  username; admins have the run of the node, others get grants per server
+  (`read_only`, `default`, `operator`, `full`, or individual permissions)
+  that the API enforces request by request. The operator password from
+  the environment still works. Accounts can be disabled, cannot lock
+  themselves out, and can change their own password on the Settings page.
+- **API keys you can name and revoke.** Minted on the Users page, shown
+  once, stored hashed, attributed as `key:<name>` in the audit trail.
+- **An audit trail you can read.** The logger keeps its last 2,000 events
+  (seeded from the log file at startup) and the Users page shows them with
+  a filter and a failures-only switch (`GET /api/v1/audit`).
+- **A Settings tab that edits the server.** Name, blueprint variables
+  (with the blueprint's rules and `user_editable` honoured, secrets hidden
+  from non-admins) and, for the operator, memory, CPU and disk; saving
+  rebuilds the container and keeps a provisioned server's billing record
+  in step.
+- The Blueprints page lists what the node serves instead of a copy kept in
+  the frontend; the Sign Out button survives the narrow layout.
 - **Backups that behave.** Records now live on disk beside their archives
   (`<id>.json`), so the list survives a restart; archives dropped in by
   hand are adopted and interrupted ones cleaned up. A backup follows its

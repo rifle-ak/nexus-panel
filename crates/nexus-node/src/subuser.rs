@@ -16,7 +16,7 @@ use tracing::info;
 use uuid::Uuid;
 
 /// Available permissions for subusers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Permission {
     // Power permissions
     PowerStart,
@@ -58,6 +58,10 @@ pub enum Permission {
     SettingsRead,
     SettingsRename,
     SettingsReinstall,
+    /// Change variables and the server's name from the Settings tab.
+    SettingsUpdate,
+    /// Edit the server's firewall rules and bans.
+    FirewallManage,
 
     // User management (admin only)
     UserCreate,
@@ -110,6 +114,8 @@ impl Permission {
             SettingsRead,
             SettingsRename,
             SettingsReinstall,
+            SettingsUpdate,
+            FirewallManage,
             UserCreate,
             UserRead,
             UserUpdate,
@@ -189,6 +195,8 @@ impl Permission {
             ScheduleUpdate,
             ScheduleDelete,
             SettingsRead,
+            SettingsUpdate,
+            FirewallManage,
             AllocationRead,
             ActivityRead,
             WebsocketConnect,
@@ -228,6 +236,8 @@ impl Permission {
             SettingsRead => "settings.read",
             SettingsRename => "settings.rename",
             SettingsReinstall => "settings.reinstall",
+            SettingsUpdate => "settings.update",
+            FirewallManage => "firewall.manage",
             UserCreate => "user.create",
             UserRead => "user.read",
             UserUpdate => "user.update",
@@ -272,6 +282,8 @@ impl Permission {
             "settings.read" => Some(SettingsRead),
             "settings.rename" => Some(SettingsRename),
             "settings.reinstall" => Some(SettingsReinstall),
+            "settings.update" => Some(SettingsUpdate),
+            "firewall.manage" => Some(FirewallManage),
             "user.create" => Some(UserCreate),
             "user.read" => Some(UserRead),
             "user.update" => Some(UserUpdate),

@@ -192,6 +192,8 @@ TLS_MIN_VERSION=1.3
 
 # Authentication (optional)
 AUTH_ENABLED=true
+# Keys from the environment; keys minted on the Users page live in
+# DATA_DIR/.nexus/users.json alongside panel accounts.
 AUTH_API_KEYS=key1,key2
 
 # Billing / provisioning (optional — see docs/WHMCS.md)

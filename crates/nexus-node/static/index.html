@@ -70,7 +70,7 @@
       <div class="version-text" id="sidebar-version"></div>
       <button class="btn btn-sm btn-ghost logout-btn" onclick="NX.logout()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        Sign Out
+        <span>Sign Out</span>
       </button>
     </div>
   </aside>
@@ -298,6 +298,11 @@
       </div>
     </div>
     <div class="tab-content hidden" id="tab-settings">
+      <div class="card" style="padding:1.5rem;margin-bottom:1.25rem">
+        <h3 style="margin-bottom:0.5rem">Settings</h3>
+        <p class="text-muted text-sm" style="margin-bottom:1rem">Saving rebuilds the server with the new values; a running server is restarted.</p>
+        <div id="server-settings-form"><span class="text-muted text-sm">Loading…</span></div>
+      </div>
       <div class="card" style="padding:1.5rem">
         <h3 style="margin-bottom:1rem">Server Information</h3>
         <div id="server-settings-info"></div>
@@ -466,17 +471,55 @@
       <h3>Node Configuration</h3>
       <div id="node-config" style="margin-top:1rem"></div>
     </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem" id="account-card">
+      <h3>Your account</h3>
+      <div id="account-body" style="margin-top:1rem"></div>
+    </div>
   </template>
 
   <template id="tmpl-users">
-    <div class="page-header"><h1>Users</h1></div>
-    <div class="card" style="padding:1.5rem">
-      <p class="text-muted">User management with role-based access control. These features are on the roadmap.</p>
-      <div class="feature-grid" style="margin-top:1.5rem">
-        <div class="feature-card"><h4>Sub-user Permissions</h4><p class="text-muted text-sm">Granular per-server permissions</p><span class="badge badge-info">Planned</span></div>
-        <div class="feature-card"><h4>API Key Management</h4><p class="text-muted text-sm">Create and revoke API keys</p><span class="badge badge-info">Planned</span></div>
-        <div class="feature-card"><h4>JWT Authentication</h4><p class="text-muted text-sm">Token-based access control</p><span class="badge badge-success">Backend Ready</span></div>
-        <div class="feature-card"><h4>Audit Trail</h4><p class="text-muted text-sm">Full action logging</p><span class="badge badge-success">Backend Ready</span></div>
+    <div class="page-header">
+      <h1>Users</h1>
+      <div class="header-actions">
+        <button class="btn btn-sm" onclick="renderUsers()">Refresh</button>
+        <button class="btn btn-sm btn-primary" onclick="NX.showUserForm()">Add user</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:1.25rem">
+      <div class="card-header"><h2>Accounts</h2><span class="text-muted text-sm">The operator password from the node's environment always works too.</span></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Username</th><th>Role</th><th>Servers</th><th>Last sign-in</th><th>Actions</th></tr></thead>
+          <tbody id="users-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:1.25rem">
+      <div class="card-header">
+        <h2>API keys</h2>
+        <button class="btn btn-sm btn-primary" onclick="NX.createApiKey()">Create key</button>
+      </div>
+      <p class="text-muted text-sm" style="padding:0 1.25rem 0.75rem">Keys have full operator access; they are for billing systems and automation. A key is shown once, when it is created.</p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th>Actions</th></tr></thead>
+          <tbody id="apikeys-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <h2>Audit trail</h2>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="text" class="search-input" id="audit-q" placeholder="Filter (actor, action, server)…" oninput="NX.auditFilterChanged()">
+          <label class="text-sm text-muted" style="white-space:nowrap"><input type="checkbox" id="audit-failures" onchange="loadAudit()"> failures only</label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Outcome</th><th>From</th></tr></thead>
+          <tbody id="audit-table-body"></tbody>
+        </table>
       </div>
     </div>
   </template>

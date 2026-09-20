@@ -356,6 +356,42 @@ sample as `usage` while the server runs.
 Network traffic is not attributed per server: servers share the host's
 network namespace, so the kernel keeps no per-container counters.
 
+## Accounts, API Keys and Audit (REST)
+
+Operator only (an admin session, an admin account or an API key), except
+`POST /api/v1/auth/password`, which any named account may call.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/auth/login` | `{"username", "password"}` signs in a panel account; `{"password"}` alone is the operator password from `WEB_PASSWORD`; `{"api_key"}` exchanges a key for a session |
+| `GET` | `/api/v1/auth/me` | `scope` (`admin` or `servers`), `server_ids`, `username` for a named account, and `permissions` (`server id -> [names]`) for a non-admin one |
+| `POST` | `/api/v1/auth/password` | `{"current_password", "new_password"}` for the calling account |
+| `GET` | `/api/v1/users` | Accounts with `admin`, `disabled`, `grants` (`server id -> [permission names]`), `last_login_at` |
+| `POST` | `/api/v1/users` | `{"username", "password", "admin", "grants": {"<server>": "operator" \| ["power.start", …]}}`. Presets: `read_only`, `default`, `operator`, `full`. Usernames are 3–32 of `a-z 0-9 . _ -`; passwords at least 10 characters |
+| `PUT` | `/api/v1/users/:id` | Any of `password`, `admin`, `grants`, `disabled`. An account cannot disable or demote itself |
+| `DELETE` | `/api/v1/users/:id` | Not one's own |
+| `GET` | `/api/v1/permissions` | Every permission name and the presets expanded |
+| `GET` | `/api/v1/apikeys` | Keys by name and prefix, never the key |
+| `POST` | `/api/v1/apikeys` | `{"name"}`; the reply carries `key` (`nxk_…`) once. Keys have operator access and act under `key:<name>` in the audit trail |
+| `DELETE` | `/api/v1/apikeys/:id` | Revoke; takes effect at once |
+| `GET` | `/api/v1/audit?limit=200&q=&server=&failures=true` | The last 2,000 events, newest first: `timestamp`, `actor`, `action`, `target`, `outcome`, `source_ip`, `error_message`. `enabled: false` when `AUDIT_ENABLED=false` |
+
+Permissions a grant may carry: `power.start|stop|restart|kill`,
+`console.read|write`, `file.read|write|delete|archive`,
+`backup.create|read|restore|download|delete`,
+`schedule.create|read|update|delete`, `settings.read|update|reinstall`,
+`firewall.manage`. Requests under `/api/v1/containers/:id/…` from a
+non-admin account are checked against the grant for that server; deleting
+or suspending a server is never granted. Customer sessions from billing SSO
+keep full control of their own server.
+
+### Server settings
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/containers/:id/settings` | `name`, blueprint id/game/version/image, `variables` (each with `value`, `editable`, `secret`, `rules`, `port`), `resources`, `resources_editable`, `ports`. A customer or user sees only `user_viewable`/`user_editable` variables and no secret values |
+| `PUT` | `/api/v1/containers/:id/settings` | `{"name", "variables": {…}, "memory_mb", "cpu_millicores", "disk_mb", "restart"}`. Blueprint rules apply (`400`); port variables are refused; resources and non-`user_editable` variables are the operator's (`403`). The container is rebuilt and, if it was running, started again. A provisioned server's billing record is updated too |
+
 ## Firewall Endpoints (REST)
 
 Operator (admin session or API key):

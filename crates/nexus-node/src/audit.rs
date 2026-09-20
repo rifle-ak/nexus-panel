@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -144,7 +144,7 @@ pub enum AuditSeverity {
 }
 
 /// Audit event record
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     /// Unique event identifier
     pub id: String,
@@ -477,11 +477,18 @@ impl AuditConfig {
     }
 }
 
+/// How many recent events the logger keeps in memory for the panel's
+/// audit view.
+pub const RECENT_EVENTS: usize = 2000;
+
 /// Async audit logger
 pub struct AuditLogger {
     config: Arc<AuditConfig>,
     sender: mpsc::Sender<AuditEvent>,
     last_checksum: Arc<parking_lot::RwLock<Option<String>>>,
+    /// The last [`RECENT_EVENTS`] events, newest last, seeded from the log
+    /// file at startup so the view is not empty after a restart.
+    recent: Arc<parking_lot::RwLock<std::collections::VecDeque<AuditEvent>>>,
 }
 
 impl AuditLogger {
@@ -490,6 +497,9 @@ impl AuditLogger {
         let (sender, receiver) = mpsc::channel(config.buffer_size);
         let config = Arc::new(config);
         let last_checksum = Arc::new(parking_lot::RwLock::new(None));
+        let recent = Arc::new(parking_lot::RwLock::new(
+            config.file_output.as_deref().map(read_recent_from_file).unwrap_or_default(),
+        ));
 
         // Spawn background writer task
         let writer_config = config.clone();
@@ -503,7 +513,29 @@ impl AuditLogger {
             config,
             sender,
             last_checksum,
+            recent,
         })
+    }
+
+    /// The most recent events, newest first, at most `limit`, that pass
+    /// `filter`.
+    pub fn recent(&self, limit: usize, filter: impl Fn(&AuditEvent) -> bool) -> Vec<AuditEvent> {
+        self.recent
+            .read()
+            .iter()
+            .rev()
+            .filter(|e| filter(e))
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    fn remember(&self, event: &AuditEvent) {
+        let mut recent = self.recent.write();
+        if recent.len() >= RECENT_EVENTS {
+            recent.pop_front();
+        }
+        recent.push_back(event.clone());
     }
 
     /// Log an audit event
@@ -529,6 +561,8 @@ impl AuditLogger {
             }
         }
 
+        self.remember(&event);
+
         // Send to writer task
         if let Err(e) = self.sender.send(event).await {
             error!("Failed to send audit event: {}", e);
@@ -540,6 +574,7 @@ impl AuditLogger {
         let sender = self.sender.clone();
         let config = self.config.clone();
         let last_checksum = self.last_checksum.clone();
+        let recent = self.recent.clone();
 
         tokio::spawn(async move {
             if !config.enabled {
@@ -557,6 +592,13 @@ impl AuditLogger {
                 }
             }
 
+            {
+                let mut recent = recent.write();
+                if recent.len() >= RECENT_EVENTS {
+                    recent.pop_front();
+                }
+                recent.push_back(event.clone());
+            }
             let _ = sender.send(event).await;
         });
     }
@@ -619,6 +661,37 @@ impl AuditLogger {
 }
 
 // Helper function for hex encoding
+/// The last [`RECENT_EVENTS`] events in a JSON-lines audit file. Reads the
+/// tail of the file only, so a large log does not slow startup.
+fn read_recent_from_file(path: &Path) -> std::collections::VecDeque<AuditEvent> {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL_BYTES: u64 = 4 * 1024 * 1024;
+    let mut out = std::collections::VecDeque::new();
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return out;
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return out;
+    }
+    let mut text = String::new();
+    if file.read_to_string(&mut text).is_err() {
+        return out;
+    }
+    let mut lines: Vec<&str> = text.lines().collect();
+    if start > 0 {
+        // The seek landed mid-line.
+        lines.remove(0);
+    }
+    for line in lines.iter().rev().take(RECENT_EVENTS).rev() {
+        if let Ok(event) = serde_json::from_str::<AuditEvent>(line) {
+            out.push_back(event);
+        }
+    }
+    out
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }

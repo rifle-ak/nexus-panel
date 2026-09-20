@@ -444,6 +444,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             audit: audit_logger.clone(),
             firewall: firewall.clone(),
             monitor: monitor.clone(),
+            users: Arc::new(nexus_node::users::UserStore::load(&PathBuf::from(
+                &data_dir,
+            ))),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

@@ -9,7 +9,9 @@ pub mod observe;
 pub mod provision;
 #[cfg(test)]
 mod router_tests;
+pub mod settings;
 pub mod storage;
+pub mod users;
 
 use crate::backup::BackupManager;
 use crate::container::ContainerManager;
@@ -111,6 +113,8 @@ pub struct AppState {
     pub firewall: Arc<crate::firewall::Firewall>,
     /// Resource usage per server and for the node, sampled on a schedule.
     pub monitor: Arc<crate::stats::ResourceMonitor>,
+    /// Panel accounts and API keys.
+    pub users: Arc<crate::users::UserStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +146,24 @@ fn actor_for(scope: &auth::SessionScope) -> crate::audit::AuditActor {
             name: None,
             auth_method: Some("sso".to_string()),
             roles: vec!["customer".to_string()],
+            tenant_id: None,
+        },
+        auth::SessionScope::User {
+            username, admin, ..
+        } => AuditActor {
+            actor_type: if username.starts_with("key:") {
+                ActorType::Service
+            } else {
+                ActorType::User
+            },
+            id: username.clone(),
+            name: None,
+            auth_method: Some(if username.starts_with("key:") {
+                "api_key".to_string()
+            } else {
+                "session".to_string()
+            }),
+            roles: vec![if *admin { "admin" } else { "user" }.to_string()],
             tenant_id: None,
         },
     }
@@ -397,6 +419,27 @@ pub fn build_router(shared: S) -> Router {
         )
         .route("/api/v1/provision/sso", post(provision::api_provision_sso))
         // ── Firewall ─────────────────────────────────────────────────
+        // ── Accounts, keys, audit trail ──────────────────────────────
+        .route(
+            "/api/v1/users",
+            get(users::api_list_users).post(users::api_create_user),
+        )
+        .route(
+            "/api/v1/users/:user_id",
+            put(users::api_update_user).delete(users::api_delete_user),
+        )
+        .route("/api/v1/permissions", get(users::api_permissions))
+        .route(
+            "/api/v1/apikeys",
+            get(users::api_list_keys).post(users::api_create_key),
+        )
+        .route("/api/v1/apikeys/:key_id", delete(users::api_revoke_key))
+        .route("/api/v1/audit", get(users::api_audit))
+        .route("/api/v1/auth/password", post(users::api_change_password))
+        .route(
+            "/api/v1/containers/:id/settings",
+            get(settings::api_get_settings).put(settings::api_update_settings),
+        )
         .route("/api/v1/firewall", get(firewall::api_firewall_status))
         .route(
             "/api/v1/firewall/blocks",
@@ -493,8 +536,8 @@ async fn resolve_scope(s: &S, headers: &header::HeaderMap) -> Option<auth::Sessi
         if let Some(scope) = s.sessions.scope_of(token).await {
             return Some(scope);
         }
-        if s.auth.verify_api_key(token) {
-            return Some(auth::SessionScope::Admin);
+        if let Some(scope) = api_key_scope(s, token).await {
+            return Some(scope);
         }
     }
 
@@ -509,12 +552,27 @@ async fn resolve_scope(s: &S, headers: &header::HeaderMap) -> Option<auth::Sessi
     }
 
     if let Some(key) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
-        if s.auth.verify_api_key(key) {
-            return Some(auth::SessionScope::Admin);
+        if let Some(scope) = api_key_scope(s, key).await {
+            return Some(scope);
         }
     }
 
     None
+}
+
+/// The scope an API key grants: the environment's keys are the anonymous
+/// operator; a key minted in the panel acts as itself, so the audit trail
+/// names it.
+async fn api_key_scope(s: &S, candidate: &str) -> Option<auth::SessionScope> {
+    if s.auth.verify_api_key(candidate) {
+        return Some(auth::SessionScope::Admin);
+    }
+    let key = s.users.verify_api_key(candidate).await?;
+    Some(auth::SessionScope::User {
+        username: format!("key:{}", key.name),
+        admin: true,
+        grants: Default::default(),
+    })
 }
 
 /// What a session may reach. Admin sessions: everything. Server-scoped
@@ -525,10 +583,9 @@ async fn resolve_scope(s: &S, headers: &header::HeaderMap) -> Option<auth::Sessi
 /// exists because a billing system created it, and only that system's
 /// termination should remove it.
 fn scope_allows(scope: &auth::SessionScope, method: &Method, path: &str) -> bool {
-    let ids = match scope {
-        auth::SessionScope::Admin => return true,
-        auth::SessionScope::Servers(ids) => ids,
-    };
+    if scope.is_admin() {
+        return true;
+    }
 
     if path.starts_with("/api/v1/auth/") {
         return true;
@@ -539,15 +596,96 @@ fn scope_allows(scope: &auth::SessionScope, method: &Method, path: &str) -> bool
     }
     if let Some(rest) = path.strip_prefix("/api/v1/containers/") {
         let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
-        if id.is_empty() || !ids.iter().any(|allowed| allowed == id) {
+        if id.is_empty() || !scope.allows_server(id) {
             return false;
         }
-        return !(tail.is_empty() && method == Method::DELETE);
+        return match permission_for(method, tail) {
+            Some(p) => scope.permits(id, p),
+            None => false,
+        };
     }
     if path.starts_with("/api/v1/marketplace/") {
         return method == Method::GET;
     }
     false
+}
+
+/// The permission a request on `/api/v1/containers/:id/<tail>` needs, or
+/// `None` for things no non-admin may do (deleting or suspending a server,
+/// which belong to whoever created it).
+fn permission_for(method: &Method, tail: &str) -> Option<crate::subuser::Permission> {
+    use crate::subuser::Permission as P;
+    let get = *method == Method::GET;
+    let first = tail.split('/').next().unwrap_or("");
+    let second = tail.split('/').nth(1).unwrap_or("");
+    let last = tail.rsplit('/').next().unwrap_or("");
+    Some(match first {
+        "" => {
+            if get {
+                P::SettingsRead
+            } else {
+                return None;
+            }
+        }
+        "start" => P::PowerStart,
+        "stop" => P::PowerStop,
+        "restart" => P::PowerRestart,
+        "kill" => P::PowerKill,
+        "suspend" | "unsuspend" => return None,
+        "command" | "exec" => P::ConsoleWrite,
+        "console" | "stats" => P::ConsoleRead,
+        "files" => match second {
+            "" | "read" | "download" => P::FileRead,
+            "write" | "upload" | "mkdir" | "rename" => P::FileWrite,
+            "delete" => P::FileDelete,
+            "compress" | "decompress" => P::FileArchive,
+            _ => return None,
+        },
+        "backups" => match (method, second, last) {
+            (&Method::GET, "", _) => P::BackupRead,
+            (&Method::POST, "", _) => P::BackupCreate,
+            (_, _, "restore") => P::BackupRestore,
+            (_, _, "download") => P::BackupDownload,
+            (&Method::DELETE, _, _) => P::BackupDelete,
+            _ => return None,
+        },
+        "schedules" => match (method, second, last) {
+            (&Method::GET, _, _) => P::ScheduleRead,
+            (&Method::POST, "", _) => P::ScheduleCreate,
+            (_, _, "trigger") | (&Method::PUT, _, _) => P::ScheduleUpdate,
+            (&Method::DELETE, _, _) => P::ScheduleDelete,
+            _ => return None,
+        },
+        "firewall" => {
+            if get {
+                P::SettingsRead
+            } else {
+                P::FirewallManage
+            }
+        }
+        "settings" => {
+            if get {
+                P::SettingsRead
+            } else {
+                P::SettingsUpdate
+            }
+        }
+        "install" | "update" | "update-config" => {
+            if get {
+                P::SettingsRead
+            } else {
+                P::SettingsReinstall
+            }
+        }
+        "mods" => {
+            if get {
+                P::FileRead
+            } else {
+                P::FileWrite
+            }
+        }
+        _ => return None,
+    })
 }
 
 #[derive(Serialize)]
@@ -564,6 +702,8 @@ async fn api_auth_config(State(s): State<S>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct LoginReq {
+    /// A panel account; without it, `password` is the operator password.
+    username: Option<String>,
     password: Option<String>,
     api_key: Option<String>,
 }
@@ -618,34 +758,64 @@ async fn api_login(
             .into_response());
     }
 
+    let username = body
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(|u| u.to_ascii_lowercase());
     let method = if body.api_key.is_some() {
         "api_key"
+    } else if username.is_some() {
+        "user_password"
     } else {
         "password"
     };
-    let ok = body.password.as_deref().map(|p| s.auth.verify_password(p)).unwrap_or(false)
-        || body.api_key.as_deref().map(|k| s.auth.verify_api_key(k)).unwrap_or(false);
+    let subject = username.clone().unwrap_or_else(|| "admin".to_string());
 
-    if !ok {
+    // A named account, the operator password, or an API key.
+    let scope = if let Some(name) = &username {
+        match body.password.as_deref() {
+            Some(p) => s.users.verify_login(name, p).await.map(|u| auth::SessionScope::User {
+                username: u.username,
+                admin: u.admin,
+                grants: u.grants,
+            }),
+            None => None,
+        }
+    } else if body.password.as_deref().map(|p| s.auth.verify_password(p)).unwrap_or(false) {
+        Some(auth::SessionScope::Admin)
+    } else if let Some(key) = body.api_key.as_deref() {
+        api_key_scope(&s, key).await
+    } else {
+        None
+    };
+
+    let Some(scope) = scope else {
         s.login_throttle.record_failure(&ip).await;
         audit(
             &s,
-            crate::audit::AuditEvent::authentication_failure("admin", "invalid credentials")
+            crate::audit::AuditEvent::authentication_failure(&subject, "invalid credentials")
                 .with_context("method", method)
                 .with_source_ip(ip.clone()),
         )
         .await;
         return Err(err_json(StatusCode::UNAUTHORIZED, "Invalid credentials").into_response());
-    }
+    };
 
     s.login_throttle.record_success(&ip).await;
     audit(
         &s,
-        crate::audit::AuditEvent::authentication_success("admin", method).with_source_ip(ip),
+        crate::audit::AuditEvent::authentication_success(&subject, method)
+            .with_actor(actor_for(&scope))
+            .with_source_ip(ip),
     )
     .await;
 
-    let token = s.sessions.create().await;
+    let token = match scope {
+        auth::SessionScope::Admin => s.sessions.create().await,
+        other => s.sessions.create_scoped(other, None).await,
+    };
     Ok(Json(LoginResponse {
         token,
         expires_in_secs: s.sessions.ttl_secs(),
@@ -687,17 +857,32 @@ struct MeResponse {
     scope: &'static str,
     /// The servers a scoped session may act on; empty for admin.
     server_ids: Vec<String>,
+    /// The account name, for a named login.
+    username: Option<String>,
+    /// For a panel user: what they may do on each server, as
+    /// `permission.name` strings.
+    permissions: std::collections::BTreeMap<String, Vec<&'static str>>,
 }
 
 /// Who the caller is, so the UI can show a customer only their server.
 async fn api_auth_me(Extension(scope): Extension<auth::SessionScope>) -> impl IntoResponse {
-    let (scope_name, server_ids) = match scope {
-        auth::SessionScope::Admin => ("admin", Vec::new()),
-        auth::SessionScope::Servers(ids) => ("servers", ids),
+    let scope_name = if scope.is_admin() { "admin" } else { "servers" };
+    let permissions = match &scope {
+        auth::SessionScope::User {
+            grants,
+            admin: false,
+            ..
+        } => grants
+            .iter()
+            .map(|(id, ps)| (id.clone(), ps.iter().map(|p| p.as_str()).collect()))
+            .collect(),
+        _ => Default::default(),
     };
     Json(MeResponse {
         scope: scope_name,
-        server_ids,
+        server_ids: scope.server_ids(),
+        username: scope.subject().map(str::to_string),
+        permissions,
     })
 }
 
@@ -2201,6 +2386,8 @@ struct BlueprintSummary {
     name: String,
     game: String,
     version: String,
+    description: Option<String>,
+    tags: Vec<String>,
 }
 
 /// The blueprints this node ships, so a billing system can offer them as
@@ -2216,6 +2403,8 @@ async fn api_list_blueprints() -> Json<Vec<BlueprintSummary>> {
                     name: bp.metadata.name,
                     game: bp.metadata.game,
                     version: bp.metadata.version,
+                    description: bp.metadata.description,
+                    tags: bp.metadata.tags.unwrap_or_default(),
                 })
             })
             .collect(),
@@ -2619,37 +2808,17 @@ mod tests {
         }
     }
 
-    /// Each blueprint card in the UI must resolve to a blueprint the node
-    /// serves, or clicking it 404s.
+    /// The Blueprints page takes its cards from `GET /api/v1/blueprints`,
+    /// so the UI cannot offer a blueprint the node does not serve. A static
+    /// list creeping back into app.js would reopen that gap.
     #[test]
-    fn every_blueprint_card_in_the_ui_is_served() {
+    fn the_ui_carries_no_blueprint_list_of_its_own() {
         let app_js = super::APP_JS;
-        let start = app_js
-            .find("const BLUEPRINTS = [")
-            .expect("BLUEPRINTS list not found in app.js");
-        let list =
-            &app_js[start..app_js[start..].find("];").expect("unterminated BLUEPRINTS") + start];
-
-        let card_ids: Vec<&str> = list
-            .match_indices("{ id: '")
-            .map(|(i, pat)| {
-                let rest = &list[i + pat.len()..];
-                &rest[..rest.find('\'').expect("unterminated blueprint id")]
-            })
-            .collect();
-
         assert!(
-            !card_ids.is_empty(),
-            "no blueprint cards parsed out of app.js"
+            !app_js.contains("const BLUEPRINTS = ["),
+            "app.js has a static blueprint list again; cards must come from /api/v1/blueprints"
         );
-
-        for id in card_ids {
-            assert!(
-                SHIPPED_BLUEPRINTS.iter().any(|(name, _)| *name == id),
-                "the UI offers blueprint \"{}\" but the node serves no such blueprint",
-                id
-            );
-        }
+        assert!(app_js.contains("api('/blueprints')"));
     }
 
     #[test]
