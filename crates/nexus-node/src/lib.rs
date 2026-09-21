@@ -39,6 +39,7 @@
 
 // Core modules
 pub mod backup;
+pub mod branding;
 pub mod config;
 pub mod container;
 pub mod error;
@@ -49,6 +50,7 @@ pub mod install;
 pub mod metrics;
 pub mod metrics_server;
 pub mod mods;
+pub mod notify;
 pub mod provision;
 pub mod runtime;
 pub mod schedule;

@@ -108,14 +108,44 @@ pub fn dispatch_callback(
         let container_id = container_id.to_string();
         let task = task.clone();
         Box::pin(async move {
+            let result = run_task(&manager, &backup_manager, &container_id, &task).await;
+            if let Err(e) = &result {
+                let name = manager
+                    .get_state(&container_id)
+                    .await
+                    .map(|s| s.name)
+                    .unwrap_or_else(|_| container_id.clone());
+                manager.notify(
+                    crate::notify::Notification::new(
+                        "schedule.failed",
+                        crate::notify::Severity::Warning,
+                        format!("Scheduled task failed on {}", name),
+                        format!("{:?} {:?}: {}", task.task_type, task.payload, e),
+                    )
+                    .for_server(&container_id, &name),
+                );
+            }
+            result
+        })
+    })
+}
+
+async fn run_task(
+    manager: &ContainerManager,
+    backup_manager: &BackupManager,
+    container_id: &str,
+    task: &ScheduleTask,
+) -> Result<()> {
+    {
+        {
             match task.task_type {
                 ScheduleTaskType::Command => {
-                    manager.send_command(&container_id, &task.payload).await
+                    manager.send_command(container_id, &task.payload).await
                 }
                 ScheduleTaskType::Power => match task.payload.trim().to_lowercase().as_str() {
-                    "start" => manager.start_container(&container_id).await,
-                    "stop" => manager.stop_container(&container_id, None).await,
-                    "restart" => manager.restart_container(&container_id).await,
+                    "start" => manager.start_container(container_id).await,
+                    "stop" => manager.stop_container(container_id, None).await,
+                    "restart" => manager.restart_container(container_id).await,
                     other => Err(NodeError::InvalidInput(format!(
                         "Unknown power action: {}",
                         other
@@ -128,9 +158,9 @@ pub fn dispatch_callback(
                         task.payload.clone()
                     };
                     crate::backup::backup_server(
-                        &manager,
-                        &backup_manager,
-                        &container_id,
+                        manager,
+                        backup_manager,
+                        container_id,
                         &name,
                         None,
                         PRE_BACKUP_SETTLE,
@@ -139,8 +169,8 @@ pub fn dispatch_callback(
                     .map(|_| ())
                 }
             }
-        })
-    })
+        }
+    }
 }
 
 /// Parse a cron expression in five-, six- or seven-field form.

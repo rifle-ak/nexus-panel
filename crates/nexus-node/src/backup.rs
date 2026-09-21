@@ -638,7 +638,32 @@ pub async fn backup_server(
     }
 
     let include = paths.filter(|p| !p.is_empty()).unwrap_or_else(|| policy.include.clone());
-    let info = backups.create_backup(container_id, name, &include, &policy.exclude).await?;
+    let info = match backups.create_backup(container_id, name, &include, &policy.exclude).await {
+        Ok(info) => {
+            manager.notify(
+                crate::notify::Notification::new(
+                    "backup.completed",
+                    crate::notify::Severity::Info,
+                    format!("Backup of {} completed", state.name),
+                    format!("{} ({} MiB).", name, info.size / (1024 * 1024)),
+                )
+                .for_server(container_id, &state.name),
+            );
+            info
+        }
+        Err(e) => {
+            manager.notify(
+                crate::notify::Notification::new(
+                    "backup.failed",
+                    crate::notify::Severity::Warning,
+                    format!("Backup of {} failed", state.name),
+                    format!("{}: {}", name, e),
+                )
+                .for_server(container_id, &state.name),
+            );
+            return Err(e);
+        }
+    };
 
     if let Some(keep) = policy.retention.filter(|k| *k > 0) {
         if let Err(e) = backups.enforce_retention(container_id, keep).await {

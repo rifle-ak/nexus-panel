@@ -356,6 +356,23 @@ sample as `usage` while the server runs.
 Network traffic is not attributed per server: servers share the host's
 network namespace, so the kernel keeps no per-container counters.
 
+## Branding and Notifications (REST)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/auth/config` | Public. `auth_required` and `brand` (`name`, `tagline`, `logo_url`, `accent`, `support_url`, `billing_url`), so the login screen is branded |
+| `GET` `PUT` `DELETE` | `/api/v1/node/branding` | Operator. Read, set (validated: `#rrggbb` accent, http(s) or `data:image` logo, http(s) links) or reset to the environment's `NEXUS_BRAND_*` defaults |
+| `GET` `PUT` | `/api/v1/notifications` | Operator. `webhooks` (Discord and Slack are formatted, other URLs get JSON), `emails` + `smtp_url` + `smtp_from`, `min_severity` (`info`, `warning`, `critical`). The reply adds `status` (last delivery outcome per channel) and `event_kinds` |
+| `POST` | `/api/v1/notifications/test` | Operator. Sends a test to every channel now and returns each outcome |
+| `GET` `PUT` | `/api/v1/containers/:id/notifications` | The server's owner. `{"webhook_url", "events": [...]}`; empty `events` means everything about the server; blank URL turns it off |
+
+Event kinds: `server.started`, `server.stopped` (info), `server.crashed`,
+`backup.failed`, `schedule.failed` (warning), `server.crash_loop`,
+`server.disk_exceeded` (critical), `backup.completed` (info), `node.health`
+(on transitions; severity follows the state). Repeats of the same condition
+on the same server are held for ten minutes. A generic webhook receives
+`{"kind", "severity", "title", "body", "server": {"id", "name"}, "node", "panel_url", "at"}`.
+
 ## Accounts, API Keys and Audit (REST)
 
 Operator only (an admin session, an admin account or an API key), except

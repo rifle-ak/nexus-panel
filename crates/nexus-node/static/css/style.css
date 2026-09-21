@@ -1078,3 +1078,23 @@ body.scope-servers .admin-only { display: none; }
   border-radius: var(--radius-sm);
   user-select: all;
 }
+
+/* ── Branding ───────────────────────────────────────────────── */
+
+.logo-img { width: 28px; height: 28px; object-fit: contain; border-radius: 6px; }
+.brand-links { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.5rem; }
+.brand-links:empty { display: none; }
+.brand-links a {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+}
+.brand-links a:hover { background: var(--bg-hover); color: var(--text-primary); }
+.login-logo img { width: 48px; height: 48px; object-fit: contain; }
+.checks { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.checks label { font-size: 0.85rem; }
+@media (max-width: 768px) {
+  .sidebar .brand-links { display: none; }
+}

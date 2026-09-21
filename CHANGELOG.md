@@ -7,6 +7,17 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Branding.** The panel takes the operator's name, tagline, logo, accent
+  colour, and billing and support links (`NEXUS_BRAND_*` defaults, editable
+  and persisted on the Settings page). The login screen is branded before
+  anyone signs in; customers get Billing and Support links in the sidebar.
+- **Notifications.** Crashes, crash loops, servers stopped for disk, failed
+  backups, failed scheduled tasks and node health changes go to Discord and
+  Slack webhooks (formatted), any other URL (JSON) and email over SMTP
+  (`lettre`), with a per-channel delivery status and a "Send a test"
+  button. Repeats of the same condition on the same server are held for
+  ten minutes. A server's owner can add their own webhook on the Settings
+  tab and choose which of the server's events they want.
 - **Panel accounts and per-server permissions.** Named accounts (Argon2id
   passwords, stored in `DATA_DIR/.nexus/users.json`) sign in with a
   username; admins have the run of the node, others get grants per server

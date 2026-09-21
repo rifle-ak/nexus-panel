@@ -122,6 +122,8 @@ Current status of all features. Items marked **Done** are functional in the web 
 | HTTPS via Let's Encrypt + Caddy | Done |
 | Systemd service integration | Done |
 | Software update check from UI | Done |
+| Branding / white-label (name, logo, accent, billing and support links) | Done |
+| Notifications: Discord/Slack/generic webhooks and SMTP for crashes, disk stops, failed backups, health; per-server webhook for owners | Done |
 | Configuration hot reload | Backend Ready |
 | Circuit breakers | Backend Ready |
 | Distributed tracing (OpenTelemetry) | Backend Ready |

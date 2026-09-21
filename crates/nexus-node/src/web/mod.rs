@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod firewall;
 pub mod observe;
+pub mod product;
 pub mod provision;
 #[cfg(test)]
 mod router_tests;
@@ -115,6 +116,10 @@ pub struct AppState {
     pub monitor: Arc<crate::stats::ResourceMonitor>,
     /// Panel accounts and API keys.
     pub users: Arc<crate::users::UserStore>,
+    /// Webhooks and email for what happens on the node.
+    pub notifier: Arc<crate::notify::Notifier>,
+    /// What the panel calls itself.
+    pub brand: Arc<crate::branding::BrandStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +424,25 @@ pub fn build_router(shared: S) -> Router {
         )
         .route("/api/v1/provision/sso", post(provision::api_provision_sso))
         // ── Firewall ─────────────────────────────────────────────────
+        // ── Branding and notifications ───────────────────────────────
+        .route(
+            "/api/v1/node/branding",
+            get(product::api_get_branding)
+                .put(product::api_set_branding)
+                .delete(product::api_reset_branding),
+        )
+        .route(
+            "/api/v1/notifications",
+            get(product::api_get_notifications).put(product::api_set_notifications),
+        )
+        .route(
+            "/api/v1/notifications/test",
+            post(product::api_test_notifications),
+        )
+        .route(
+            "/api/v1/containers/:id/notifications",
+            get(product::api_get_server_hook).put(product::api_set_server_hook),
+        )
         // ── Accounts, keys, audit trail ──────────────────────────────
         .route(
             "/api/v1/users",
@@ -663,7 +687,7 @@ fn permission_for(method: &Method, tail: &str) -> Option<crate::subuser::Permiss
                 P::FirewallManage
             }
         }
-        "settings" => {
+        "settings" | "notifications" => {
             if get {
                 P::SettingsRead
             } else {
@@ -691,12 +715,15 @@ fn permission_for(method: &Method, tail: &str) -> Option<crate::subuser::Permiss
 #[derive(Serialize)]
 struct AuthConfigResponse {
     auth_required: bool,
+    /// Name, logo, colour and links, so the login screen is branded too.
+    brand: crate::branding::Brand,
 }
 
 /// Public endpoint so the UI knows whether to show the login screen.
 async fn api_auth_config(State(s): State<S>) -> impl IntoResponse {
     Json(AuthConfigResponse {
         auth_required: s.auth.enabled,
+        brand: s.brand.get().await,
     })
 }
 
@@ -2676,6 +2703,7 @@ pub(super) async fn forget_server(s: &S, id: &str) {
         warn!("Backups of deleted server {} were not removed: {}", id, e);
     }
     s.schedule_manager.delete_all(id).await;
+    s.notifier.forget_server(id).await;
 }
 
 fn backup_to_json(b: crate::backup::BackupInfo) -> BackupJson {

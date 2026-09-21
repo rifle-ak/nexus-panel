@@ -196,6 +196,21 @@ AUTH_ENABLED=true
 # DATA_DIR/.nexus/users.json alongside panel accounts.
 AUTH_API_KEYS=key1,key2
 
+# Branding (defaults; the Settings page can override and persist them)
+# NEXUS_BRAND_NAME=Acme Hosting
+# NEXUS_BRAND_TAGLINE=Sign in to your control panel
+# NEXUS_BRAND_LOGO_URL=https://example.com/logo.png
+# NEXUS_BRAND_ACCENT=#6f8cff
+# NEXUS_SUPPORT_URL=https://example.com/support
+# NEXUS_BILLING_URL=https://billing.example.com
+# NEXUS_PANEL_URL=https://panel.example.com   # used in notification links
+
+# Notifications (defaults; the Settings page can override and persist them)
+# NEXUS_WEBHOOKS=https://discord.com/api/webhooks/…,https://hooks.slack.com/…
+# NEXUS_ALERT_EMAILS=ops@example.com
+# NEXUS_SMTP_URL=smtps://user:pass@smtp.example.com:465
+# NEXUS_SMTP_FROM=Acme Hosting <alerts@example.com>
+
 # Billing / provisioning (optional — see docs/WHMCS.md)
 # The address customers connect to; the node cannot discover it reliably.
 NODE_PUBLIC_IP=203.0.113.10
