@@ -150,6 +150,16 @@ impl MarketplaceManager {
             if let Some(adapter) = self.adapters.get(&installed_mod.provider) {
                 match adapter.get_mod_details(&installed_mod.mod_id).await {
                     Ok(details) => {
+                        // A check fetches fresh details; hand them to the cache so
+                        // the update that follows downloads what the check saw
+                        // rather than a version cached before the release.
+                        {
+                            let mut cache = self.cache.write().await;
+                            cache.set(
+                                format!("{}:{}", installed_mod.provider, installed_mod.mod_id),
+                                details.clone(),
+                            );
+                        }
                         if let Some(latest) = details.versions.first() {
                             if latest.version != installed_mod.version {
                                 updates.push(ModUpdate {

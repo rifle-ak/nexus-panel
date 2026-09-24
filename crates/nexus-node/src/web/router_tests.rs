@@ -52,6 +52,12 @@ struct Harness {
     /// The in-memory "bucket" off-node backups go to.
     bucket: Arc<dyn object_store::ObjectStore>,
     remote_backups: Arc<crate::remote_backup::RemoteBackupStore>,
+    /// The one marketplace provider the harness knows, `fake`.
+    market: crate::mods::testing::FakeMarket,
+    marketplace: Arc<nexus_marketplace::MarketplaceManager>,
+    mods: Arc<crate::mods::ModRegistry>,
+    mod_jobs: crate::mods::SharedModInstallJobStore,
+    manager: Arc<crate::container::ContainerManager>,
     _dir: tempfile::TempDir,
 }
 
@@ -80,6 +86,9 @@ async fn harness() -> Harness {
     };
     let bucket: Arc<dyn object_store::ObjectStore> =
         Arc::new(object_store::memory::InMemory::new());
+    let (market, fake_market) = crate::mods::testing::market();
+    let mod_jobs = Arc::new(crate::mods::ModInstallJobStore::new());
+    let mods = Arc::new(crate::mods::ModRegistry::new(&data_dir));
     let remote_backups = Arc::new(crate::remote_backup::RemoteBackupStore::with_backend(
         &data_dir,
         bucket.clone(),
@@ -104,14 +113,15 @@ async fn harness() -> Harness {
             .with_manager(manager.clone()),
         )),
         metrics: metrics.clone(),
-        marketplace: Arc::new(nexus_marketplace::MarketplaceManager::new()),
+        marketplace: market.clone(),
         node_id: "test-node".into(),
         data_dir: data_dir.to_string_lossy().to_string(),
         start_time: std::time::SystemTime::now(),
         sessions: Arc::new(SessionStore::new(auth.session_ttl)),
         auth: Arc::new(auth),
         update_jobs: Arc::new(crate::update::UpdateJobStore::new()),
-        mod_jobs: Arc::new(crate::mods::ModInstallJobStore::new()),
+        mod_jobs: mod_jobs.clone(),
+        mods: mods.clone(),
         install_jobs: Arc::new(crate::install::InstallJobStore::new()),
         updater: crate::selfupdate::SelfUpdater::new(&data_dir),
         http: reqwest::Client::new(),
@@ -161,6 +171,11 @@ async fn harness() -> Harness {
         notifier,
         bucket,
         remote_backups,
+        market: fake_market,
+        marketplace: market,
+        mods,
+        mod_jobs,
+        manager,
         _dir: dir,
     }
 }
@@ -661,6 +676,14 @@ fn scope_rules() {
     assert!(allow(Method::GET, "/api/v1/containers/a"));
     assert!(allow(Method::POST, "/api/v1/containers/a/files/write"));
     assert!(allow(Method::POST, "/api/v1/containers/a/mods/install"));
+    assert!(allow(Method::GET, "/api/v1/containers/a/mods"));
+    assert!(allow(Method::POST, "/api/v1/containers/a/mods/check"));
+    assert!(allow(
+        Method::POST,
+        "/api/v1/containers/a/mods/umod/x/update"
+    ));
+    assert!(allow(Method::DELETE, "/api/v1/containers/a/mods/umod/x"));
+    assert!(!allow(Method::DELETE, "/api/v1/containers/b/mods/umod/x"));
     assert!(!allow(Method::DELETE, "/api/v1/containers/a"));
     assert!(allow(Method::DELETE, "/api/v1/containers/a/backups/b1"));
     assert!(!allow(Method::GET, "/api/v1/containers/b"));
@@ -2685,4 +2708,216 @@ async fn sftp_settings_follow_the_session() {
             .unwrap_or_default()
             .contains(&id)
     );
+}
+
+/// Poll a server's mod job until it leaves `running`.
+async fn wait_for_mod_job(h: &Harness, id: &str) -> serde_json::Value {
+    for _ in 0..200 {
+        let (status, job, _) = send(
+            &h.app,
+            admin(
+                Method::GET,
+                &format!("/api/v1/containers/{}/mods/install", id),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", job);
+        if job["status"] != "running" {
+            return job;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("mod job for {} never finished", id);
+}
+
+#[tokio::test]
+async fn installed_mods_are_recorded_checked_updated_and_uninstalled() {
+    let h = harness().await;
+    let id = provisioned(&h, "mods-1").await;
+    h.market.publish("a", &["1.0"]);
+    h.market.publish("b", &["5"]);
+    let base = format!("/api/v1/containers/{}/mods", id);
+
+    // Nothing installed yet.
+    let (status, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["mods"], serde_json::json!([]));
+    assert!(body["job"].is_null());
+
+    // Install two mods; each install is recorded once it lands.
+    for (mod_id, dir) in [("a", "oxide/plugins"), ("b", "carbon/plugins")] {
+        let (status, job, _) = send(
+            &h.app,
+            admin(
+                Method::POST,
+                &format!("{}/install", base),
+                Some(
+                    serde_json::json!({ "provider": "fake", "mod_id": mod_id, "target_dir": dir }),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", job);
+        let job = wait_for_mod_job(&h, &id).await;
+        assert_eq!(job["status"], "succeeded", "{}", job);
+    }
+    let (_, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    let mods = body["mods"].as_array().unwrap();
+    assert_eq!(mods.len(), 2, "{}", body);
+    assert_eq!(mods[0]["mod_id"], "a");
+    assert_eq!(mods[0]["name"], "Mod a");
+    assert_eq!(mods[0]["version"], "1.0");
+    assert_eq!(mods[0]["path"], "oxide/plugins/a.cs");
+    assert_eq!(mods[0]["target_dir"], "oxide/plugins");
+    assert_eq!(mods[0]["auto_update"], false);
+    assert!(mods[0]["available_version"].is_null());
+    assert_eq!(mods[1]["path"], "carbon/plugins/b.cs");
+    assert_eq!(body["job"]["status"], "succeeded");
+
+    // Nothing to update until the provider publishes something.
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::POST, &format!("{}/check", base), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert!(body["mods"][0]["checked_at"].is_string());
+    assert!(body["mods"][0]["available_version"].is_null());
+
+    h.market.publish("a", &["1.1", "1.0"]);
+    let (_, body, _) = send(
+        &h.app,
+        admin(Method::POST, &format!("{}/check", base), None),
+    )
+    .await;
+    assert_eq!(body["mods"][0]["available_version"], "1.1", "{}", body);
+    assert_eq!(body["mods"][0]["changelog"], "changes in 1.1");
+    assert!(body["mods"][1]["available_version"].is_null());
+
+    // Updating a mod that is not installed is a 404; updating a real one is
+    // a job like an install, and the record moves to the new version.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::POST, &format!("{}/fake/nope/update", base), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, job, _) = send(
+        &h.app,
+        admin(Method::POST, &format!("{}/fake/a/update", base), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", job);
+    assert_eq!(job["target_dir"], "oxide/plugins");
+    let job = wait_for_mod_job(&h, &id).await;
+    assert_eq!(job["status"], "succeeded", "{}", job);
+    let (_, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    assert_eq!(body["mods"][0]["version"], "1.1", "{}", body);
+    assert!(body["mods"][0]["available_version"].is_null());
+    let plugin = h._dir.path().join(&id).join("oxide/plugins/a.cs");
+    assert_eq!(std::fs::read_to_string(&plugin).unwrap(), "1.1");
+
+    // Auto-update is a per-mod switch.
+    let (status, rec, _) = send(
+        &h.app,
+        admin(
+            Method::PUT,
+            &format!("{}/fake/b", base),
+            Some(serde_json::json!({ "auto_update": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", rec);
+    assert_eq!(rec["auto_update"], true);
+    let (_, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    assert_eq!(body["mods"][1]["auto_update"], true);
+
+    // The periodic checker applies the update for a mod that opted in and
+    // only flags the one that did not.
+    h.market.publish("a", &["1.2", "1.1", "1.0"]);
+    h.market.publish("b", &["6", "5"]);
+    let checker = crate::mods::UpdateChecker {
+        registry: h.mods.clone(),
+        marketplace: h.marketplace.clone(),
+        jobs: h.mod_jobs.clone(),
+        manager: h.manager.clone(),
+        notifier: h.notifier.clone(),
+        data_dir: h._dir.path().to_path_buf(),
+    };
+    let outcome = checker.check_server(&id).await.unwrap();
+    assert_eq!(
+        outcome.newly_available,
+        vec!["Mod a".to_string(), "Mod b".to_string()]
+    );
+    assert_eq!(outcome.updated, vec!["Mod b".to_string()]);
+    assert!(outcome.failed.is_empty());
+    let (_, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    assert_eq!(body["mods"][0]["version"], "1.1");
+    assert_eq!(body["mods"][0]["available_version"], "1.2");
+    assert_eq!(body["mods"][1]["version"], "6", "{}", body);
+    assert!(body["mods"][1]["available_version"].is_null());
+    // A second pass reports nothing new.
+    let outcome = checker.check_server(&id).await.unwrap();
+    assert_eq!(outcome, crate::mods::CheckOutcome::default());
+
+    // Uninstalling removes the files and the record.
+    let (status, body, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("{}/fake/a", base), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["removed"], 1);
+    assert!(!plugin.exists());
+    let (_, body, _) = send(&h.app, admin(Method::GET, &base, None)).await;
+    assert_eq!(body["mods"].as_array().unwrap().len(), 1);
+    assert_eq!(body["mods"][0]["mod_id"], "b");
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("{}/fake/a", base), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A customer's session reaches the Mods tab of its own server only.
+    let (_, sso, _) = send(
+        &h.app,
+        admin(
+            Method::POST,
+            "/api/v1/provision/sso",
+            Some(serde_json::json!({ "server_id": id })),
+        ),
+    )
+    .await;
+    let resp = h
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(sso["path"].as_str().unwrap())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, body, _) = send(&h.app, with_cookie(Method::GET, &base, &cookie)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body);
+    assert_eq!(body["mods"].as_array().unwrap().len(), 1);
+
+    // Deleting the server drops its registry.
+    let (status, _, _) = send(
+        &h.app,
+        admin(Method::DELETE, &format!("/api/v1/containers/{}", id), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(h.mods.servers().await.is_empty());
 }

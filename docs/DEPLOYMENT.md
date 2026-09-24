@@ -221,6 +221,9 @@ AUTH_API_KEYS=key1,key2
 # NEXUS_BACKUP_S3_PATH_STYLE=on                   # MinIO and most self-hosted
 # NEXUS_BACKUP_KEEP_LOCAL=on                      # off: the node keeps no archive
 
+# How often installed mods are checked against their marketplace (hours; 0 = never)
+# NEXUS_MOD_UPDATE_CHECK_HOURS=6
+
 # Notifications (defaults; the Settings page can override and persist them)
 # NEXUS_WEBHOOKS=https://discord.com/api/webhooks/…,https://hooks.slack.com/…
 # NEXUS_ALERT_EMAILS=ops@example.com

@@ -615,6 +615,10 @@ EOF
 # NEXUS_BACKUP_S3_PATH_STYLE=on
 # NEXUS_BACKUP_KEEP_LOCAL=on
 
+# How often mods installed from the marketplace are checked for new versions,
+# in hours. Mods with auto-update on are updated; the rest are flagged. 0 = never.
+# NEXUS_MOD_UPDATE_CHECK_HOURS=6
+
 # Where crashes, disk stops, failed backups and health changes are reported.
 # Discord/Slack webhooks are formatted; any other URL gets JSON. Comma-separated.
 # NEXUS_WEBHOOKS=

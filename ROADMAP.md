@@ -51,7 +51,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Mod detail view | Done (UI) |
 | One-click mod install to running server | Done (API + UI) |
 | Framework selection for Rust mods (Oxide **or** Carbon) | Done (installs to `oxide/plugins` or `carbon/plugins`) |
-| Mod update checking for installed mods | Planned |
+| Mod update checking for installed mods | Done (per-server registry, scheduled check, one-click or automatic update, uninstall) |
 | Dependency resolution | Backend Ready |
 
 > **Provider status.** The **Umod** adapter has been refreshed for the current
