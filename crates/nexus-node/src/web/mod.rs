@@ -11,6 +11,7 @@ pub mod provision;
 #[cfg(test)]
 mod router_tests;
 pub mod settings;
+pub mod sftp;
 pub mod storage;
 pub mod users;
 
@@ -120,6 +121,8 @@ pub struct AppState {
     pub notifier: Arc<crate::notify::Notifier>,
     /// What the panel calls itself.
     pub brand: Arc<crate::branding::BrandStore>,
+    /// SFTP access to servers' files.
+    pub sftp: Arc<crate::sftp::SftpServer>,
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +427,13 @@ pub fn build_router(shared: S) -> Router {
         )
         .route("/api/v1/provision/sso", post(provision::api_provision_sso))
         // ── Firewall ─────────────────────────────────────────────────
+        // ── SFTP ─────────────────────────────────────────────────────
+        .route(
+            "/api/v1/containers/:id/sftp",
+            get(sftp::api_sftp_info)
+                .put(sftp::api_set_sftp_password)
+                .delete(sftp::api_clear_sftp_password),
+        )
         // ── Branding and notifications ───────────────────────────────
         .route(
             "/api/v1/node/branding",
@@ -687,6 +697,7 @@ fn permission_for(method: &Method, tail: &str) -> Option<crate::subuser::Permiss
                 P::FirewallManage
             }
         }
+        "sftp" => P::FileSftp,
         "settings" | "notifications" => {
             if get {
                 P::SettingsRead
@@ -2704,6 +2715,12 @@ pub(super) async fn forget_server(s: &S, id: &str) {
     }
     s.schedule_manager.delete_all(id).await;
     s.notifier.forget_server(id).await;
+    if let Err(e) = s.sftp.credentials.clear(id).await {
+        warn!(
+            "SFTP password of deleted server {} was not removed: {}",
+            id, e
+        );
+    }
 }
 
 fn backup_to_json(b: crate::backup::BackupInfo) -> BackupJson {

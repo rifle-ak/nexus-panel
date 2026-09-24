@@ -7,6 +7,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **SFTP.** The node serves SFTP itself (`russh`, port 2022 by default):
+  the SFTP subsystem only, no shell or exec, every login jailed to one
+  server's directory through the web file manager's path checks, uploads
+  handed to the game user, no symlink creation, writes refused while over
+  the disk allowance. A customer signs in as the server's short id with an
+  SFTP password set on the Settings tab; a panel account signs in as
+  `account.server` with its own password when it is an admin or holds
+  `file.sftp`. Failed logins share the web login throttle and are audited.
+  The host key is generated on first run under `DATA_DIR/.nexus`.
 - **Branding.** The panel takes the operator's name, tagline, logo, accent
   colour, and billing and support links (`NEXUS_BRAND_*` defaults, editable
   and persisted on the Settings page). The login screen is branded before

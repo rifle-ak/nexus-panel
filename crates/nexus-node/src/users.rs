@@ -139,7 +139,7 @@ pub fn validate_password(password: &str) -> Result<()> {
     Ok(())
 }
 
-fn hash_password(password: &str) -> Result<String> {
+pub(crate) fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
@@ -147,7 +147,7 @@ fn hash_password(password: &str) -> Result<String> {
         .map_err(|e| NodeError::Internal(format!("could not hash password: {}", e)))
 }
 
-fn verify_password(hash: &str, candidate: &str) -> bool {
+pub(crate) fn verify_password(hash: &str, candidate: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(hash) else {
         return false;
     };

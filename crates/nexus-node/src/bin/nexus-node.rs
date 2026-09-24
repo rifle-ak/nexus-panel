@@ -430,6 +430,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn web panel server
     let web_server_handle = {
+        let users = Arc::new(nexus_node::users::UserStore::load(&PathBuf::from(
+            &data_dir,
+        )));
+        let login_throttle = Arc::new(nexus_node::web::auth::LoginThrottle::new());
+        let sftp = Arc::new(nexus_node::sftp::SftpServer::new(
+            nexus_node::sftp::SftpSettings::from_env(),
+            PathBuf::from(&data_dir),
+            manager.clone(),
+            users.clone(),
+            login_throttle.clone(),
+            audit_logger.clone(),
+            &node_id,
+        ));
+        if sftp.settings.enabled {
+            match sftp.start().await {
+                Ok(addr) => info!(
+                    "  SFTP: {} (customers connect to {}:{})",
+                    addr,
+                    sftp.settings.public_host.as_deref().unwrap_or("<NEXUS_SFTP_HOST unset>"),
+                    sftp.settings.port()
+                ),
+                Err(e) => error!("SFTP server did not start: {}", e),
+            }
+        } else {
+            info!("  SFTP: off (NEXUS_SFTP=off)");
+        }
         let web_state = nexus_node::web::AppState {
             manager: manager.clone(),
             backup_manager: backup_manager.clone(),
@@ -450,15 +476,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provision: provision_store.clone(),
             provision_settings: provision_settings.clone(),
             sso: Arc::new(nexus_node::web::auth::SsoTokenStore::new()),
-            login_throttle: Arc::new(nexus_node::web::auth::LoginThrottle::new()),
+            login_throttle: login_throttle.clone(),
             audit: audit_logger.clone(),
             firewall: firewall.clone(),
             monitor: monitor.clone(),
-            users: Arc::new(nexus_node::users::UserStore::load(&PathBuf::from(
-                &data_dir,
-            ))),
+            users: users.clone(),
             notifier: notifier.clone(),
             brand: brand.clone(),
+            sftp: sftp.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

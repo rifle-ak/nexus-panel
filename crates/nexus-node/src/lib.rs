@@ -56,6 +56,7 @@ pub mod runtime;
 pub mod schedule;
 pub mod secrets;
 pub mod selfupdate;
+pub mod sftp;
 pub mod stats;
 pub mod update;
 pub mod users;

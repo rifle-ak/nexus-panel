@@ -108,6 +108,9 @@ semver = "1.0"
 chrono-tz = "0.9"
 argon2 = "0.5"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls", "hostname"] }
+russh = "0.45"
+russh-sftp = "2"
+russh-keys = "0.45"
 
 [build-dependencies]
 tonic-build = "0.12"

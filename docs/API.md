@@ -356,6 +356,24 @@ sample as `usage` while the server runs.
 Network traffic is not attributed per server: servers share the host's
 network namespace, so the kernel keeps no per-container counters.
 
+## SFTP (REST)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/containers/:id/sftp` | `enabled`, `host`, `port`, `username` (for this session), `has_password` |
+| `PUT` | `/api/v1/containers/:id/sftp` | `{"password"}` sets the server's SFTP password (10+ characters, stored hashed) |
+| `DELETE` | `/api/v1/containers/:id/sftp` | Removes it |
+
+The node serves SFTP itself on `NEXUS_SFTP_BIND` (default `0.0.0.0:2022`),
+SFTP subsystem only. Usernames: `<server>` (the container id's first eight
+characters) with the server's SFTP password, or `<account>.<server>` with a
+panel account's password when the account is an admin or holds `file.sftp`
+on that server. Every login is jailed to the server's directory through
+the same path checks as the web file manager; uploads belong to the game
+user; symlinks cannot be created; writes are refused while the server is
+over its disk allowance. Failed logins share the web login throttle and
+are audited.
+
 ## Branding and Notifications (REST)
 
 | Method | Path | Purpose |

@@ -123,6 +123,7 @@ Current status of all features. Items marked **Done** are functional in the web 
 | Systemd service integration | Done |
 | Software update check from UI | Done |
 | Branding / white-label (name, logo, accent, billing and support links) | Done |
+| SFTP access for customers (built into the node, jailed per server, panel accounts or per-server password) | Done |
 | Notifications: Discord/Slack/generic webhooks and SMTP for crashes, disk stops, failed backups, health; per-server webhook for owners | Done |
 | Configuration hot reload | Backend Ready |
 | Circuit breakers | Backend Ready |
