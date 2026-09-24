@@ -7,6 +7,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Off-node backups.** Every completed backup is copied to an
+  S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, MinIO,
+  Hetzner, DigitalOcean Spaces) as `<prefix>/<server>/<id>.tar.gz` with its
+  record beside it. Configured from `NEXUS_BACKUP_S3_*` or the Settings
+  page (secret kept in a 0600 file, never returned), with a "Test" that
+  writes and reads back an object. `keep_local` off leaves the node with no
+  archive; restores and downloads fetch from the bucket. After a rebuild,
+  "Sync from bucket" adopts the records there. Deleting a backup or a
+  server removes its copies. A failed copy is shown on the Backups tab and
+  reported as `backup.failed`.
 - **SFTP.** The node serves SFTP itself (`russh`, port 2022 by default):
   the SFTP subsystem only, no shell or exec, every login jailed to one
   server's directory through the web file manager's path checks, uploads

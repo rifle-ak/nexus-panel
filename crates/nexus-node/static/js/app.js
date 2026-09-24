@@ -1079,7 +1079,7 @@ async function loadBackups() {
     if (!tbody) return;
 
     if (backups.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">No backups yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:2rem">No backups yet</td></tr>';
       return;
     }
 
@@ -1090,6 +1090,7 @@ async function loadBackups() {
         <td class="text-muted">${fmtBytes(b.size)}</td>
         <td class="text-muted text-sm">${new Date(b.created_at * 1000).toLocaleString()}</td>
         <td>${statusBadge(b.status)}</td>
+        <td>${remoteBadge(b)}</td>
         <td>
           <div class="btn-group">
             ${b.status === 'completed' ? `<button class="btn btn-xs btn-success" onclick="NX.restoreBackup('${b.id}')">Restore</button>
@@ -1100,6 +1101,16 @@ async function loadBackups() {
       </tr>
     `).join('');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+function remoteBadge(b) {
+  if (b.remote) {
+    const where = b.local ? 'copied' : 'bucket only';
+    return `<span class="badge badge-success" title="${esc(b.remote.bucket)}/${esc(b.remote.key)}">${where}</span>`;
+  }
+  if (b.remote_error) return `<span class="badge badge-danger" title="${esc(b.remote_error)}">copy failed</span>`;
+  if (b.status !== 'completed') return '<span class="text-muted">—</span>';
+  return b.local === false ? '<span class="badge badge-danger">missing</span>' : '<span class="text-muted text-sm">node only</span>';
 }
 
 NX.createBackup = async function() {
@@ -1551,9 +1562,101 @@ async function renderSettings() {
   } catch (e) { toast(e.message, 'error'); }
   renderAccountCard();
   renderBrandingForm();
+  renderRemoteBackupForm();
   renderNotifyForm();
   NX.checkForUpdates();
 }
+
+// ── Off-node backups ──────────────────────────────────────────────
+
+function remoteStatusHtml(r) {
+  const s = r.status || {};
+  if (s.last_error) return `<span class="badge badge-danger">failed</span> <span class="text-muted text-xs">${esc(s.last_error)}</span>`;
+  if (s.last_ok_at) return `<span class="badge badge-success">ok</span> <span class="text-muted text-xs">last contact ${new Date(s.last_ok_at * 1000).toLocaleString()}</span>`;
+  return `<span class="text-muted text-sm">${r.enabled ? 'No contact yet; press Test.' : 'Off.'}</span>`;
+}
+
+async function renderRemoteBackupForm() {
+  const el = document.getElementById('remote-backup-form');
+  if (!el) return;
+  try {
+    const r = await api('/backups/remote');
+    el.innerHTML = `
+      <div class="settings-grid">
+        <div class="form-group"><label class="form-label">Bucket</label>
+          <input type="text" class="form-input" id="rb-bucket" style="width:100%" value="${esc(r.bucket || '')}" placeholder="acme-game-backups"></div>
+        <div class="form-group"><label class="form-label">Endpoint</label>
+          <input type="text" class="form-input" id="rb-endpoint" style="width:100%" value="${esc(r.endpoint || '')}" placeholder="https://s3.eu-central-1.wasabisys.com">
+          <div class="form-hint">Blank for AWS S3. R2: https://&lt;account&gt;.r2.cloudflarestorage.com; B2: https://s3.&lt;region&gt;.backblazeb2.com; MinIO: http://minio:9000</div></div>
+        <div class="form-group"><label class="form-label">Region</label>
+          <input type="text" class="form-input" id="rb-region" style="width:100%" value="${esc(r.region || '')}" placeholder="us-east-1"></div>
+        <div class="form-group"><label class="form-label">Prefix</label>
+          <input type="text" class="form-input" id="rb-prefix" style="width:100%" value="${esc(r.prefix || 'nexus')}" placeholder="nexus/node1">
+          <div class="form-hint">Give each node its own prefix when they share a bucket</div></div>
+        <div class="form-group"><label class="form-label">Access key</label>
+          <input type="text" class="form-input" id="rb-access" style="width:100%" value="${esc(r.access_key || '')}" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">Secret key</label>
+          <input type="password" class="form-input" id="rb-secret" style="width:100%" autocomplete="new-password" placeholder="${r.has_secret_key ? '•••••••• (kept unless changed)' : ''}">
+          <div class="form-hint">Leave both blank on AWS to use the instance role</div></div>
+      </div>
+      <div class="checks" style="margin-top:0.75rem">
+        <label><input type="checkbox" id="rb-enabled" ${r.enabled ? 'checked' : ''}> Copy backups to the bucket</label>
+        <label><input type="checkbox" id="rb-path" ${r.path_style ? 'checked' : ''}> Path-style requests (MinIO and most self-hosted)</label>
+        <label><input type="checkbox" id="rb-keep" ${r.keep_local ? 'checked' : ''}> Keep a copy on the node too</label>
+      </div>
+      <div style="margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="NX.saveRemoteBackups()">Save</button>
+        <button class="btn btn-sm" onclick="NX.testRemoteBackups()">Test</button>
+        <button class="btn btn-sm" onclick="NX.syncRemoteBackups()" title="Adopt backups in the bucket this node does not know about">Sync from bucket</button>
+        <button class="btn btn-sm" onclick="NX.resetRemoteBackups()">Reset to environment</button>
+      </div>
+      <div style="margin-top:1rem" id="rb-status">${remoteStatusHtml(r)}</div>`;
+  } catch (e) { el.innerHTML = `<p class="text-muted text-sm">${esc(e.message)}</p>`; }
+}
+
+NX.saveRemoteBackups = async function() {
+  const v = id => document.getElementById(id).value.trim();
+  const on = id => document.getElementById(id).checked;
+  try {
+    await api('/backups/remote', { method: 'PUT', body: JSON.stringify({
+      enabled: on('rb-enabled'), bucket: v('rb-bucket'), endpoint: v('rb-endpoint') || null,
+      region: v('rb-region') || null, prefix: v('rb-prefix') || 'nexus',
+      access_key: v('rb-access') || null, secret_key: v('rb-secret') || null,
+      path_style: on('rb-path'), keep_local: on('rb-keep'),
+    }) });
+    toast('Off-node backup settings saved', 'success');
+    renderRemoteBackupForm();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.testRemoteBackups = async function() {
+  toast('Testing the bucket…', 'info');
+  try {
+    const r = await api('/backups/remote/test', { method: 'POST' });
+    const el = document.getElementById('rb-status');
+    if (el) el.innerHTML = r.ok
+      ? `<span class="badge badge-success">ok</span> <span class="text-muted text-xs">${esc(r.message)} in ${r.latency_ms} ms</span>`
+      : `<span class="badge badge-danger">failed</span> <span class="text-muted text-xs">${esc(r.message)}</span>`;
+    toast(r.ok ? 'Bucket is writable' : r.message, r.ok ? 'success' : 'error');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.syncRemoteBackups = async function() {
+  try {
+    const r = await api('/backups/remote/sync', { method: 'POST' });
+    toast(r.adopted ? `Adopted ${r.adopted} backup${r.adopted === 1 ? '' : 's'} from the bucket` : 'Nothing new in the bucket', 'success');
+    renderRemoteBackupForm();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.resetRemoteBackups = async function() {
+  if (!confirm('Forget these bucket settings and go back to the node\u2019s environment?')) return;
+  try {
+    await api('/backups/remote', { method: 'DELETE' });
+    toast('Off-node backup settings reset', 'success');
+    renderRemoteBackupForm();
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 async function renderBrandingForm() {
   const el = document.getElementById('branding-form');

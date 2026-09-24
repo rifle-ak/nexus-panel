@@ -10,8 +10,13 @@
 //! verified and unpacked beside the directory, then the two are swapped, so
 //! a failure part-way leaves the server exactly as it was. The files come
 //! out owned by the game user.
+//!
+//! With an off-node bucket configured (`remote_backup`), every completed
+//! archive is copied there as well; a restore fetches an archive the node
+//! no longer holds, and records left in the bucket are adopted on start.
 
 use crate::error::{NodeError, Result};
+use crate::remote_backup::{RemoteBackupStore, RemoteRef};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -52,6 +57,12 @@ pub struct BackupInfo {
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// The off-node copy, when there is one.
+    #[serde(default)]
+    pub remote: Option<RemoteRef>,
+    /// Why the off-node copy was not made.
+    #[serde(default)]
+    pub remote_error: Option<String>,
 }
 
 /// Backup manager for containers
@@ -67,6 +78,9 @@ pub struct BackupManager {
 
     /// Who restored files belong to.
     owner: Option<(u32, u32)>,
+
+    /// The bucket copies go to, when configured.
+    remote: Option<Arc<RemoteBackupStore>>,
 }
 
 impl BackupManager {
@@ -78,7 +92,18 @@ impl BackupManager {
             backup_dir,
             backups: Arc::new(RwLock::new(HashMap::new())),
             owner: None,
+            remote: None,
         }
+    }
+
+    /// Copy every completed backup to this bucket as well.
+    pub fn with_remote(mut self, remote: Arc<RemoteBackupStore>) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
+    pub fn remote(&self) -> Option<&Arc<RemoteBackupStore>> {
+        self.remote.as_ref()
     }
 
     /// Give restored files to `uid:gid` (the game user).
@@ -94,7 +119,47 @@ impl BackupManager {
         if loaded > 0 {
             info!("Loaded {} backup record(s) from disk", loaded);
         }
+        if let Some(remote) = &self.remote {
+            if remote.enabled().await {
+                match self.sync_from_remote().await {
+                    Ok(0) => {}
+                    Ok(n) => info!("Adopted {} backup record(s) from the bucket", n),
+                    Err(e) => warn!("Could not read backup records from the bucket: {}", e),
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Adopt records in the bucket the node does not have: after a rebuild,
+    /// or when another copy of the settings pointed here. Returns how many.
+    pub async fn sync_from_remote(&self) -> Result<usize> {
+        let remote = self.remote.as_ref().ok_or_else(|| {
+            NodeError::InvalidInput("off-node backups are not configured".to_string())
+        })?;
+        let records = remote.records().await?;
+        let mut adopted = 0;
+        for mut info in records {
+            let known = self
+                .backups
+                .read()
+                .await
+                .get(&info.container_id)
+                .map(|c| c.contains_key(&info.id))
+                .unwrap_or(false);
+            if known || info.status != BackupStatus::Completed {
+                continue;
+            }
+            if !self.data_dir.join(&info.container_id).exists() {
+                // Not a server on this node; leave it to whichever node owns it.
+                continue;
+            }
+            info.remote_error = None;
+            fs::create_dir_all(self.backup_dir.join(&info.container_id)).await?;
+            self.register(&info).await;
+            adopted += 1;
+        }
+        Ok(adopted)
     }
 
     /// Read every `<id>.json` under the backup directory. An archive with
@@ -135,14 +200,14 @@ impl BackupManager {
             // file. Archives without records: adopt them.
             records.retain(|id, info| {
                 let present = archives.iter().any(|a| a == id);
-                if !present && info.status == BackupStatus::Completed {
+                if !present && info.status == BackupStatus::Completed && info.remote.is_none() {
                     warn!(
                         "Backup {} of {} has no archive on disk; dropping its record",
                         id, container_id
                     );
                     let _ = std::fs::remove_file(self.record_path(&container_id, id));
                 }
-                present || info.status != BackupStatus::Completed
+                present || info.status != BackupStatus::Completed || info.remote.is_some()
             });
             for id in archives {
                 if records.contains_key(&id) {
@@ -176,6 +241,8 @@ impl BackupManager {
                     error: None,
                     include: Vec::new(),
                     exclude: Vec::new(),
+                    remote: None,
+                    remote_error: None,
                 };
                 let _ = self.write_record(&info);
                 records.insert(id, info);
@@ -252,6 +319,8 @@ impl BackupManager {
             error: None,
             include: include_paths.iter().map(|p| normalize(p)).collect(),
             exclude: exclude_paths.iter().map(|p| normalize(p)).collect(),
+            remote: None,
+            remote_error: None,
         };
         self.register(&backup_info).await;
 
@@ -288,7 +357,67 @@ impl BackupManager {
         }
 
         self.register(&backup_info).await;
+        self.copy_off_node(&mut backup_info).await;
         Ok(backup_info)
+    }
+
+    /// Copy a completed backup to the bucket, when there is one. Failure
+    /// is recorded on the backup, not returned: the local copy is good.
+    async fn copy_off_node(&self, info: &mut BackupInfo) {
+        let Some(remote) = &self.remote else {
+            return;
+        };
+        if !remote.enabled().await {
+            return;
+        }
+        let archive = self.archive_path(&info.container_id, &info.id);
+        match remote.upload(info, &archive).await {
+            Ok(r) => {
+                info.remote = Some(r);
+                info.remote_error = None;
+                self.register(info).await;
+                if !remote.keep_local().await {
+                    if let Err(e) = fs::remove_file(&archive).await {
+                        warn!(
+                            "Backup {} is in the bucket but its local copy stays: {}",
+                            info.id, e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Backup {} of {} was not copied off-node: {}",
+                    info.id, info.container_id, e
+                );
+                info.remote_error = Some(e.to_string());
+                self.register(info).await;
+            }
+        }
+    }
+
+    /// The archive on disk, fetched from the bucket first if the node no
+    /// longer holds it.
+    pub async fn ensure_local(&self, container_id: &str, backup_id: &str) -> Result<PathBuf> {
+        let backup = self.get_backup(container_id, backup_id).await?;
+        let path = self.archive_path(container_id, backup_id);
+        if path.exists() {
+            return Ok(path);
+        }
+        match (&backup.remote, &self.remote) {
+            (Some(_), Some(remote)) => {
+                remote.download(container_id, backup_id, &path).await?;
+                Ok(path)
+            }
+            (Some(_), None) => Err(NodeError::InvalidInput(
+                "the archive is only in the bucket and off-node backups are not configured"
+                    .to_string(),
+            )),
+            (None, _) => Err(NodeError::InvalidInput(format!(
+                "Backup file not found: {}",
+                path.display()
+            ))),
+        }
     }
 
     /// Delete the oldest completed backups beyond `keep`. Returns the ids
@@ -456,14 +585,9 @@ impl BackupManager {
         }
 
         let container_dir = self.data_dir.join(container_id);
-        let backup_path = self.archive_path(container_id, backup_id);
-
-        if !backup_path.exists() {
-            return Err(NodeError::InvalidInput(format!(
-                "Backup file not found: {}",
-                backup_path.display()
-            )));
-        }
+        let backup_path = self.ensure_local(container_id, backup_id).await?;
+        // Fetched only for this restore: drop it again afterwards.
+        let fetched = backup.remote.is_some() && !self.keep_local().await;
 
         // Verify checksum (a recovered archive has none on record).
         if !backup.checksum.is_empty() {
@@ -516,13 +640,40 @@ impl BackupManager {
             "Restored backup {} for container {}",
             backup_id, container_id
         );
+        if fetched {
+            let _ = fs::remove_file(&backup_path).await;
+        }
 
         Ok(())
+    }
+
+    async fn keep_local(&self) -> bool {
+        match &self.remote {
+            Some(r) => r.keep_local().await,
+            None => true,
+        }
     }
 
     /// Delete a backup
     pub async fn delete_backup(&self, container_id: &str, backup_id: &str) -> Result<()> {
         let backup_path = self.archive_path(container_id, backup_id);
+
+        // The off-node copy first: if the bucket cannot be reached the
+        // backup stays listed, rather than leaving an orphan behind.
+        let has_remote = self
+            .get_backup(container_id, backup_id)
+            .await
+            .map(|b| b.remote.is_some())
+            .unwrap_or(false);
+        if has_remote {
+            let remote = self.remote.as_ref().ok_or_else(|| {
+                NodeError::InvalidInput(
+                    "this backup has an off-node copy and off-node backups are not configured"
+                        .to_string(),
+                )
+            })?;
+            remote.delete(container_id, backup_id).await?;
+        }
 
         // Remove from registry
         {
@@ -548,6 +699,16 @@ impl BackupManager {
 
     /// Drop every backup of a container: its archives, records and folder.
     pub async fn delete_all(&self, container_id: &str) -> Result<()> {
+        if let Some(remote) = &self.remote {
+            if remote.enabled().await {
+                if let Err(e) = remote.delete_all(container_id).await {
+                    warn!(
+                        "Off-node backups of {} were not removed: {}",
+                        container_id, e
+                    );
+                }
+            }
+        }
         self.backups.write().await.remove(container_id);
         let dir = self.backup_dir.join(container_id);
         if dir.exists() {
@@ -640,6 +801,17 @@ pub async fn backup_server(
     let include = paths.filter(|p| !p.is_empty()).unwrap_or_else(|| policy.include.clone());
     let info = match backups.create_backup(container_id, name, &include, &policy.exclude).await {
         Ok(info) => {
+            if let Some(err) = &info.remote_error {
+                manager.notify(
+                    crate::notify::Notification::new(
+                        "backup.failed",
+                        crate::notify::Severity::Warning,
+                        format!("Off-node copy of {} backup failed", state.name),
+                        format!("{} is on the node but not in the bucket: {}", name, err),
+                    )
+                    .for_server(container_id, &state.name),
+                );
+            }
             manager.notify(
                 crate::notify::Notification::new(
                     "backup.completed",
@@ -923,6 +1095,8 @@ mod tests {
         .unwrap();
         // A record whose archive is gone.
         let ghost = BackupInfo {
+            remote: None,
+            remote_error: None,
             id: "ghost".into(),
             container_id: id.into(),
             name: "ghost".into(),
@@ -955,6 +1129,127 @@ mod tests {
         fs::write(dir.join("a.txt"), "changed").await.unwrap();
         manager.restore_backup(id, "orphan", true).await.unwrap();
         assert_eq!(fs::read_to_string(dir.join("a.txt")).await.unwrap(), "a");
+    }
+
+    #[tokio::test]
+    async fn off_node_copies_outlive_the_node() {
+        use crate::remote_backup::{RemoteBackupStore, RemoteSettings};
+        use futures::StreamExt;
+
+        let temp = TempDir::new().unwrap();
+        let id = "srv";
+        let dir = temp.path().join(id);
+        fs::create_dir_all(&dir).await.unwrap();
+        fs::write(dir.join("world.dat"), "first").await.unwrap();
+        let bucket: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let remote = Arc::new(RemoteBackupStore::with_backend(
+            temp.path(),
+            bucket.clone(),
+            "nodes/one",
+        ));
+        let objects = || async {
+            bucket
+                .list(None)
+                .map(|m| m.unwrap().location.to_string())
+                .collect::<Vec<_>>()
+                .await
+        };
+
+        let manager = BackupManager::new(temp.path()).with_remote(remote.clone());
+        manager.init().await.unwrap();
+
+        // Kept locally and copied.
+        let first = manager.create_backup(id, "first", &[], &[]).await.unwrap();
+        let first_ref = first.remote.clone().expect("copied off-node");
+        assert_eq!(
+            first_ref.key,
+            format!("nodes/one/{}/{}.tar.gz", id, first.id)
+        );
+        assert!(manager.get_backup_path(id, &first.id).exists());
+        let keys = objects().await;
+        assert_eq!(keys.len(), 2, "{:?}", keys);
+
+        // Off-node only: the local archive goes once the copy is up, and a
+        // restore fetches it back.
+        remote
+            .set(RemoteSettings {
+                enabled: true,
+                bucket: "local".into(),
+                prefix: "nodes/one".into(),
+                keep_local: false,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        fs::write(dir.join("world.dat"), "second").await.unwrap();
+        let second = manager.create_backup(id, "second", &[], &[]).await.unwrap();
+        assert!(second.remote.is_some());
+        assert!(!manager.get_backup_path(id, &second.id).exists());
+        fs::write(dir.join("world.dat"), "scribbled").await.unwrap();
+        manager.restore_backup(id, &second.id, true).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("world.dat")).await.unwrap(),
+            "second"
+        );
+        assert!(!manager.get_backup_path(id, &second.id).exists());
+        // The fetched copy stays when the node keeps archives.
+        fs::write(dir.join("world.dat"), "scribbled").await.unwrap();
+        manager.restore_backup(id, &first.id, false).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("world.dat")).await.unwrap(),
+            "first"
+        );
+
+        // The node is rebuilt: nothing under backups/, same bucket.
+        fs::remove_dir_all(temp.path().join("backups")).await.unwrap();
+        let rebuilt = BackupManager::new(temp.path()).with_remote(remote.clone());
+        rebuilt.init().await.unwrap();
+        let list = rebuilt.list_backups(id).await.unwrap();
+        let mut names: Vec<&str> = list.iter().map(|b| b.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["first", "second"]);
+        assert!(list.iter().all(|b| b.remote.is_some()));
+        assert_eq!(rebuilt.sync_from_remote().await.unwrap(), 0);
+        fs::write(dir.join("world.dat"), "scribbled").await.unwrap();
+        rebuilt.restore_backup(id, &first.id, true).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("world.dat")).await.unwrap(),
+            "first"
+        );
+
+        // Deleting takes the copy with it; deleting the server takes the rest.
+        rebuilt.delete_backup(id, &first.id).await.unwrap();
+        let keys = objects().await;
+        assert_eq!(keys.len(), 2, "{:?}", keys);
+        assert!(keys.iter().all(|k| k.contains(&second.id)), "{:?}", keys);
+        rebuilt.delete_all(id).await.unwrap();
+        assert!(objects().await.is_empty());
+
+        // Records for servers this node does not have are left alone.
+        let stray = BackupInfo {
+            id: "stray".into(),
+            container_id: "elsewhere".into(),
+            name: "stray".into(),
+            size: 1,
+            created_at: 1,
+            checksum: String::new(),
+            status: BackupStatus::Completed,
+            error: None,
+            include: vec![],
+            exclude: vec![],
+            remote: None,
+            remote_error: None,
+        };
+        bucket
+            .put(
+                &object_store::path::Path::from("nodes/one/elsewhere/stray.json"),
+                serde_json::to_vec(&stray).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rebuilt.sync_from_remote().await.unwrap(), 0);
+        assert!(rebuilt.list_backups("elsewhere").await.unwrap().is_empty());
     }
 
     #[tokio::test]

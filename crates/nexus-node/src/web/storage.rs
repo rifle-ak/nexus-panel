@@ -186,7 +186,11 @@ pub(super) async fn api_download_backup(
     if backup.status != crate::backup::BackupStatus::Completed {
         return Err(err_json(StatusCode::CONFLICT, "backup is not complete"));
     }
-    let path = s.backup_manager.get_backup_path(&id, &backup_id);
+    let path = s
+        .backup_manager
+        .ensure_local(&id, &backup_id)
+        .await
+        .map_err(|e| err_json(StatusCode::NOT_FOUND, e.to_string()))?;
     let meta = tokio::fs::metadata(&path)
         .await
         .map_err(|_| err_json(StatusCode::NOT_FOUND, "backup file is missing"))?;

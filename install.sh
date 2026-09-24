@@ -604,6 +604,17 @@ EOF
 # The host customers connect to; defaults to NODE_PUBLIC_IP.
 # NEXUS_SFTP_HOST=
 
+# Off-node backups: an S3-compatible bucket (AWS, B2, Wasabi, R2, MinIO, …)
+# every backup is copied to. The Settings page can change these.
+# NEXUS_BACKUP_S3_BUCKET=
+# NEXUS_BACKUP_S3_ENDPOINT=
+# NEXUS_BACKUP_S3_REGION=us-east-1
+# NEXUS_BACKUP_S3_ACCESS_KEY=
+# NEXUS_BACKUP_S3_SECRET_KEY=
+# NEXUS_BACKUP_S3_PREFIX=nexus
+# NEXUS_BACKUP_S3_PATH_STYLE=on
+# NEXUS_BACKUP_KEEP_LOCAL=on
+
 # Where crashes, disk stops, failed backups and health changes are reported.
 # Discord/Slack webhooks are formatted; any other URL gets JSON. Comma-separated.
 # NEXUS_WEBHOOKS=

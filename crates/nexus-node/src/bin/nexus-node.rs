@@ -297,9 +297,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
     }
 
-    // Initialize backup manager
+    // Initialize backup manager, with the off-node bucket when configured.
+    let remote_backups = Arc::new(nexus_node::remote_backup::RemoteBackupStore::load(
+        &PathBuf::from(data_dir.clone()),
+    ));
+    if remote_backups.enabled().await {
+        let v = remote_backups.view().await;
+        info!(
+            "Off-node backups go to bucket {} ({}), prefix {}",
+            v.bucket,
+            v.endpoint.as_deref().unwrap_or("AWS S3"),
+            v.prefix
+        );
+    }
     let backup_manager = Arc::new(
-        BackupManager::new(&PathBuf::from(data_dir.clone())).with_owner(manager.game_user()),
+        BackupManager::new(&PathBuf::from(data_dir.clone()))
+            .with_owner(manager.game_user())
+            .with_remote(remote_backups.clone()),
     );
     backup_manager.init().await?;
 
@@ -484,6 +498,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             notifier: notifier.clone(),
             brand: brand.clone(),
             sftp: sftp.clone(),
+            remote_backups: remote_backups.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = nexus_node::start_web_server(web_state, web_bind).await {

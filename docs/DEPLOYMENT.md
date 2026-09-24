@@ -210,6 +210,17 @@ AUTH_API_KEYS=key1,key2
 # NEXUS_SFTP_BIND=0.0.0.0:2022
 # NEXUS_SFTP_HOST=node1.example.com            # defaults to NODE_PUBLIC_IP
 
+# Off-node backups: an S3-compatible bucket every backup is copied to
+# (defaults; the Settings page can override and persist them)
+# NEXUS_BACKUP_S3_BUCKET=acme-game-backups
+# NEXUS_BACKUP_S3_ENDPOINT=https://s3.eu-central-1.wasabisys.com   # blank for AWS
+# NEXUS_BACKUP_S3_REGION=us-east-1
+# NEXUS_BACKUP_S3_ACCESS_KEY=
+# NEXUS_BACKUP_S3_SECRET_KEY=
+# NEXUS_BACKUP_S3_PREFIX=nexus/node1              # one prefix per node
+# NEXUS_BACKUP_S3_PATH_STYLE=on                   # MinIO and most self-hosted
+# NEXUS_BACKUP_KEEP_LOCAL=on                      # off: the node keeps no archive
+
 # Notifications (defaults; the Settings page can override and persist them)
 # NEXUS_WEBHOOKS=https://discord.com/api/webhooks/…,https://hooks.slack.com/…
 # NEXUS_ALERT_EMAILS=ops@example.com

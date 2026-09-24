@@ -200,7 +200,7 @@
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>Name</th><th>Contents</th><th>Size</th><th>Date</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Name</th><th>Contents</th><th>Size</th><th>Date</th><th>Status</th><th>Off-node</th><th>Actions</th></tr>
           </thead>
           <tbody id="backup-table-body"></tbody>
         </table>
@@ -490,6 +490,11 @@
       <h3>Branding</h3>
       <p class="text-muted text-sm" style="margin:0.5rem 0 1rem">What customers see: the name, logo and colour, and where the sidebar sends them for billing and support.</p>
       <div id="branding-form"><span class="text-muted text-sm">Loading…</span></div>
+    </div>
+    <div class="card" style="padding:1.5rem;margin-top:1rem">
+      <h3>Off-node backups</h3>
+      <p class="text-muted text-sm" style="margin:0.5rem 0 1rem">Copy every backup to an S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, MinIO, Hetzner, DigitalOcean Spaces) so it outlives this node. Restores fetch what the node no longer holds; after a rebuild, Sync adopts what is in the bucket.</p>
+      <div id="remote-backup-form"><span class="text-muted text-sm">Loading…</span></div>
     </div>
     <div class="card" style="padding:1.5rem;margin-top:1rem">
       <h3>Notifications</h3>
