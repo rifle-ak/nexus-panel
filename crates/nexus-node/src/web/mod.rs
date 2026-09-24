@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod firewall;
+pub mod mods;
 pub mod observe;
 pub mod product;
 pub mod provision;
@@ -94,6 +95,8 @@ pub struct AppState {
     pub sessions: Arc<auth::SessionStore>,
     pub update_jobs: crate::update::SharedUpdateJobStore,
     pub mod_jobs: crate::mods::SharedModInstallJobStore,
+    /// What the panel has installed into each server, for update checks.
+    pub mods: Arc<crate::mods::ModRegistry>,
     pub install_jobs: crate::install::SharedInstallJobStore,
     /// Applies updates to the node itself.
     pub updater: crate::selfupdate::SelfUpdater,
@@ -384,6 +387,19 @@ pub fn build_router(shared: S) -> Router {
         .route(
             "/api/v1/containers/:id/mods/install",
             get(api_install_mod_status).post(api_install_mod),
+        )
+        .route("/api/v1/containers/:id/mods", get(mods::api_list_mods))
+        .route(
+            "/api/v1/containers/:id/mods/check",
+            post(mods::api_check_mods),
+        )
+        .route(
+            "/api/v1/containers/:id/mods/:provider/:mod_id",
+            put(mods::api_set_mod).delete(mods::api_uninstall_mod),
+        )
+        .route(
+            "/api/v1/containers/:id/mods/:provider/:mod_id/update",
+            post(mods::api_update_mod),
         )
         // ── Game-file install (runs once, before first start) ────────
         .route(
@@ -728,13 +744,11 @@ fn permission_for(method: &Method, tail: &str) -> Option<crate::subuser::Permiss
                 P::SettingsReinstall
             }
         }
-        "mods" => {
-            if get {
-                P::FileRead
-            } else {
-                P::FileWrite
-            }
-        }
+        "mods" => match *method {
+            Method::GET => P::FileRead,
+            Method::DELETE => P::FileDelete,
+            _ => P::FileWrite,
+        },
         _ => return None,
     })
 }
@@ -2219,17 +2233,24 @@ async fn api_install_mod(
         .await
         .map_err(|e| err_json(StatusCode::CONFLICT, e))?;
 
-    let server_dir = fm.server_dir().to_path_buf();
-    tokio::spawn(crate::mods::run_install(
-        s.mod_jobs.clone(),
-        s.marketplace.clone(),
-        id,
-        body.provider,
-        body.mod_id,
-        body.version,
+    let spec = crate::mods::InstallSpec {
+        container_id: id,
+        provider: body.provider,
+        mod_id: body.mod_id,
+        version: body.version,
+        target_dir: subdir,
         target,
-        server_dir,
-    ));
+        server_dir: fm.server_dir().to_path_buf(),
+    };
+    tokio::spawn(async move {
+        let _ = crate::mods::run_install(
+            s.mod_jobs.clone(),
+            s.marketplace.clone(),
+            s.mods.clone(),
+            spec,
+        )
+        .await;
+    });
 
     Ok(Json(job))
 }
@@ -2739,6 +2760,12 @@ pub(super) async fn forget_server(s: &S, id: &str) {
     }
     s.schedule_manager.delete_all(id).await;
     s.notifier.forget_server(id).await;
+    if let Err(e) = s.mods.forget(id).await {
+        warn!(
+            "Mod registry of deleted server {} was not removed: {}",
+            id, e
+        );
+    }
     if let Err(e) = s.sftp.credentials.clear(id).await {
         warn!(
             "SFTP password of deleted server {} was not removed: {}",

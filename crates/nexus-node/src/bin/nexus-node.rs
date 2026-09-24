@@ -400,6 +400,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(mgr)
     };
 
+    // What the panel has installed into each server, and the one-at-a-time
+    // install jobs that feed it.
+    let mod_registry = Arc::new(nexus_node::mods::ModRegistry::new(std::path::Path::new(
+        &data_dir,
+    )));
+    let mod_jobs = Arc::new(nexus_node::mods::ModInstallJobStore::new());
+
     // Web panel authentication (shares AUTH_ENABLED / AUTH_PASSWORD /
     // AUTH_API_KEYS with the gRPC auth stack).
     let web_auth_config = nexus_node::web::auth::WebAuthConfig::from_env();
@@ -486,7 +493,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             install_jobs: Arc::new(nexus_node::install::InstallJobStore::new()),
             updater: nexus_node::selfupdate::SelfUpdater::new(&PathBuf::from(&data_dir)),
             http: reqwest::Client::new(),
-            mod_jobs: Arc::new(nexus_node::mods::ModInstallJobStore::new()),
+            mod_jobs: mod_jobs.clone(),
+            mods: mod_registry.clone(),
             provision: provision_store.clone(),
             provision_settings: provision_settings.clone(),
             sso: Arc::new(nexus_node::web::auth::SsoTokenStore::new()),
@@ -561,6 +569,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
     };
+
+    // Check installed mods against their marketplaces on a schedule: flag
+    // new versions, apply them where a mod opted in.
+    match nexus_node::mods::check_interval_from_env() {
+        Some(every) => {
+            info!("  Mod update check: every {}h", every.as_secs() / 3600);
+            let checker = nexus_node::mods::UpdateChecker {
+                registry: mod_registry.clone(),
+                marketplace: marketplace.clone(),
+                jobs: mod_jobs.clone(),
+                manager: manager.clone(),
+                notifier: notifier.clone(),
+                data_dir: std::path::PathBuf::from(&data_dir),
+            };
+            tokio::spawn(checker.run(every));
+        }
+        None => info!("  Mod update check: off (NEXUS_MOD_UPDATE_CHECK_HOURS=0)"),
+    }
 
     // Spawn periodic metrics updates
     let metrics_update_handle = {

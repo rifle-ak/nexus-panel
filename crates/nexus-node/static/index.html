@@ -143,6 +143,7 @@
       <button class="tab" data-tab="files" onclick="NX.switchTab('files')">Files</button>
       <button class="tab" data-tab="backups" onclick="NX.switchTab('backups')">Backups</button>
       <button class="tab" data-tab="schedules" onclick="NX.switchTab('schedules')">Schedules</button>
+      <button class="tab" data-tab="mods" onclick="NX.switchTab('mods')">Mods</button>
       <button class="tab" data-tab="install" onclick="NX.switchTab('install')">Install</button>
       <button class="tab" data-tab="update" onclick="NX.switchTab('update')">Update</button>
       <button class="tab" data-tab="firewall" onclick="NX.switchTab('firewall')">Firewall</button>
@@ -274,6 +275,29 @@
       </details>
       <div id="update-status" class="text-sm" style="margin-top:1rem"></div>
       <pre id="update-output" class="terminal-box shell-output hidden" style="margin-top:0.75rem"></pre>
+    </div>
+    <div class="tab-content hidden" id="tab-mods">
+      <div class="card-header" style="padding:0 0 1rem 0">
+        <h3>Installed mods</h3>
+        <div class="btn-group">
+          <a href="#/marketplace" class="btn btn-sm">Browse marketplace</a>
+          <button class="btn btn-sm btn-primary" id="mods-check" onclick="NX.checkMods()">Check for updates</button>
+        </div>
+      </div>
+      <p class="text-muted text-sm" style="margin-bottom:1rem">
+        Mods installed from the marketplace are checked against their source on a schedule.
+        Turn on auto-update to have new versions applied for you; otherwise they are flagged here.
+        A running server picks up plugin changes on reload; Workshop mods apply at the next restart.
+      </p>
+      <div id="mods-job" class="text-sm" style="margin-bottom:0.75rem"></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th>Mod</th><th>Source</th><th>Installed</th><th>Latest</th><th>Auto-update</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="mods-table-body"></tbody>
+        </table>
+      </div>
     </div>
     <div class="tab-content hidden" id="tab-firewall">
       <div id="sfw-status" class="text-muted text-sm" style="margin-bottom:0.75rem"></div>

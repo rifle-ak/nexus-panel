@@ -405,8 +405,9 @@ listed. A failed copy does not fail the backup: it is recorded on the backup
 
 Event kinds: `server.started`, `server.stopped` (info), `server.crashed`,
 `backup.failed`, `schedule.failed` (warning), `server.crash_loop`,
-`server.disk_exceeded` (critical), `backup.completed` (info), `node.health`
-(on transitions; severity follows the state). Repeats of the same condition
+`server.disk_exceeded` (critical), `backup.completed` (info),
+`mod.update_available`, `mod.updated` (info), `mod.update_failed` (warning),
+`node.health` (on transitions; severity follows the state). Repeats of the same condition
 on the same server are held for ten minutes. A generic webhook receives
 `{"kind", "severity", "title", "body", "server": {"id", "name"}, "node", "panel_url", "at"}`.
 
@@ -560,6 +561,29 @@ schedules.
 | `PUT` | `…/schedules/:schedule_id` | Any of `name`, `cron_expression`, `timezone` (`""` clears to UTC), `is_active`, `tasks` |
 | `POST` | `…/schedules/:schedule_id/trigger` | Run now, on its own task; returns at once. `400` if it is already running |
 | `DELETE` | `…/schedules/:schedule_id` | |
+
+### Mods
+
+Mods installed from the marketplace are recorded per server
+(`DATA_DIR/.nexus/mods/<server>.json`) and checked against their source on a
+schedule (`NEXUS_MOD_UPDATE_CHECK_HOURS`, default 6; `0` turns the check
+off). A newer version is flagged and reported as `mod.update_available`; a
+mod with `auto_update` on is reinstalled at the new version instead
+(`mod.updated` or `mod.update_failed`). File permissions apply: reading the
+list needs `file.read`, installing and updating `file.write`, uninstalling
+`file.delete`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `…/mods/install` | `{"provider", "mod_id", "version"?, "target_dir"?, "framework"?}`. Starts a background install job (one per server at a time; `409` while one runs) and returns it |
+| `GET` | `…/mods/install` | The current or last install job: `status` (`running`, `succeeded`, `failed`), `file_path`, `file_size`, `checksum`, `signature_keys`, `error` |
+| `GET` | `…/mods` | `{"mods": [...], "job"}`. Each mod has `provider`, `mod_id`, `name`, `version`, `path` and `target_dir` (relative to the server root), `installed_at`, `updated_at`, `auto_update`, `available_version` and `changelog` (when a check found something newer), `checked_at` |
+| `POST` | `…/mods/check` | Ask every mod's marketplace for its latest version now; returns the list as above. `502` when the marketplace cannot be reached |
+| `POST` | `…/mods/:provider/:mod_id/update` | Reinstall the mod at the version the last check found (or the provider's latest) into the directory it was installed to, as an install job. `404` if it is not on record |
+| `PUT` | `…/mods/:provider/:mod_id` | `{"auto_update": true}` |
+| `DELETE` | `…/mods/:provider/:mod_id` | Remove the mod's files (and the signature keys it brought) and forget it. `409` while an install is running |
+
+Deleting a server drops its mod registry with everything else.
 
 ## Performance
 

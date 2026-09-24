@@ -7,6 +7,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Mod updates.** Every mod installed from the marketplace is recorded per
+  server (provider, id, version, where it went). The node checks them
+  against their source on a schedule (`NEXUS_MOD_UPDATE_CHECK_HOURS`,
+  default 6) and the Mods tab shows what is newer, with "Update" reinstalling
+  in place; a mod with auto-update on is updated by the check itself.
+  New versions, applied updates and failures are notifications
+  (`mod.update_available`, `mod.updated`, `mod.update_failed`). Uninstall
+  removes the mod's files and any signature keys it brought. An update check
+  refreshes the marketplace's metadata cache, so the update that follows
+  downloads the version the check found.
 - **Off-node backups.** Every completed backup is copied to an
   S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, MinIO,
   Hetzner, DigitalOcean Spaces) as `<prefix>/<server>/<id>.tar.gz` with its

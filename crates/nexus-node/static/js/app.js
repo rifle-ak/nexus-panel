@@ -404,6 +404,7 @@ NX.switchTab = function(tab) {
   if (tab === 'files') loadFiles('/');
   if (tab === 'backups') loadBackups();
   if (tab === 'schedules') loadSchedules();
+  if (tab === 'mods') loadMods();
   if (tab === 'shell') { const i = document.getElementById('shell-input'); if (i) i.focus(); }
   if (tab === 'update') { NX.loadUpdateConfig(); NX.refreshUpdateStatus(); }
   if (tab === 'install') NX.refreshGameFiles();
@@ -1984,6 +1985,111 @@ NX.renderInstallJob = function(server, job) {
   }
 };
 
+// ── Installed mods ───────────────────────────────────────────────
+
+// Render the Mods tab from a `{mods, job}` response; `loadMods` fetches it.
+function renderMods(resp) {
+  const tbody = document.getElementById('mods-table-body');
+  const jobEl = document.getElementById('mods-job');
+  if (!tbody) return;
+  const job = resp.job;
+  const busy = !!(job && job.status === 'running');
+  if (jobEl) {
+    if (busy) {
+      jobEl.innerHTML = `<span class="text-muted">Installing ${esc(job.provider)}/${esc(job.mod_id)}… large mods can take several minutes.</span>`;
+      clearTimeout(NX.modsPollTimer);
+      NX.modsPollTimer = setTimeout(loadMods, 2000);
+    } else if (job && job.status === 'failed') {
+      jobEl.innerHTML = `<span class="text-danger">Last install of ${esc(job.provider)}/${esc(job.mod_id)} failed: ${esc(job.error || 'unknown error')}</span>`;
+    } else {
+      jobEl.innerHTML = '';
+    }
+  }
+  const checkBtn = document.getElementById('mods-check');
+  if (checkBtn) checkBtn.disabled = busy || !resp.mods.length;
+
+  if (!resp.mods.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:2rem">No mods installed from the marketplace yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = resp.mods.map(m => {
+    const key = `'${esc(m.provider)}','${esc(m.mod_id)}'`;
+    const latest = m.available_version
+      ? `<span class="badge badge-warning" title="${esc(m.changelog || '')}">${esc(m.available_version)} available</span>`
+      : (m.checked_at ? `<span class="badge badge-success">up to date</span>` : '<span class="text-muted text-sm">not checked</span>');
+    const checked = m.checked_at ? `<div class="text-xs text-muted">checked ${new Date(m.checked_at).toLocaleString()}</div>` : '';
+    return `
+      <tr>
+        <td>${esc(m.name)}<div class="text-xs text-muted">${esc(m.path)}</div></td>
+        <td><span class="badge badge-info">${esc(m.provider)}</span></td>
+        <td class="text-sm">${esc(m.version)}<div class="text-xs text-muted">${new Date(m.updated_at).toLocaleDateString()}</div></td>
+        <td>${latest}${checked}</td>
+        <td><label class="text-sm"><input type="checkbox" ${m.auto_update ? 'checked' : ''} onchange="NX.setModAutoUpdate(${key}, this.checked)"> on</label></td>
+        <td>
+          <div class="btn-group">
+            ${m.available_version ? `<button class="btn btn-xs btn-success" ${busy ? 'disabled' : ''} onclick="NX.updateMod(${key})">Update</button>` : ''}
+            <button class="btn btn-xs btn-danger" ${busy ? 'disabled' : ''} onclick="NX.uninstallMod(${key}, '${esc(m.name)}')">Uninstall</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function loadMods() {
+  const id = NX.currentServer;
+  if (!id) return;
+  try {
+    renderMods(await api(`/containers/${encodeURIComponent(id)}/mods`));
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+NX.checkMods = async function() {
+  const id = NX.currentServer;
+  const btn = document.getElementById('mods-check');
+  if (!id) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const resp = await api(`/containers/${encodeURIComponent(id)}/mods/check`, { method: 'POST' });
+    renderMods(resp);
+    const n = resp.mods.filter(m => m.available_version).length;
+    toast(n ? `${n} update${n === 1 ? '' : 's'} available` : 'All mods are up to date', n ? 'info' : 'success');
+  } catch (e) { toast(e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Check for updates'; }
+};
+
+NX.updateMod = async function(provider, modId) {
+  const id = NX.currentServer;
+  if (!id) return;
+  try {
+    await api(`/containers/${encodeURIComponent(id)}/mods/${encodeURIComponent(provider)}/${encodeURIComponent(modId)}/update`, { method: 'POST' });
+    toast('Update started', 'info');
+    loadMods();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+NX.setModAutoUpdate = async function(provider, modId, on) {
+  const id = NX.currentServer;
+  if (!id) return;
+  try {
+    await api(`/containers/${encodeURIComponent(id)}/mods/${encodeURIComponent(provider)}/${encodeURIComponent(modId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ auto_update: on }),
+    });
+    toast(on ? 'Auto-update on' : 'Auto-update off', 'success');
+  } catch (e) { toast(e.message, 'error'); loadMods(); }
+};
+
+NX.uninstallMod = async function(provider, modId, name) {
+  const id = NX.currentServer;
+  if (!id) return;
+  if (!confirm(`Remove ${name} and its files from this server?`)) return;
+  try {
+    await api(`/containers/${encodeURIComponent(id)}/mods/${encodeURIComponent(provider)}/${encodeURIComponent(modId)}`, { method: 'DELETE' });
+    toast('Mod removed', 'success');
+    loadMods();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
 // ── Update check ─────────────────────────────────────────────────
 
 NX.checkForUpdates = async function() {
@@ -2870,6 +2976,8 @@ const EVENT_LABELS = {
   'server.crash_loop': 'crash-looping', 'server.disk_exceeded': 'stopped for disk',
   'backup.completed': 'backup completed', 'backup.failed': 'backup failed',
   'schedule.failed': 'scheduled task failed', 'node.health': 'node health changed',
+  'mod.update_available': 'mod update available', 'mod.updated': 'mod auto-updated',
+  'mod.update_failed': 'mod auto-update failed',
 };
 
 async function loadServerNotify(id) {

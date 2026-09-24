@@ -49,6 +49,9 @@ pub const EVENT_KINDS: &[&str] = &[
     "backup.completed",
     "backup.failed",
     "schedule.failed",
+    "mod.update_available",
+    "mod.updated",
+    "mod.update_failed",
     "node.health",
 ];
 
